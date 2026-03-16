@@ -9,8 +9,13 @@ updates:
       default-days: 7
 
   - package-ecosystem: "gomod"
-    directory: "/"
+    directories:
+      - "/"
+      - "/integration"
     schedule:
       interval: "weekly"
     cooldown:
       default-days: 7
+    groups:
+      gomod-monorepo:
+        group-by: dependency-name
