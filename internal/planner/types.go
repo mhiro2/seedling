@@ -63,6 +63,7 @@ type OptionSet struct {
 	Seqs    map[string]any                     // field name → func(int) any (sequence generators)
 	GenFns  []GenerateFn                       // typed rand-driven mutators
 	Rand    *rand.Rand                         // RNG used by GenFns
+	Only    map[string]bool                    // nil = expand all; non-nil = lazy mode (root-level relation filter)
 }
 
 // PlanResult is the output of the planner.

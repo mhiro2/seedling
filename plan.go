@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/mhiro2/seedling/internal/debug"
@@ -26,7 +25,6 @@ type Plan[T any] struct {
 	ctx          context.Context
 	registry     *Registry
 	logFn        func(InsertLog)
-	only         map[string]bool // nil = insert all; non-nil = Only option active
 }
 
 // BuildE constructs a dependency plan for type T without inserting anything.
@@ -57,7 +55,6 @@ func (s Session[T]) BuildE(opts ...Option) (*Plan[T], error) {
 		ctx:          collected.ctx,
 		registry:     s.registry,
 		logFn:        collected.logFn,
-		only:         collected.only,
 	}, nil
 }
 
@@ -100,10 +97,6 @@ func (p *Plan[T]) InsertE(ctx context.Context, db DBTX) (Result[T], error) {
 	}
 	adapter := newRegistryAdapter(p.registry)
 	g := p.graph.Clone()
-	if p.only != nil {
-		keepIDs := resolveOnlyNodes(g, p.only)
-		g = g.Prune(keepIDs)
-	}
 	execResult, err := executor.Execute(ctx, db, g, adapter, p.toExecutorLogFn())
 	if err != nil {
 		var zero Result[T]
@@ -175,59 +168,6 @@ func (p *Plan[T]) toExecutorLogFn() func(executor.LogEntry) {
 			FKBindings: bindings,
 		})
 	}
-}
-
-// resolveOnlyNodes determines which node IDs to keep when the Only option is active.
-// The root node is always included. For each named relation in only, the relation
-// subtree and its transitive dependency parents are included.
-// Relations not listed in only are pruned, even if they would normally be required.
-func resolveOnlyNodes(g *graph.Graph, only map[string]bool) map[string]bool {
-	keepIDs := make(map[string]bool)
-	root := g.Root()
-	if root == nil {
-		return keepIDs
-	}
-
-	// addWithDeps adds a node and all its transitive dependency parents to keepIDs.
-	var addWithDeps func(n *graph.Node)
-	addWithDeps = func(n *graph.Node) {
-		if keepIDs[n.ID] {
-			return
-		}
-		keepIDs[n.ID] = true
-		for _, edge := range n.Dependencies() {
-			addWithDeps(edge.Parent)
-		}
-	}
-
-	// Always include root (but NOT its transitive deps by default).
-	keepIDs[root.ID] = true
-
-	if len(only) == 0 {
-		return keepIDs
-	}
-
-	// Match relation names to node IDs.
-	// Node IDs follow the pattern: "{rootID}.{relation}" or "{rootID}.{relation}.{subrel}".
-	rootPrefix := root.ID + "."
-	for _, node := range g.Nodes() {
-		if !strings.HasPrefix(node.ID, rootPrefix) {
-			continue
-		}
-		relPath := node.ID[len(rootPrefix):]
-		// Match the first segment of the relation path.
-		// e.g., "project.company" → first segment is "project".
-		topRelation, _, _ := strings.Cut(relPath, ".")
-		// Strip array index suffix (e.g., "tags[0]" → "tags").
-		if idx := strings.IndexByte(topRelation, '['); idx >= 0 {
-			topRelation = topRelation[:idx]
-		}
-		if only[topRelation] {
-			addWithDeps(node)
-		}
-	}
-
-	return keepIDs
 }
 
 func prepareRootOptions(reg *Registry, rootType reflect.Type, opts []Option) (*optionSet, error) {
@@ -394,6 +334,7 @@ func toOptionSet(os *optionSet) *planner.OptionSet {
 		Seqs:    os.seqs,
 		GenFns:  genFns,
 		Rand:    os.rand,
+		Only:    os.only,
 	}
 }
 

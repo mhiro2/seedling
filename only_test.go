@@ -122,19 +122,19 @@ func TestOnly_TaskWithNoArgs(t *testing.T) {
 	}
 }
 
-func TestOnly_PlanDebugStringShowsFullGraph(t *testing.T) {
+func TestOnly_PlanDebugStringShowsLazyGraph(t *testing.T) {
 	setupBlueprints(t)
 
 	plan := build[Task](t, seedling.Only("project"))
 	debug := plan.DebugString()
 
-	// Full graph should include both project and assignee.
+	// Lazy graph should include project subtree but not assignee.
 	if !strings.Contains(debug, "project") {
 		t.Fatal("expected 'project' in debug output")
 	}
-	// The "assignee" relation references blueprint "user", which appears in the tree.
-	if !strings.Contains(debug, "user") {
-		t.Fatal("expected 'user' (assignee relation) in full plan debug output")
+	// The assignee relation should NOT appear because it was not expanded.
+	if strings.Contains(debug, "assignee") {
+		t.Fatal("expected 'assignee' to be absent from lazy plan debug output")
 	}
 }
 
