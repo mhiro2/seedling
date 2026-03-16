@@ -25,6 +25,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	sqlcConfig := fs.String("sqlc-config", "", "path to sqlc.yaml config file (auto-resolves schema, output, and import path)")
 	gormDir := fs.String("gorm", "", "path to GORM model Go source files directory")
 	gormPkg := fs.String("gorm-pkg", "", "Go import path for GORM models package (required with -gorm)")
+	entDir := fs.String("ent", "", "path to ent schema directory")
+	entPkg := fs.String("ent-pkg", "", "Go import path for ent client package (required with -ent)")
 	showVersion := fs.Bool("version", false, "print version and exit")
 	fs.Usage = func() {
 		_, _ = fmt.Fprintf(stderr, "Usage: seedling-gen [flags] <schema.sql>\n\nFlags:\n")
@@ -44,9 +46,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	// Mutual exclusivity check for adapter modes.
-	adapterCount := countNonEmpty(*sqlcConfig, *gormDir)
+	adapterCount := countNonEmpty(*sqlcConfig, *gormDir, *entDir)
 	if adapterCount > 1 {
-		_, _ = fmt.Fprintf(stderr, "Error: only one adapter flag (-sqlc-config, -gorm) can be specified at a time\n")
+		_, _ = fmt.Fprintf(stderr, "Error: only one adapter flag (-sqlc-config, -gorm, -ent) can be specified at a time\n")
 		return 1
 	}
 
@@ -69,6 +71,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		genErr = runSqlcConfig(w, stderr, *pkg, *dialect, *sqlcConfig)
 	case *gormDir != "":
 		genErr = runGorm(w, stderr, *pkg, *gormDir, *gormPkg)
+	case *entDir != "":
+		genErr = runEnt(w, stderr, *pkg, *entDir, *entPkg)
 	default:
 		genErr = runDefault(w, stderr, fs, *pkg, *dialect, *sqlcDir, *sqlcPkg)
 	}
@@ -137,6 +141,17 @@ func runGorm(w, _ io.Writer, pkg, dir, importPath string) error {
 		return err
 	}
 	return GenerateGorm(w, pkg, importPath, models)
+}
+
+func runEnt(w, _ io.Writer, pkg, dir, importPath string) error {
+	if importPath == "" {
+		return fmt.Errorf("-ent-pkg is required when -ent is specified")
+	}
+	schemas, err := ParseEntSchemaDir(dir)
+	if err != nil {
+		return err
+	}
+	return GenerateEnt(w, pkg, importPath, schemas)
 }
 
 func runDefault(w, _ io.Writer, fs *flag.FlagSet, pkg, dialect, sqlcDir, sqlcPkg string) error {
