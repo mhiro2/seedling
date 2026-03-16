@@ -27,6 +27,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	gormPkg := fs.String("gorm-pkg", "", "Go import path for GORM models package (required with -gorm)")
 	entDir := fs.String("ent", "", "path to ent schema directory")
 	entPkg := fs.String("ent-pkg", "", "Go import path for ent client package (required with -ent)")
+	atlasFile := fs.String("atlas", "", "path to Atlas HCL schema file")
 	showVersion := fs.Bool("version", false, "print version and exit")
 	fs.Usage = func() {
 		_, _ = fmt.Fprintf(stderr, "Usage: seedling-gen [flags] <schema.sql>\n\nFlags:\n")
@@ -46,9 +47,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	// Mutual exclusivity check for adapter modes.
-	adapterCount := countNonEmpty(*sqlcConfig, *gormDir, *entDir)
+	adapterCount := countNonEmpty(*sqlcConfig, *gormDir, *entDir, *atlasFile)
 	if adapterCount > 1 {
-		_, _ = fmt.Fprintf(stderr, "Error: only one adapter flag (-sqlc-config, -gorm, -ent) can be specified at a time\n")
+		_, _ = fmt.Fprintf(stderr, "Error: only one adapter flag (-sqlc-config, -gorm, -ent, -atlas) can be specified at a time\n")
 		return 1
 	}
 
@@ -73,6 +74,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		genErr = runGorm(w, stderr, *pkg, *gormDir, *gormPkg)
 	case *entDir != "":
 		genErr = runEnt(w, stderr, *pkg, *entDir, *entPkg)
+	case *atlasFile != "":
+		genErr = runAtlas(w, stderr, *pkg, *atlasFile)
 	default:
 		genErr = runDefault(w, stderr, fs, *pkg, *dialect, *sqlcDir, *sqlcPkg)
 	}
@@ -141,6 +144,21 @@ func runGorm(w, _ io.Writer, pkg, dir, importPath string) error {
 		return err
 	}
 	return GenerateGorm(w, pkg, importPath, models)
+}
+
+func runAtlas(w, _ io.Writer, pkg, atlasPath string) error {
+	//nolint:gosec // CLI reads the atlas file path provided by the caller.
+	data, err := os.ReadFile(atlasPath)
+	if err != nil {
+		return fmt.Errorf("read atlas file: %w", err)
+	}
+
+	tables := ParseAtlasHCL(string(data))
+	if len(tables) == 0 {
+		return fmt.Errorf("no tables found in %s", atlasPath)
+	}
+
+	return Generate(w, pkg, tables)
 }
 
 func runEnt(w, _ io.Writer, pkg, dir, importPath string) error {
