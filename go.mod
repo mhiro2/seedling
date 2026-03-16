@@ -2,7 +2,7 @@ module github.com/mhiro2/seedling
 
 go 1.26.0
 
-require modernc.org/sqlite v1.44.3
+require modernc.org/sqlite v1.46.1
 
 require (
 	github.com/bitfield/gotestdox v0.2.2 // indirect
