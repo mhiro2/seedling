@@ -161,6 +161,7 @@ func TestTaskProject(t *testing.T) {
 - [sqlc](./examples/sqlc): wire blueprints to sqlc-generated query code
 - [reuse-parent](./examples/reuse-parent): reuse existing rows with `Use`
 - [custom-defaults](./examples/custom-defaults): customize values with `Set`, `With`, and `Generate`
+- GORM / ent / Atlas: use `seedling-gen` with `-gorm`, `-ent`, or `-atlas` flags to generate blueprints from your existing schema definitions
 
 ## 📚 Learn More
 
@@ -168,7 +169,7 @@ func TestTaskProject(t *testing.T) {
 - [Guide](./docs/guide.md)
 - [ARCHITECTURE.md](./ARCHITECTURE.md)
 - [`example_test.go`](./example_test.go): runnable package examples used by pkg.go.dev
-- [`cmd/seedling-gen`](./cmd/seedling-gen): generate blueprint skeletons from schema files
+- [`cmd/seedling-gen`](./cmd/seedling-gen): generate blueprint skeletons from SQL DDL, sqlc config, GORM models, ent schemas, or Atlas HCL
 
 ## 📝 License
 
