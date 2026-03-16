@@ -1,0 +1,88 @@
+version: "2"
+
+run:
+  timeout: 5m
+  relative-path-mode: gomod
+  modules-download-mode: readonly
+  tests: true
+
+linters:
+  enable:
+    # default linters: https://golangci-lint.run/docs/linters/#enabled-by-default
+    # - errcheck
+    # - govet
+    # - ineffassign
+    # - staticcheck
+    # - unused
+    - errorlint
+    - exhaustive
+    - gocritic
+    - gosec
+    - misspell
+    - modernize
+    - nilnil
+    - nolintlint
+    - prealloc
+    - revive
+    - thelper
+    - unconvert
+    - unparam
+    - whitespace
+    - wrapcheck
+  exclusions:
+    generated: lax
+    warn-unused: true
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+  settings:
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+          arguments:
+            - allowTypesBefore: "*testing.T"
+        - name: context-keys-type
+        - name: dot-imports
+        - name: duplicated-imports
+        - name: early-return
+          arguments:
+            - preserveScope
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: increment-decrement
+        - name: indent-error-flow
+          arguments:
+            - preserveScope
+        - name: range
+        - name: receiver-naming
+        - name: redundant-import-alias
+        - name: superfluous-else
+          arguments:
+            - preserveScope
+        - name: time-date
+        - name: time-equal
+        - name: time-naming
+        - name: unnecessary-stmt
+        - name: unreachable-code
+        - name: unexported-return
+        - name: unused-receiver
+        - name: use-any
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - "github.com/mhiro2/seedling"
+    gofumpt:
+      extra-rules: true
+      module-path: "github.com/mhiro2/seedling"

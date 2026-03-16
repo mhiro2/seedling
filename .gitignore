@@ -1,0 +1,74 @@
+# ----------------------------------------------------------
+# Based on github/gitignore: Go.gitignore
+# https://github.com/github/gitignore/blob/main/Go.gitignore
+
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Code coverage profiles and other test artifacts
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# env file
+.env
+
+# Editor/IDE
+# .idea/
+# .vscode/
+
+# ----------------------------------------------------------
+# Based on github/gitignore: Global/macOS.gitignore
+# https://github.com/github/gitignore/blob/main/Global/macOS.gitignore
+
+.DS_Store
+__MACOSX/
+.AppleDouble
+.LSOverride
+Icon[[:space:]]
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# ----------------------------------------------------------
+# Based on github/gitignore: Global/Windows.gitignore
+# https://github.com/github/gitignore/blob/main/Global/Windows.gitignore
+
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk

@@ -1,0 +1,28 @@
+project_name: seedling-gen
+
+builds:
+  - main: ./cmd/seedling-gen
+    binary: seedling-gen
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+
+release:
+  github:
+    owner: mhiro2
+    name: seedling

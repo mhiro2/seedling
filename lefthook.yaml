@@ -1,0 +1,21 @@
+output:
+  - summary
+  - meta
+
+pre-commit:
+  parallel: true
+  commands:
+    fmt-check:
+      glob: "**/*.go"
+      run: make fmt-check
+    lint:
+      glob: "**/*.go"
+      run: make lint
+
+pre-push:
+  parallel: true
+  commands:
+    test:
+      run: make test
+    check-licenses:
+      run: make check-licenses

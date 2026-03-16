@@ -1,0 +1,27 @@
+repository: mhiro2/seedling
+
+codeToTestRatio:
+  code:
+    - "**/*.go"
+    - "!**/*_test.go"
+    - "!integration/**"
+  test:
+    - "**/*_test.go"
+    - "!integration/**"
+
+diff:
+  datastores:
+    - artifact://${GITHUB_REPOSITORY}/octocov-report
+
+comment:
+  if: is_pull_request
+  hideFooterLink: false
+
+summary:
+  if: is_pull_request
+  hideFooterLink: false
+
+report:
+  if: is_default_branch
+  datastores:
+    - artifact://${GITHUB_REPOSITORY}/octocov-report
