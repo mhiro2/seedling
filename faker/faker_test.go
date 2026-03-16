@@ -262,6 +262,39 @@ func TestDateBetween_ReversedArgsPanics(t *testing.T) {
 	f.DateBetween(later, earlier)
 }
 
+func TestURLFormat(t *testing.T) {
+	f := newSeeded()
+	for range 100 {
+		u := f.URL()
+		if !strings.HasPrefix(u, "https://") {
+			t.Errorf("URL missing https prefix: %s", u)
+		}
+		if strings.Count(u, "/") < 3 {
+			t.Errorf("URL missing path: %s", u)
+		}
+	}
+}
+
+func TestWord(t *testing.T) {
+	f := newSeeded()
+	for range 100 {
+		w := f.Word()
+		if w == "" {
+			t.Error("Word returned empty string")
+		}
+	}
+}
+
+func TestFloat(t *testing.T) {
+	f := newSeeded()
+	for range 1000 {
+		v := f.Float()
+		if v < 0.0 || v >= 1.0 {
+			t.Errorf("Float() = %f, out of range [0.0, 1.0)", v)
+		}
+	}
+}
+
 func TestDefault(t *testing.T) {
 	f := faker.Default()
 	if f == nil {

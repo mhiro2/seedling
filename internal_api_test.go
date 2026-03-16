@@ -360,6 +360,102 @@ func TestPlanValidate_DetectsCycles(t *testing.T) {
 	}
 }
 
+func TestNodesAs_ReturnsTypeMismatch(t *testing.T) {
+	// Arrange
+	result := Result[internalCompany]{
+		nodes: map[string]executor.NodeResult{
+			"root.a": {Name: "company", Value: internalCompany{ID: 1, Name: "first"}},
+		},
+	}
+
+	// Act
+	_, err := NodesAs[string](result, "company")
+
+	// Assert
+	if !errors.Is(err, ErrTypeMismatch) {
+		t.Fatalf("got %v, want %v", err, ErrTypeMismatch)
+	}
+}
+
+func TestMustNodeAs_PanicsOnTypeMismatch(t *testing.T) {
+	// Arrange
+	result := Result[internalCompany]{
+		nodes: map[string]executor.NodeResult{
+			"root": {Name: "company", Value: internalCompany{ID: 7}},
+		},
+	}
+
+	// Act & Assert
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic")
+		}
+	}()
+	MustNodeAs[string](result, "company")
+}
+
+func TestRegistryAdapter_LookupByType(t *testing.T) {
+	// Arrange
+	reg := NewRegistry()
+	err := RegisterTo(reg, Blueprint[internalCompany]{
+		Name:    "company",
+		Table:   "companies",
+		PKField: "ID",
+		Insert: func(_ context.Context, _ DBTX, v internalCompany) (internalCompany, error) {
+			return v, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := newRegistryAdapter(reg)
+
+	// Act
+	def, err := adapter.LookupByType(reflect.TypeFor[internalCompany]())
+	// Assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	if def.Name != "company" {
+		t.Fatalf("got %v, want %v", def.Name, "company")
+	}
+
+	// Act: second call should use cache
+	def2, err := adapter.LookupByType(reflect.TypeFor[internalCompany]())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if def2 != def {
+		t.Fatal("expected cached result")
+	}
+}
+
+func TestWhenFunc_ReturnsFalseOnTypeMismatch(t *testing.T) {
+	// Arrange
+	fn := WhenFunc(func(c internalCompany) bool { return true })
+
+	// Act
+	got := fn("not a company")
+
+	// Assert
+	if got {
+		t.Fatal("expected false for type mismatch")
+	}
+}
+
+func TestCleanupE_NilGraph(t *testing.T) {
+	// Arrange
+	result := Result[internalCompany]{}
+
+	// Act
+	err := result.CleanupE(context.Background(), nil)
+	// Assert
+	if err != nil {
+		t.Fatalf("expected nil, got %v", err)
+	}
+}
+
 func TestToOptionSet_Nil(t *testing.T) {
 	// Arrange
 

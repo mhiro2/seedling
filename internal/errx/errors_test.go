@@ -209,6 +209,120 @@ func TestRelationNotFoundWithHint(t *testing.T) {
 	}
 }
 
+func TestDeleteNotDefined(t *testing.T) {
+	// Act
+	err := DeleteNotDefined("users")
+
+	// Assert
+	if !errors.Is(err, ErrDeleteNotDefined) {
+		t.Fatalf("got %v, want %v", err, ErrDeleteNotDefined)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "users") {
+		t.Errorf("expected error to contain %q, got %v", "users", msg)
+	}
+	if !strings.Contains(msg, "Delete") {
+		t.Errorf("expected error to mention Delete function, got %v", msg)
+	}
+}
+
+func TestUseAndRefConflict(t *testing.T) {
+	// Act
+	err := UseAndRefConflict("posts", "author")
+
+	// Assert
+	if !errors.Is(err, ErrInvalidOption) {
+		t.Fatalf("got %v, want %v", err, ErrInvalidOption)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "posts") {
+		t.Errorf("expected error to contain %q, got %v", "posts", msg)
+	}
+	if !strings.Contains(msg, "author") {
+		t.Errorf("expected error to contain %q, got %v", "author", msg)
+	}
+	if !strings.Contains(msg, "Use") || !strings.Contains(msg, "Ref") {
+		t.Errorf("expected error to mention Use and Ref, got %v", msg)
+	}
+}
+
+func TestOmitRequiredRelation(t *testing.T) {
+	// Act
+	err := OmitRequiredRelation("posts", "author")
+
+	// Assert
+	if !errors.Is(err, ErrInvalidOption) {
+		t.Fatalf("got %v, want %v", err, ErrInvalidOption)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "posts") {
+		t.Errorf("expected error to contain %q, got %v", "posts", msg)
+	}
+	if !strings.Contains(msg, "author") {
+		t.Errorf("expected error to contain %q, got %v", "author", msg)
+	}
+}
+
+func TestSetOnFKField(t *testing.T) {
+	// Act
+	err := SetOnFKField("posts", "AuthorID", "author")
+
+	// Assert
+	if !errors.Is(err, ErrInvalidOption) {
+		t.Fatalf("got %v, want %v", err, ErrInvalidOption)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "posts") {
+		t.Errorf("expected error to contain %q, got %v", "posts", msg)
+	}
+	if !strings.Contains(msg, "AuthorID") {
+		t.Errorf("expected error to contain %q, got %v", "AuthorID", msg)
+	}
+	if !strings.Contains(msg, "author") {
+		t.Errorf("expected error to contain %q, got %v", "author", msg)
+	}
+}
+
+func TestUseOnNonBelongsTo(t *testing.T) {
+	// Act
+	err := UseOnNonBelongsTo("users", "posts", "has_many")
+
+	// Assert
+	if !errors.Is(err, ErrInvalidOption) {
+		t.Fatalf("got %v, want %v", err, ErrInvalidOption)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "users") {
+		t.Errorf("expected error to contain %q, got %v", "users", msg)
+	}
+	if !strings.Contains(msg, "posts") {
+		t.Errorf("expected error to contain %q, got %v", "posts", msg)
+	}
+	if !strings.Contains(msg, "has_many") {
+		t.Errorf("expected error to contain %q, got %v", "has_many", msg)
+	}
+}
+
+func TestUseTypeMismatch(t *testing.T) {
+	// Act
+	err := UseTypeMismatch("author", "User", "Post")
+
+	// Assert
+	if !errors.Is(err, ErrTypeMismatch) {
+		t.Fatalf("got %v, want %v", err, ErrTypeMismatch)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "author") {
+		t.Errorf("expected error to contain %q, got %v", "author", msg)
+	}
+	if !strings.Contains(msg, "User") {
+		t.Errorf("expected error to contain %q, got %v", "User", msg)
+	}
+	if !strings.Contains(msg, "Post") {
+		t.Errorf("expected error to contain %q, got %v", "Post", msg)
+	}
+}
+
 func TestSentinelsAreDistinguishable(t *testing.T) {
 	// Arrange
 	tests := []struct {

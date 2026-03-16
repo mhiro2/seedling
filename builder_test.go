@@ -263,6 +263,22 @@ func TestBuilder_Trait(t *testing.T) {
 	}
 }
 
+func TestBuilder_InlineTrait(t *testing.T) {
+	// Arrange
+	reg := setupBuilderRegistry(t)
+	sess := seedling.NewSession[Company](reg)
+
+	// Act
+	company := seedling.ForSession(sess).
+		InlineTrait(seedling.Set("Name", "inline-corp")).
+		Insert(t, nil).Root()
+
+	// Assert
+	if company.Name != "inline-corp" {
+		t.Fatalf("got %v, want %v", company.Name, "inline-corp")
+	}
+}
+
 func TestBuilder_Generate(t *testing.T) {
 	// Arrange
 	reg := setupBuilderRegistry(t)
@@ -539,6 +555,41 @@ func TestBuilder_BuildE(t *testing.T) {
 	}
 	if plan == nil {
 		t.Fatal("expected non-nil")
+	}
+}
+
+func TestPackageLevelBuildE(t *testing.T) {
+	// Arrange
+	setupDefaultBuilderRegistry(t)
+
+	// Act
+	plan, err := seedling.BuildE[Company]()
+	// Assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan == nil {
+		t.Fatal("expected non-nil plan")
+	}
+}
+
+func TestPackageLevelInsertManyE(t *testing.T) {
+	// Arrange
+	setupDefaultBuilderRegistry(t)
+
+	// Act
+	results, err := seedling.InsertManyE[Company](t.Context(), nil, 3)
+	// Assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("got %d results, want 3", len(results))
+	}
+	for i, c := range results {
+		if c.ID == 0 {
+			t.Fatalf("result[%d] has zero ID", i)
+		}
 	}
 }
 

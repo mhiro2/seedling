@@ -299,6 +299,39 @@ func TestMustNodePanicsOnNonexistent(t *testing.T) {
 	result.MustNode("nonexistent")
 }
 
+func TestMustNodeAs_ReturnsTypedValue(t *testing.T) {
+	// Arrange
+	setupBlueprints(t)
+	plan := build[Task](t)
+	result := plan.Insert(t, nil)
+
+	// Act
+	company := seedling.MustNodeAs[Company](result, "company")
+
+	// Assert
+	if company.ID == 0 {
+		t.Fatal("expected non-zero company ID")
+	}
+	if company.Name == "" {
+		t.Fatal("expected non-empty company Name")
+	}
+}
+
+func TestMustNodeAs_PanicsOnMissing(t *testing.T) {
+	// Arrange
+	setupBlueprints(t)
+	plan := build[Task](t)
+	result := plan.Insert(t, nil)
+
+	// Act & Assert
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected MustNodeAs to panic for nonexistent node")
+		}
+	}()
+	seedling.MustNodeAs[Company](result, "nonexistent")
+}
+
 func TestUse_WrongType(t *testing.T) {
 	// Arrange
 	setupBlueprints(t)

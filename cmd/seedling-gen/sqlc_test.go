@@ -487,6 +487,28 @@ func TestRun_SqlcRequiresSqlcPkg(t *testing.T) {
 	}
 }
 
+func TestFindModelForTable(t *testing.T) {
+	info := &SqlcInfo{
+		Models: []SqlcModel{
+			{Name: "Company", Fields: []SqlcField{{Name: "ID", Type: "int64"}}},
+			{Name: "User", Fields: []SqlcField{{Name: "ID", Type: "int64"}}},
+		},
+	}
+
+	// Act & Assert
+	m := info.FindModelForTable(Table{GoName: "User"})
+	if m == nil {
+		t.Fatal("expected to find model for User")
+	}
+	if m.Name != "User" {
+		t.Fatalf("expected %q, got %q", "User", m.Name)
+	}
+
+	if info.FindModelForTable(Table{GoName: "NotExist"}) != nil {
+		t.Fatal("expected nil for non-existent table")
+	}
+}
+
 func TestExprToString(t *testing.T) {
 	tests := []struct {
 		goType string
@@ -495,6 +517,9 @@ func TestExprToString(t *testing.T) {
 		{"int64", "int64"},
 		{"string", "string"},
 		{"[]byte", "[]byte"},
+		{"*int64", "*int64"},
+		{"[4]byte", "[4]byte"},
+		{"interface{}", "interface{}"},
 	}
 
 	// This tests the internal function indirectly through parsing.

@@ -83,6 +83,39 @@ func TestSetField_ErrorCases(t *testing.T) {
 	}
 }
 
+func TestExists_NonStructType(t *testing.T) {
+	// Act & Assert
+	if field.Exists(42, "ID") {
+		t.Fatal("expected false for non-struct type")
+	}
+}
+
+func TestSetField_NilOnNonNillableField(t *testing.T) {
+	// Arrange
+	var s sample
+
+	// Act
+	err := field.SetField(&s, "ID", nil)
+
+	// Assert
+	if !errors.Is(err, errx.ErrTypeMismatch) {
+		t.Fatalf("got %v, want %v", err, errx.ErrTypeMismatch)
+	}
+}
+
+func TestSetField_NonPointerReceiver(t *testing.T) {
+	// Arrange
+	s := sample{}
+
+	// Act
+	err := field.SetField(s, "Name", "hello")
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected error for non-pointer receiver")
+	}
+}
+
 func TestGetField_SupportsStructAndPointer(t *testing.T) {
 	tests := []struct {
 		name      string

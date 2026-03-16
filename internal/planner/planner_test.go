@@ -405,6 +405,161 @@ func TestPlan_ManyToManyAutoExpand(t *testing.T) {
 	}
 }
 
+func TestPlanMany_MultipleRoots(t *testing.T) {
+	// Arrange
+	reg := newMockRegistry()
+	opts := []*planner.OptionSet{
+		{
+			Sets:  map[string]any{"Name": "user-1"},
+			Uses:  make(map[string]any),
+			Refs:  make(map[string]*planner.OptionSet),
+			Omits: make(map[string]bool),
+		},
+		{
+			Sets:  map[string]any{"Name": "user-2"},
+			Uses:  make(map[string]any),
+			Refs:  make(map[string]*planner.OptionSet),
+			Omits: make(map[string]bool),
+		},
+	}
+
+	// Act
+	result, err := planner.PlanMany(reg, reflect.TypeFor[User](), opts)
+	// Assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.RootIDs) != 2 {
+		t.Fatalf("got %d root IDs, want 2", len(result.RootIDs))
+	}
+	if result.RootIDs[0] != "root[0]" {
+		t.Errorf("root[0] = %q, want %q", result.RootIDs[0], "root[0]")
+	}
+	if result.RootIDs[1] != "root[1]" {
+		t.Errorf("root[1] = %q, want %q", result.RootIDs[1], "root[1]")
+	}
+
+	// Each root should have a user node
+	for _, rootID := range result.RootIDs {
+		node := result.Graph.Node(rootID)
+		if node == nil {
+			t.Fatalf("expected node %q", rootID)
+		}
+		if node.BlueprintName != "user" {
+			t.Errorf("node %q blueprint = %q, want %q", rootID, node.BlueprintName, "user")
+		}
+	}
+
+	order, err := result.Graph.TopoSort()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 2 users + shared company(s)
+	if len(order) < 3 {
+		t.Fatalf("got %d nodes, want >= 3", len(order))
+	}
+}
+
+func TestPlanMany_NonShareableOptions(t *testing.T) {
+	// Arrange: each root has a WithFn on the company relation, making it non-shareable
+	reg := newMockRegistry()
+	opts := []*planner.OptionSet{
+		{
+			Sets: map[string]any{"Name": "user-1"},
+			Uses: make(map[string]any),
+			Refs: map[string]*planner.OptionSet{
+				"company": {
+					Sets:    map[string]any{"Name": "company-a"},
+					Uses:    make(map[string]any),
+					Refs:    make(map[string]*planner.OptionSet),
+					Omits:   make(map[string]bool),
+					WithFns: []planner.WithFn{func(v any) (any, error) { return v, nil }},
+				},
+			},
+			Omits: make(map[string]bool),
+		},
+		{
+			Sets: map[string]any{"Name": "user-2"},
+			Uses: make(map[string]any),
+			Refs: map[string]*planner.OptionSet{
+				"company": {
+					Sets:    map[string]any{"Name": "company-b"},
+					Uses:    make(map[string]any),
+					Refs:    make(map[string]*planner.OptionSet),
+					Omits:   make(map[string]bool),
+					WithFns: []planner.WithFn{func(v any) (any, error) { return v, nil }},
+				},
+			},
+			Omits: make(map[string]bool),
+		},
+	}
+
+	// Act
+	result, err := planner.PlanMany(reg, reflect.TypeFor[User](), opts)
+	// Assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.RootIDs) != 2 {
+		t.Fatalf("got %d root IDs, want 2", len(result.RootIDs))
+	}
+
+	// With WithFns, companies should NOT be shared — each user gets its own
+	nodes := result.Graph.Nodes()
+	companyCount := 0
+	for _, n := range nodes {
+		if n.BlueprintName == "company" {
+			companyCount++
+		}
+	}
+	if companyCount < 2 {
+		t.Fatalf("expected at least 2 company nodes (non-shared), got %d", companyCount)
+	}
+}
+
+func TestPlanMany_ShareableWithSets(t *testing.T) {
+	// Arrange: both roots have the exact same static Ref opts, so companies should be shared
+	reg := newMockRegistry()
+	sharedRef := &planner.OptionSet{
+		Sets:  map[string]any{"Name": "shared-company"},
+		Uses:  make(map[string]any),
+		Refs:  make(map[string]*planner.OptionSet),
+		Omits: make(map[string]bool),
+	}
+	opts := []*planner.OptionSet{
+		{
+			Sets:  map[string]any{"Name": "user-1"},
+			Uses:  make(map[string]any),
+			Refs:  map[string]*planner.OptionSet{"company": sharedRef},
+			Omits: make(map[string]bool),
+		},
+		{
+			Sets:  map[string]any{"Name": "user-2"},
+			Uses:  make(map[string]any),
+			Refs:  map[string]*planner.OptionSet{"company": sharedRef},
+			Omits: make(map[string]bool),
+		},
+	}
+
+	// Act
+	result, err := planner.PlanMany(reg, reflect.TypeFor[User](), opts)
+	// Assert
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// With identical static options, companies should be shared — only 1 company node
+	companyCount := 0
+	for _, n := range result.Graph.Nodes() {
+		if n.BlueprintName == "company" {
+			companyCount++
+		}
+	}
+	if companyCount != 1 {
+		t.Fatalf("expected 1 shared company node, got %d", companyCount)
+	}
+}
+
 func TestPlan_ManyToManyRefAppliesToChildren(t *testing.T) {
 	// Arrange
 	reg := newMockRegistry()

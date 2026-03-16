@@ -440,3 +440,61 @@ CREATE TABLE deployments (
 		t.Fatalf("expected composite LocalFields output, got: %s", output)
 	}
 }
+
+func TestGenerate_OptionalRelation(t *testing.T) {
+	schema := `
+CREATE TABLE companies (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    company_id INTEGER REFERENCES companies(id)
+);
+`
+	tables := ParseSchema(schema)
+	var buf bytes.Buffer
+	if err := Generate(&buf, "blueprints", tables); err != nil {
+		t.Fatalf("Generate error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Optional: true") {
+		t.Fatalf("expected Optional: true for nullable FK, got:\n%s", output)
+	}
+}
+
+func TestGenerateSqlc_DeleteWithCompositePK(t *testing.T) {
+	schema := `
+CREATE TABLE items (
+    code TEXT NOT NULL,
+    region TEXT NOT NULL,
+    PRIMARY KEY (code, region)
+);
+`
+	tables := ParseSchema(schema)
+	sqlcInfo := &SqlcInfo{
+		Package: "db",
+		Models: []SqlcModel{
+			{Name: "Item", Fields: []SqlcField{{Name: "Code", Type: "string"}, {Name: "Region", Type: "string"}}},
+		},
+		Queries: []SqlcQuery{
+			{Name: "InsertItem", ReturnType: "Item", ParamType: "InsertItemParams", ParamFields: []SqlcField{{Name: "Code", Type: "string"}, {Name: "Region", Type: "string"}}},
+		},
+		DeleteQueries: []SqlcDeleteQuery{
+			{Name: "DeleteItem", ArgName: "", ArgType: "DeleteItemParams", ParamType: "DeleteItemParams"},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := GenerateSqlc(&buf, "testutil", "github.com/myapp/internal/db", tables, sqlcInfo); err != nil {
+		t.Fatalf("GenerateSqlc error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Delete") {
+		t.Fatalf("expected Delete function in output, got:\n%s", output)
+	}
+}

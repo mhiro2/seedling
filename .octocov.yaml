@@ -1,5 +1,11 @@
 repository: mhiro2/seedling
 
+coverage:
+  exclude:
+    - "seedlingtest/**"
+    - "internal/testutil/**"
+    - "cmd/seedling-gen/main.go"
+
 codeToTestRatio:
   code:
     - "**/*.go"

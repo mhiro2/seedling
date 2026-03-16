@@ -83,6 +83,63 @@ func TestTreeString_Provided(t *testing.T) {
 	}
 }
 
+func TestTreeString_Reused(t *testing.T) {
+	// Arrange: diamond shape where company is reachable from two paths
+	g := graph.New()
+	task := &graph.Node{ID: "task", BlueprintName: "task"}
+	project := &graph.Node{ID: "project", BlueprintName: "project"}
+	user := &graph.Node{ID: "user", BlueprintName: "user"}
+	company := &graph.Node{ID: "company", BlueprintName: "company"}
+	g.AddNode(task)
+	g.AddNode(project)
+	g.AddNode(user)
+	g.AddNode(company)
+	g.AddEdge(project, task, "ProjectID")
+	g.AddEdge(user, task, "UserID")
+	g.AddEdge(company, project, "CompanyID")
+	g.AddEdge(company, user, "CompanyID")
+
+	// Act
+	out := debug.TreeString(g)
+	t.Log(out)
+
+	// Assert: company is visited from project first, then should be [reused] from user
+	if !strings.Contains(out, "[reused]") {
+		t.Errorf("expected output to contain %q, got:\n%s", "[reused]", out)
+	}
+}
+
+func TestTreeString_SetFields(t *testing.T) {
+	// Arrange
+	g := graph.New()
+	user := &graph.Node{ID: "user", BlueprintName: "user", SetFields: []string{"Name", "Email"}}
+	g.AddNode(user)
+
+	// Act
+	out := debug.TreeString(g)
+
+	// Assert
+	if !strings.Contains(out, "Set:") {
+		t.Errorf("expected output to contain SetFields, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Email") || !strings.Contains(out, "Name") {
+		t.Errorf("expected output to contain field names, got:\n%s", out)
+	}
+}
+
+func TestTreeString_Empty(t *testing.T) {
+	// Arrange
+	g := graph.New()
+
+	// Act
+	out := debug.TreeString(g)
+
+	// Assert
+	if out != "(empty)" {
+		t.Errorf("got %q, want %q", out, "(empty)")
+	}
+}
+
 func TestTreeString_HasMany(t *testing.T) {
 	// Arrange
 	g := graph.New()
@@ -105,6 +162,100 @@ func TestTreeString_HasMany(t *testing.T) {
 	}
 	if got := strings.Count(out, "employee"); got != 2 {
 		t.Errorf("got %v, want %v", got, 2)
+	}
+}
+
+func TestResultString_Simple(t *testing.T) {
+	// Arrange
+	type Company struct{ ID int }
+	type User struct{ ID int }
+	g := graph.New()
+	company := &graph.Node{ID: "company", BlueprintName: "company", PKField: "ID", Value: Company{ID: 42}}
+	user := &graph.Node{ID: "user", BlueprintName: "user", PKField: "ID", Value: User{ID: 7}}
+	g.AddNode(user)
+	g.AddNode(company)
+	g.AddEdge(company, user, "CompanyID")
+
+	// Act
+	out := debug.ResultString(g)
+	t.Log(out)
+
+	// Assert
+	if !strings.Contains(out, "user") {
+		t.Errorf("expected output to contain %q", "user")
+	}
+	if !strings.Contains(out, "company") {
+		t.Errorf("expected output to contain %q", "company")
+	}
+	if !strings.Contains(out, "[inserted]") {
+		t.Errorf("expected output to contain %q", "[inserted]")
+	}
+	if !strings.Contains(out, "ID=42") {
+		t.Errorf("expected output to contain PK value ID=42, got:\n%s", out)
+	}
+	if !strings.Contains(out, "ID=7") {
+		t.Errorf("expected output to contain PK value ID=7, got:\n%s", out)
+	}
+}
+
+func TestResultString_Provided(t *testing.T) {
+	// Arrange
+	type Company struct{ ID int }
+	g := graph.New()
+	company := &graph.Node{ID: "company", BlueprintName: "company", PKField: "ID", Value: Company{ID: 1}, IsProvided: true}
+	g.AddNode(company)
+
+	// Act
+	out := debug.ResultString(g)
+
+	// Assert
+	if !strings.Contains(out, "[provided]") {
+		t.Errorf("expected output to contain %q, got:\n%s", "[provided]", out)
+	}
+}
+
+func TestResultString_Empty(t *testing.T) {
+	// Arrange
+	g := graph.New()
+
+	// Act
+	out := debug.ResultString(g)
+
+	// Assert
+	if out != "(empty)" {
+		t.Errorf("got %q, want %q", out, "(empty)")
+	}
+}
+
+func TestResultString_Reused(t *testing.T) {
+	// Arrange: diamond shape where company is reachable from two paths
+	type Company struct{ ID int }
+	type User struct{ ID int }
+	type Project struct{ ID int }
+	g := graph.New()
+	task := &graph.Node{ID: "task", BlueprintName: "task", PKField: "ID", Value: struct{ ID int }{1}}
+	project := &graph.Node{ID: "project", BlueprintName: "project", PKField: "ID", Value: Project{ID: 2}}
+	user := &graph.Node{ID: "user", BlueprintName: "user", PKField: "ID", Value: User{ID: 3}}
+	company := &graph.Node{ID: "company", BlueprintName: "company", PKField: "ID", Value: Company{ID: 4}}
+	g.AddNode(task)
+	g.AddNode(project)
+	g.AddNode(user)
+	g.AddNode(company)
+	g.AddEdge(project, task, "ProjectID")
+	g.AddEdge(user, task, "UserID")
+	g.AddEdge(company, project, "CompanyID")
+	g.AddEdge(company, user, "CompanyID")
+
+	// Act
+	out := debug.ResultString(g)
+	t.Log(out)
+
+	// Assert
+	if !strings.Contains(out, "[reused]") {
+		t.Errorf("expected output to contain %q, got:\n%s", "[reused]", out)
+	}
+	if !strings.Contains(out, "[inserted]") {
+		t.Errorf("expected output to contain %q", "[inserted]")
 	}
 }
 
@@ -197,5 +348,23 @@ func TestDryRunString_FallbackToBlueprint(t *testing.T) {
 	// Assert
 	if !strings.Contains(out, "INSERT INTO company (blueprint: company)") {
 		t.Errorf("expected fallback to blueprint name, got:\n%s", out)
+	}
+}
+
+func TestDryRunString_ParentFallbackToBlueprint(t *testing.T) {
+	// Arrange: parent has no Table, FK binding should use BlueprintName
+	g := graph.New()
+	company := &graph.Node{ID: "company", BlueprintName: "company", PKField: "ID"}
+	user := &graph.Node{ID: "user", BlueprintName: "user", Table: "users"}
+	g.AddNode(user)
+	g.AddNode(company)
+	g.AddEdge(company, user, "CompanyID")
+
+	// Act
+	out := debug.DryRunString(g)
+
+	// Assert
+	if !strings.Contains(out, "SET CompanyID ← company.ID") {
+		t.Errorf("expected parent fallback to blueprint name, got:\n%s", out)
 	}
 }

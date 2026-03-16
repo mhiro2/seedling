@@ -180,6 +180,65 @@ func TestExecute_InsertsAndAssignsForeignKeys(t *testing.T) {
 	}
 }
 
+func TestExecute_WithLogFn(t *testing.T) {
+	// Arrange
+	g := graph.New()
+	company := &graph.Node{ID: "company", BlueprintName: "company", Table: "companies", Value: Company{Name: "acme"}, PKField: "ID"}
+	user := &graph.Node{ID: "user", BlueprintName: "user", Table: "users", Value: User{Name: "alice"}, PKField: "ID"}
+	g.AddNode(user)
+	g.AddNode(company)
+	g.AddEdge(company, user, "CompanyID")
+
+	var logs []executor.LogEntry
+
+	// Act
+	result, err := executor.Execute(t.Context(), nil, g, newTestLookup(), func(entry executor.LogEntry) {
+		logs = append(logs, entry)
+	})
+	// Assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 2 {
+		t.Fatalf("got %d log entries, want 2", len(logs))
+	}
+
+	// First log should be company (no FK bindings)
+	if logs[0].Blueprint != "company" {
+		t.Errorf("log[0] blueprint = %q, want %q", logs[0].Blueprint, "company")
+	}
+	if logs[0].Step != 1 {
+		t.Errorf("log[0] step = %d, want 1", logs[0].Step)
+	}
+	if len(logs[0].FKBindings) != 0 {
+		t.Errorf("log[0] should have 0 FK bindings, got %d", len(logs[0].FKBindings))
+	}
+
+	// Second log should be user with FK binding to company
+	if logs[1].Blueprint != "user" {
+		t.Errorf("log[1] blueprint = %q, want %q", logs[1].Blueprint, "user")
+	}
+	if len(logs[1].FKBindings) != 1 {
+		t.Fatalf("log[1] should have 1 FK binding, got %d", len(logs[1].FKBindings))
+	}
+	binding := logs[1].FKBindings[0]
+	if binding.ChildField != "CompanyID" {
+		t.Errorf("binding child field = %q, want %q", binding.ChildField, "CompanyID")
+	}
+	if binding.ParentBlueprint != "company" {
+		t.Errorf("binding parent blueprint = %q, want %q", binding.ParentBlueprint, "company")
+	}
+	if binding.ParentTable != "companies" {
+		t.Errorf("binding parent table = %q, want %q", binding.ParentTable, "companies")
+	}
+
+	// FK value should be set
+	companyID := result.Nodes["company"].Value.(Company).ID
+	if binding.Value != companyID {
+		t.Errorf("binding value = %v, want %v", binding.Value, companyID)
+	}
+}
+
 func TestExecute_InsertError(t *testing.T) {
 	// Arrange
 	g := graph.New()

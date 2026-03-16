@@ -8,6 +8,37 @@ import (
 	"testing"
 )
 
+func TestCliVersion_ExplicitVersion(t *testing.T) {
+	// Arrange
+	prev := version
+	version = "v2.0.0"
+	t.Cleanup(func() { version = prev })
+
+	// Act
+	got := cliVersion()
+
+	// Assert
+	if got != "v2.0.0" {
+		t.Fatalf("got %q, want %q", got, "v2.0.0")
+	}
+}
+
+func TestCliVersion_DevFallback(t *testing.T) {
+	// Arrange
+	prev := version
+	version = "dev"
+	t.Cleanup(func() { version = prev })
+
+	// Act
+	got := cliVersion()
+
+	// Assert
+	// In test context, ReadBuildInfo may return (devel), so we expect "dev" fallback
+	if got == "" {
+		t.Fatal("cliVersion should not return empty string")
+	}
+}
+
 func TestRun_PrintsVersion(t *testing.T) {
 	// Arrange
 	previousVersion := version
