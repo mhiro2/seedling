@@ -59,45 +59,27 @@ func TestCreateTask(t *testing.T) {
 
 ## 🚀 Quick Start
 
-### 1. Register blueprints
+### 1. Generate blueprints from your schema
+
+```bash
+go install github.com/mhiro2/seedling/cmd/seedling-gen@latest
+
+# From SQL DDL
+seedling-gen -pkg testutil -out blueprints.go schema.sql
+
+# Or from other sources:
+seedling-gen -sqlc-config sqlc.yaml -pkg testutil -out blueprints.go
+seedling-gen -gorm ./models -gorm-pkg github.com/you/app/models -pkg testutil
+seedling-gen -ent ./ent/schema -ent-pkg github.com/you/app/ent -pkg testutil
+seedling-gen -atlas schema.hcl -pkg testutil
+```
+
+This generates struct types, `RegisterBlueprints()`, relations, and Insert stubs. Fill in the `// TODO` callbacks with your DB logic:
 
 ```go
-package testutil
-
-import (
-    "context"
-
-    "github.com/mhiro2/seedling"
-)
-
-func RegisterBlueprints() {
-    seedling.MustRegister(seedling.Blueprint[Company]{
-        Name:    "company",
-        Table:   "companies",
-        PKField: "ID",
-        Defaults: func() Company {
-            return Company{Name: "test-company"}
-        },
-        Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
-            return insertCompany(ctx, db, v)
-        },
-    })
-
-    seedling.MustRegister(seedling.Blueprint[User]{
-        Name:    "user",
-        Table:   "users",
-        PKField: "ID",
-        Defaults: func() User {
-            return User{Name: "test-user"}
-        },
-        Relations: []seedling.Relation{
-            {Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
-        },
-        Insert: func(ctx context.Context, db seedling.DBTX, v User) (User, error) {
-            return insertUser(ctx, db, v)
-        },
-    })
-}
+Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
+    return insertCompany(ctx, db, v) // your DB call
+},
 ```
 
 ### 2. Use it in tests
