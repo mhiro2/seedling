@@ -178,13 +178,12 @@ func ExampleOnly_rootOnly() {
 	setupExampleBlueprints()
 
 	t := &testing.T{}
-	// Only() with no arguments inserts only the root record.
+	// Only() with no arguments builds only the root node.
 	plan := seedling.Build[ExUser](t, seedling.Only())
-	// The plan still shows the full graph:
+	// The plan shows only the lazily built subgraph:
 	fmt.Println(plan.DebugString())
 	// Output:
 	// user
-	// └─ company
 }
 
 func ExampleGenerate() {

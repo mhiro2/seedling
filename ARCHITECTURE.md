@@ -54,6 +54,7 @@ Core responsibilities:
 - create a node from `Defaults()`
 - apply root and nested options before execution
 - expand `belongs_to`, `has_many`, and `many_to_many`
+- lazy evaluation with `Only(...)`: skip root-level relations not in the set, building only the required subgraph
 - reuse already-expanded nodes by node ID
 - mark `Use(...)` relations as provided nodes so the executor skips insertion
 

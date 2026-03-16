@@ -55,7 +55,7 @@ _ = user
 
 ### Selective insertion with Only
 
-Use `Only` when a blueprint has many relations but the test only needs a subset. The planner still builds the full graph (so `DebugString` / `DryRunString` remain complete), but the executor prunes it before insertion.
+Use `Only` when a blueprint has many relations but the test only needs a subset. The planner builds only the necessary subgraph, skipping relations not listed in `Only`. `DebugString` / `DryRunString` reflect this lazily built graph.
 
 ```go
 // Insert task + project subtree only. Assignee and its dependencies are skipped.

@@ -425,14 +425,12 @@ func (l insertLogOption) applyOption(o *optionSet) {
 	o.logFn = l.fn
 }
 
-// Only restricts execution to the root node, its transitive BelongsTo parents,
-// and the specified relation subtrees. Nodes outside these paths are skipped
-// during insertion. The full graph is still built by the planner, so
-// [Plan.DebugString] and [Plan.DryRunString] continue to show the complete
-// dependency tree.
+// Only restricts the planner to build only the root node and the specified
+// relation subtrees. Relations not listed are never expanded, so the resulting
+// graph contains only the necessary nodes. [Plan.DebugString] and
+// [Plan.DryRunString] reflect this lazily built subgraph.
 //
-// With no arguments, Only inserts only the root and its mandatory BelongsTo
-// parents:
+// With no arguments, Only builds only the root node:
 //
 //	seedling.InsertOne[Task](t, db, seedling.Only())
 //
