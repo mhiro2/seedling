@@ -111,10 +111,12 @@ The execution model and graph expansion rules are documented in [ARCHITECTURE.md
 
 seedling does not generate SQL at runtime. Your blueprint owns the `Insert` and optional `Delete` callbacks, so the library works with any DB abstraction that your code already uses.
 
-- sqlc: map `Insert` callbacks to generated query methods
+- sqlc: map `Insert` callbacks to generated query methods. Use `-sqlc-config` for automatic setup
 - `database/sql`: pass `*sql.DB` or `*sql.Tx`
 - pgx: pass your pool or transaction handle
-- GORM or other ORMs: keep the ORM inside your callback and let seedling manage ordering only
+- GORM: use `-gorm` to generate blueprints with `gorm.DB`-based Insert/Delete callbacks
+- ent: use `-ent` to generate blueprints with ent fluent builder Insert/Delete callbacks
+- Atlas HCL: use `-atlas` to generate blueprints from Atlas schema definitions
 
 When you use `database/sql`, [`WithTx`](https://pkg.go.dev/github.com/mhiro2/seedling#WithTx) is the easiest way to get a rollback-on-cleanup transaction. [`NewTestSession`](https://pkg.go.dev/github.com/mhiro2/seedling#NewTestSession) offers the same with registry binding and custom `sql.TxOptions`.
 
@@ -127,7 +129,26 @@ When you use `database/sql`, [`WithTx`](https://pkg.go.dev/github.com/mhiro2/see
 
 ## CLI
 
-[`seedling-gen`](../cmd/seedling-gen) can generate model and blueprint skeletons from schema files, including sqlc-aware output.
+[`seedling-gen`](../cmd/seedling-gen) generates model and blueprint skeletons from multiple input sources:
+
+```bash
+# SQL DDL (default mode)
+seedling-gen -pkg blueprints schema.sql
+
+# sqlc config: auto-resolves schema, output dir, and import path from sqlc.yaml
+seedling-gen -sqlc-config sqlc.yaml -pkg blueprints
+
+# GORM models: parses Go source with gorm struct tags
+seedling-gen -gorm ./models -gorm-pkg github.com/you/app/models -pkg blueprints
+
+# ent schemas: parses ent schema directory (Fields/Edges methods)
+seedling-gen -ent ./ent/schema -ent-pkg github.com/you/app/ent -pkg blueprints
+
+# Atlas HCL: parses Atlas schema file
+seedling-gen -atlas schema.hcl -pkg blueprints
+```
+
+Only one adapter flag can be specified at a time. All modes support `-pkg` (package name) and `-out` (output file path).
 
 ## More References
 

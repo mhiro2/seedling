@@ -144,3 +144,33 @@ This separation keeps the core predictable:
 - `executor` is about runtime values and side effects.
 
 That split also enables `DebugString()`, `DryRunString()`, `Validate()`, graph cloning, and future graph export features without entangling insertion logic.
+
+## seedling-gen code generation pipeline
+
+`seedling-gen` generates blueprint registration code from various schema sources. All adapters converge on a shared intermediate representation before code generation.
+
+```mermaid
+flowchart LR
+    SQL["SQL DDL<br/>schema.sql"] --> Parse["ParseSchema"]
+    SQLC["sqlc config<br/>sqlc.yaml"] --> ParseC["ParseSqlcConfig<br/>+ ParseSchema"]
+    GORM["GORM models<br/>*.go with gorm tags"] --> ParseG["ParseGormDir<br/>go/ast"]
+    ENT["ent schemas<br/>Fields() / Edges()"] --> ParseE["ParseEntSchemaDir<br/>go/ast"]
+    ATLAS["Atlas HCL<br/>schema.hcl"] --> ParseA["ParseAtlasHCL<br/>regex"]
+
+    Parse --> T["[]Table"]
+    ParseC --> T
+    ParseA --> T
+
+    ParseG --> GM["[]GormModel"]
+    ParseE --> ES["[]EntSchema"]
+
+    T --> Gen["Generate /<br/>GenerateSqlc"]
+    GM --> GenG["GenerateGorm"]
+    ES --> GenE["GenerateEnt"]
+
+    Gen --> Out["Go source code<br/>Blueprint registrations"]
+    GenG --> Out
+    GenE --> Out
+```
+
+SQL DDL, sqlc config, and Atlas HCL share the common `[]Table` intermediate type and reuse `Generate()` / `GenerateSqlc()`. GORM and ent have adapter-specific types (`[]GormModel`, `[]EntSchema`) and dedicated generators that emit ORM-specific Insert/Delete callbacks.

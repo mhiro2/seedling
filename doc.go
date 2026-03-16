@@ -164,6 +164,18 @@
 // Generate deterministic fake values with [Generate], [WithSeed], and the
 // seedling/faker subpackage.
 //
+// # SQL Integration
+//
+// seedling does not generate SQL at runtime. Your blueprint owns the Insert
+// and optional Delete callbacks, so the library works with any DB abstraction.
+// The seedling-gen CLI can generate blueprint skeletons from multiple sources:
+//
+//   - SQL DDL: seedling-gen schema.sql
+//   - sqlc config: seedling-gen -sqlc-config sqlc.yaml
+//   - GORM models: seedling-gen -gorm ./models -gorm-pkg example/models
+//   - ent schemas: seedling-gen -ent ./ent/schema -ent-pkg example/ent
+//   - Atlas HCL: seedling-gen -atlas schema.hcl
+//
 // # Related APIs
 //
 // Frequently used APIs:
