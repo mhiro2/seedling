@@ -17,7 +17,12 @@ func Plan(reg Registry, rootType reflect.Type, opts *OptionSet) (*PlanResult, er
 	g := graph.New()
 	visited := make(map[string]*graph.Node)
 
-	_, err = expand(reg, bp, bp.Name, opts, g, visited, nil)
+	var only map[string]bool
+	if opts != nil {
+		only = opts.Only
+	}
+
+	_, err = expand(reg, bp, bp.Name, opts, g, visited, nil, only)
 	if err != nil {
 		return nil, err
 	}
@@ -46,6 +51,7 @@ func PlanMany(reg Registry, rootType reflect.Type, opts []*OptionSet) (*PlanMany
 			graph:   g,
 			visited: visited,
 			share:   shared,
+			only:    nil, // Only is not supported by InsertMany
 		}
 		if _, err := exp.expandBlueprint(bp, rootID, opt, nil, ""); err != nil {
 			return nil, err

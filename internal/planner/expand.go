@@ -12,11 +12,13 @@ func expand(
 	g *graph.Graph,
 	visited map[string]*graph.Node,
 	bindings map[string]*graph.Node,
+	only map[string]bool,
 ) (*graph.Node, error) {
 	return (&expander{
 		reg:     reg,
 		graph:   g,
 		visited: visited,
+		only:    only,
 	}).expandBlueprint(bp, nodeID, opts, bindings, "")
 }
 
@@ -25,6 +27,7 @@ type expander struct {
 	graph   *graph.Graph
 	visited map[string]*graph.Node
 	share   *batchShareState
+	only    map[string]bool // nil = expand all; non-nil = skip root-level relations not in set
 }
 
 func (e *expander) expandBlueprint(bp *BlueprintDef, nodeID string, opts *OptionSet, bindings map[string]*graph.Node, relationPath string) (*graph.Node, error) {
@@ -45,6 +48,10 @@ func (e *expander) expandBlueprint(bp *BlueprintDef, nodeID string, opts *Option
 	e.visited[nodeID] = node
 
 	for _, rel := range bp.Relations {
+		// Lazy evaluation: at root level, skip relations not in the only set.
+		if e.only != nil && relationPath == "" && !e.only[rel.Name] {
+			continue
+		}
 		if err := e.expandRelation(bp, node, nodeID, relationPath, rel, opts, bindings); err != nil {
 			return nil, err
 		}
