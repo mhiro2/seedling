@@ -23,6 +23,22 @@ users := seedling.InsertMany[User](t, db, 3,
 )
 ```
 
+`InsertMany` batch-shares auto-created `BelongsTo` parents when each record resolves to the same static relation options.
+
+```go
+tasks := seedling.InsertMany[Task](t, db, 2,
+    seedling.Ref("project", seedling.Set("Name", "shared-project")),
+)
+```
+
+In this example, `project` is inserted once and both tasks point to the same row.
+
+- Sharing applies only to auto-created `BelongsTo` relations in `InsertMany`
+- The dedupe key is the relation path plus the resolved option tree for that path, after `Seq` and `SeqRef` are expanded per record
+- Static option trees made of `Set`, nested `Ref`, and `Omit` can be shared
+- `Use`, `With`, `Generate`, `When`, and rand-driven options make that relation non-shareable
+- If the resolved options differ per record, seedling inserts separate parent rows
+
 ### Plan-first workflows
 
 Use `Build` when you want to inspect or validate the graph before executing inserts.
