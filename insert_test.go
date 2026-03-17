@@ -71,11 +71,12 @@ func insertMany[T any](tb testing.TB, db seedling.DBTX, n int, opts ...seedling.
 	return session[T](tb).InsertMany(tb, db, n, opts...)
 }
 
-func insertManyE[T any](ctx context.Context, tb testing.TB, db seedling.DBTX, n int, opts ...seedling.Option) ([]T, error) {
+func insertManyE[T any](ctx context.Context, tb testing.TB, db seedling.DBTX, n int, opts ...seedling.Option) (seedling.BatchResult[T], error) {
 	tb.Helper()
 	result, err := session[T](tb).InsertManyE(ctx, db, n, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("insert many test helper: %w", err)
+		var zero seedling.BatchResult[T]
+		return zero, fmt.Errorf("insert many test helper: %w", err)
 	}
 	return result, nil
 }
@@ -1558,7 +1559,7 @@ func TestInsertMany_CountValidation(t *testing.T) {
 			run: func(t *testing.T) (int, error) {
 				t.Helper()
 				result, err := insertManyE[Company](t.Context(), t, nil, -1)
-				return len(result), err
+				return result.Len(), err
 			},
 			wantErr: seedling.ErrInvalidOption,
 		},
@@ -1567,7 +1568,7 @@ func TestInsertMany_CountValidation(t *testing.T) {
 			run: func(t *testing.T) (int, error) {
 				t.Helper()
 				result, err := insertManyE[Company](t.Context(), t, nil, -100)
-				return len(result), err
+				return result.Len(), err
 			},
 			wantErr: seedling.ErrInvalidOption,
 		},
@@ -1576,7 +1577,7 @@ func TestInsertMany_CountValidation(t *testing.T) {
 			run: func(t *testing.T) (int, error) {
 				t.Helper()
 				result, err := insertManyE[Company](t.Context(), t, nil, 0)
-				return len(result), err
+				return result.Len(), err
 			},
 			wantLen: 0,
 		},
@@ -2448,10 +2449,11 @@ func TestInsertOneE_AfterInsertEFailure_ReturnsResult(t *testing.T) {
 	}
 }
 
-func TestInsertManyE_AfterInsertEFailure_ReturnsPartialResults(t *testing.T) {
+func TestInsertManyE_AfterInsertEFailure_ReturnsBatchResult(t *testing.T) {
 	// Arrange
 	ids := seedlingtest.NewIDSequence()
 	reg := seedlingtest.NewRegistry()
+	var deleted []int
 
 	seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
 		Name:    "company",
@@ -2464,6 +2466,10 @@ func TestInsertManyE_AfterInsertEFailure_ReturnsPartialResults(t *testing.T) {
 			v.ID = ids.Next()
 			return v, nil
 		},
+		Delete: func(ctx context.Context, db seedling.DBTX, v Company) error {
+			deleted = append(deleted, v.ID)
+			return nil
+		},
 	})
 
 	sess := seedling.NewSession[Company](reg)
@@ -2471,7 +2477,7 @@ func TestInsertManyE_AfterInsertEFailure_ReturnsPartialResults(t *testing.T) {
 	afterErr := fmt.Errorf("after-insert fail on 2nd")
 
 	// Act
-	results, err := sess.InsertManyE(t.Context(), nil, 3,
+	result, err := sess.InsertManyE(t.Context(), nil, 3,
 		seedling.AfterInsertE(func(c Company, db seedling.DBTX) error {
 			callCount++
 			if callCount == 2 {
@@ -2488,12 +2494,24 @@ func TestInsertManyE_AfterInsertEFailure_ReturnsPartialResults(t *testing.T) {
 	if !errors.Is(err, afterErr) {
 		t.Fatalf("got %v, want wrapped %v", err, afterErr)
 	}
-	// The returned slice should have at least the first record populated
-	if len(results) < 1 {
-		t.Fatalf("expected at least 1 partial result, got %d", len(results))
+	if got, want := result.Len(), 3; got != want {
+		t.Fatalf("got %v, want %v", got, want)
 	}
-	if results[0].ID == 0 {
-		t.Fatal("expected first partial result to have non-zero ID")
+	roots := result.Roots()
+	if len(roots) != 3 {
+		t.Fatalf("got %d roots, want 3", len(roots))
+	}
+	if roots[0].ID == 0 || roots[1].ID == 0 || roots[2].ID == 0 {
+		t.Fatal("expected all inserted roots to have non-zero IDs")
+	}
+	if result.DebugString() == "" {
+		t.Fatal("expected non-empty DebugString")
+	}
+	if err := result.CleanupE(t.Context(), nil); err != nil {
+		t.Fatalf("CleanupE returned unexpected error: %v", err)
+	}
+	if len(deleted) != 3 {
+		t.Fatalf("got %d deleted records, want 3", len(deleted))
 	}
 }
 

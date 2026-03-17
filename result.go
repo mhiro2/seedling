@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"testing"
 
@@ -42,41 +43,13 @@ func (r Result[T]) Root() T {
 //
 // To retrieve all nodes that match a given blueprint name, use [Result.Nodes].
 func (r Result[T]) Node(name string) (NodeResult, bool) {
-	var matchIDs []string
-	for id, nr := range r.nodes {
-		if nr.Name == name {
-			matchIDs = append(matchIDs, id)
-		}
-	}
-	if len(matchIDs) == 0 {
-		return NodeResult{}, false
-	}
-
-	sort.Strings(matchIDs)
-	nr := r.nodes[matchIDs[0]]
-	return NodeResult{name: nr.Name, value: nr.Value}, true
+	return lookupNodeResult(r.nodes, name)
 }
 
 // Nodes returns all nodes that match the given blueprint name, sorted by
 // node ID (lexicographic order). Returns nil if no nodes match.
 func (r Result[T]) Nodes(name string) []NodeResult {
-	var matchIDs []string
-	for id, nr := range r.nodes {
-		if nr.Name == name {
-			matchIDs = append(matchIDs, id)
-		}
-	}
-	if len(matchIDs) == 0 {
-		return nil
-	}
-
-	sort.Strings(matchIDs)
-	results := make([]NodeResult, len(matchIDs))
-	for i, id := range matchIDs {
-		nr := r.nodes[id]
-		results[i] = NodeResult{name: nr.Name, value: nr.Value}
-	}
-	return results
+	return lookupNodeResults(r.nodes, name)
 }
 
 // MustNode returns a named node or panics.
@@ -91,20 +64,13 @@ func (r Result[T]) MustNode(name string) NodeResult {
 // All returns all nodes in the result as a map keyed by node ID.
 // This is useful for inspecting every record that was created during insertion.
 func (r Result[T]) All() map[string]NodeResult {
-	all := make(map[string]NodeResult, len(r.nodes))
-	for id, nr := range r.nodes {
-		all[id] = NodeResult{name: nr.Name, value: nr.Value}
-	}
-	return all
+	return cloneNodeResults(r.nodes)
 }
 
 // DebugString returns a human-readable tree of the execution result,
 // showing each node's state (inserted/provided) and PK value.
 func (r Result[T]) DebugString() string {
-	if r.graph == nil {
-		return "(empty)"
-	}
-	return debug.ResultString(r.graph)
+	return debugResultString(r.graph)
 }
 
 // Cleanup deletes all records that were inserted by seedling in reverse
@@ -133,33 +99,7 @@ func (r Result[T]) Cleanup(tb testing.TB, db DBTX) {
 // Delete functions are captured at result creation time, so cleanup behavior
 // is not affected by subsequent registry resets or re-registrations.
 func (r Result[T]) CleanupE(ctx context.Context, db DBTX) error {
-	if r.graph == nil {
-		return nil
-	}
-
-	order, err := r.graph.TopoSort()
-	if err != nil {
-		return fmt.Errorf("sort cleanup graph: %w", err)
-	}
-
-	// Delete in reverse topological order: children first, then parents.
-	for i := len(order) - 1; i >= 0; i-- {
-		node := order[i]
-		if node.IsProvided {
-			continue
-		}
-
-		df, ok := r.deleteFns[node.BlueprintName]
-		if !ok || df.fn == nil {
-			return fmt.Errorf("cleanup blueprint %q: %w", node.BlueprintName, errx.DeleteNotDefined(node.BlueprintName))
-		}
-
-		if err := df.fn(ctx, db, node.Value); err != nil {
-			return fmt.Errorf("cleanup blueprint %q: %w", node.BlueprintName, errx.DeleteFailed(node.BlueprintName, err))
-		}
-	}
-
-	return nil
+	return cleanupResultGraph(ctx, r.graph, r.deleteFns, db)
 }
 
 // snapshotDeleteFns captures the delete functions from the registry for all
@@ -187,6 +127,89 @@ func snapshotDeleteFns(reg *Registry, nodes map[string]executor.NodeResult) map[
 type NodeResult struct {
 	name  string
 	value any
+}
+
+// BatchResult holds all created nodes after batch insertion.
+type BatchResult[T any] struct {
+	roots     []T
+	nodes     map[string]executor.NodeResult
+	graph     *graph.Graph
+	registry  *Registry
+	deleteFns map[string]deleteFn // blueprint name → delete function snapshot
+}
+
+// Len returns the number of inserted root records.
+func (r BatchResult[T]) Len() int {
+	return len(r.roots)
+}
+
+// Roots returns the inserted root records.
+func (r BatchResult[T]) Roots() []T {
+	return slices.Clone(r.roots)
+}
+
+func (r BatchResult[T]) rootsView() []T {
+	return r.roots
+}
+
+// RootAt returns the inserted root record at index.
+func (r BatchResult[T]) RootAt(index int) (T, bool) {
+	var zero T
+	if index < 0 || index >= len(r.roots) {
+		return zero, false
+	}
+	return r.roots[index], true
+}
+
+// MustRootAt returns the inserted root record at index or panics.
+func (r BatchResult[T]) MustRootAt(index int) T {
+	root, ok := r.RootAt(index)
+	if !ok {
+		panic(fmt.Sprintf("seedling: root index %d out of range", index))
+	}
+	return root
+}
+
+// Node returns a named node from the dependency graph by blueprint name.
+func (r BatchResult[T]) Node(name string) (NodeResult, bool) {
+	return lookupNodeResult(r.nodes, name)
+}
+
+// Nodes returns all nodes that match the given blueprint name.
+func (r BatchResult[T]) Nodes(name string) []NodeResult {
+	return lookupNodeResults(r.nodes, name)
+}
+
+// MustNode returns a named node or panics.
+func (r BatchResult[T]) MustNode(name string) NodeResult {
+	nr, ok := r.Node(name)
+	if !ok {
+		panic(fmt.Sprintf("seedling: node %q not found in result", name))
+	}
+	return nr
+}
+
+// All returns all nodes in the result as a map keyed by node ID.
+func (r BatchResult[T]) All() map[string]NodeResult {
+	return cloneNodeResults(r.nodes)
+}
+
+// DebugString returns a human-readable tree of the execution result.
+func (r BatchResult[T]) DebugString() string {
+	return debugResultString(r.graph)
+}
+
+// Cleanup deletes all records that were inserted by seedling in reverse dependency order.
+func (r BatchResult[T]) Cleanup(tb testing.TB, db DBTX) {
+	tb.Helper()
+	if err := r.CleanupE(tb.Context(), db); err != nil {
+		tb.Fatal(err)
+	}
+}
+
+// CleanupE deletes all records that were inserted by seedling in reverse dependency order.
+func (r BatchResult[T]) CleanupE(ctx context.Context, db DBTX) error {
+	return cleanupResultGraph(ctx, r.graph, r.deleteFns, db)
 }
 
 // Name returns the blueprint name of this node.
@@ -251,4 +274,84 @@ func NodesAs[T any](lookup interface {
 		values[i] = value
 	}
 	return values, nil
+}
+
+func lookupNodeResult(nodes map[string]executor.NodeResult, name string) (NodeResult, bool) {
+	var matchIDs []string
+	for id, nr := range nodes {
+		if nr.Name == name {
+			matchIDs = append(matchIDs, id)
+		}
+	}
+	if len(matchIDs) == 0 {
+		return NodeResult{}, false
+	}
+
+	sort.Strings(matchIDs)
+	nr := nodes[matchIDs[0]]
+	return NodeResult{name: nr.Name, value: nr.Value}, true
+}
+
+func lookupNodeResults(nodes map[string]executor.NodeResult, name string) []NodeResult {
+	var matchIDs []string
+	for id, nr := range nodes {
+		if nr.Name == name {
+			matchIDs = append(matchIDs, id)
+		}
+	}
+	if len(matchIDs) == 0 {
+		return nil
+	}
+
+	sort.Strings(matchIDs)
+	results := make([]NodeResult, len(matchIDs))
+	for i, id := range matchIDs {
+		nr := nodes[id]
+		results[i] = NodeResult{name: nr.Name, value: nr.Value}
+	}
+	return results
+}
+
+func cloneNodeResults(nodes map[string]executor.NodeResult) map[string]NodeResult {
+	all := make(map[string]NodeResult, len(nodes))
+	for id, nr := range nodes {
+		all[id] = NodeResult{name: nr.Name, value: nr.Value}
+	}
+	return all
+}
+
+func debugResultString(g *graph.Graph) string {
+	if g == nil {
+		return "(empty)"
+	}
+	return debug.ResultString(g)
+}
+
+func cleanupResultGraph(ctx context.Context, g *graph.Graph, deleteFns map[string]deleteFn, db DBTX) error {
+	if g == nil {
+		return nil
+	}
+
+	order, err := g.TopoSort()
+	if err != nil {
+		return fmt.Errorf("sort cleanup graph: %w", err)
+	}
+
+	for i := len(order) - 1; i >= 0; i-- {
+		node := order[i]
+		if node.IsProvided {
+			continue
+		}
+
+		df, ok := deleteFns[node.BlueprintName]
+		if !ok || df.fn == nil {
+			return fmt.Errorf("cleanup blueprint %q: %w", node.BlueprintName, errx.DeleteNotDefined(node.BlueprintName))
+		}
+
+		if err := df.fn(ctx, db, node.Value); err != nil {
+			return fmt.Errorf("cleanup blueprint %q: %w", node.BlueprintName, errx.DeleteFailed(node.BlueprintName, err))
+		}
+	}
+
+	return nil
 }

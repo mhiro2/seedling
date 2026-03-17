@@ -23,6 +23,23 @@ users := seedling.InsertMany[User](t, db, 3,
 )
 ```
 
+Use `InsertManyE` when you need the full batch result for debugging or cleanup.
+
+```go
+result, err := seedling.InsertManyE[User](ctx, db, 3,
+    seedling.Seq("Name", func(i int) string {
+        return fmt.Sprintf("user-%d", i)
+    }),
+)
+if err != nil {
+    _ = result.CleanupE(ctx, db)
+    t.Fatal(err)
+}
+
+users := result.Roots()
+_ = users
+```
+
 `InsertMany` batch-shares auto-created `BelongsTo` parents when each record resolves to the same static relation options.
 
 ```go
@@ -100,6 +117,16 @@ func TestUser(t *testing.T) {
 
 For more control (custom `sql.TxOptions`, registry binding), use `NewTestSession` instead.
 
+If you use pgx directly, `github.com/mhiro2/seedling/seedlingpgx` provides the same workflow for `pgxpool.Pool` or `*pgx.Conn`.
+
+```go
+func TestUser(t *testing.T) {
+    tx := seedlingpgx.WithTx(t, pool)
+    user := seedling.InsertOne[User](t, tx).Root()
+    _ = user
+}
+```
+
 ## Common Options
 
 - `Set`: override one field by Go struct field name
@@ -129,12 +156,12 @@ seedling does not generate SQL at runtime. Your blueprint owns the `Insert` and 
 
 - sqlc: map `Insert` callbacks to generated query methods. Use `-sqlc-config` for automatic setup
 - `database/sql`: pass `*sql.DB` or `*sql.Tx`
-- pgx: pass your pool or transaction handle
+- pgx: pass your pool or transaction handle, or use `github.com/mhiro2/seedling/seedlingpgx` for rollback-on-cleanup helpers
 - GORM: use `-gorm` to generate blueprints with `gorm.DB`-based Insert/Delete callbacks
 - ent: use `-ent` to generate blueprints with ent fluent builder Insert/Delete callbacks
 - Atlas HCL: use `-atlas` to generate blueprints from Atlas schema definitions
 
-When you use `database/sql`, [`WithTx`](https://pkg.go.dev/github.com/mhiro2/seedling#WithTx) is the easiest way to get a rollback-on-cleanup transaction. [`NewTestSession`](https://pkg.go.dev/github.com/mhiro2/seedling#NewTestSession) offers the same with registry binding and custom `sql.TxOptions`.
+When you use `database/sql`, [`WithTx`](https://pkg.go.dev/github.com/mhiro2/seedling#WithTx) is the easiest way to get a rollback-on-cleanup transaction. [`NewTestSession`](https://pkg.go.dev/github.com/mhiro2/seedling#NewTestSession) offers the same with registry binding and custom `sql.TxOptions`. For pgx, use [`seedlingpgx.WithTx`](https://pkg.go.dev/github.com/mhiro2/seedling/seedlingpgx#WithTx) or [`seedlingpgx.NewTestSession`](https://pkg.go.dev/github.com/mhiro2/seedling/seedlingpgx#NewTestSession).
 
 ## Debugging And Cleanup
 
@@ -142,6 +169,8 @@ When you use `database/sql`, [`WithTx`](https://pkg.go.dev/github.com/mhiro2/see
 - `Plan.DryRunString`: inspect insert order and FK assignments without executing inserts
 - `Result.DebugString`: inspect inserted nodes with primary-key values
 - `Result.Cleanup` / `CleanupE`: delete inserted rows in reverse dependency order when transaction rollback is not available
+- `BatchResult.DebugString`: inspect the full batch execution graph with primary-key values
+- `BatchResult.Cleanup` / `CleanupE`: delete rows inserted by `InsertManyE`
 
 ## CLI
 

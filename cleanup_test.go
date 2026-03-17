@@ -170,6 +170,30 @@ func TestCleanup(t *testing.T) {
 			t.Fatalf("expected no error on empty result, got %v", err)
 		}
 	})
+
+	t.Run("deletes batch result", func(t *testing.T) {
+		// Arrange
+		var deleted []string
+		setupCleanupBlueprints(t, &deleted)
+
+		// Act
+		result, err := session[Company](t).InsertManyE(t.Context(), nil, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		err = result.CleanupE(t.Context(), nil)
+		// Assert
+		if err != nil {
+			t.Fatalf("expected no error on batch cleanup, got %v", err)
+		}
+		if len(deleted) != 2 {
+			t.Fatalf("expected 2 deletions, got %d: %v", len(deleted), deleted)
+		}
+		if result.DebugString() == "" {
+			t.Fatal("expected non-empty DebugString")
+		}
+	})
 }
 
 func TestCleanup_SnapshotDeleteFns(t *testing.T) {
