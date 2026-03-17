@@ -1,6 +1,6 @@
 # seedling Guide
 
-This guide keeps the README short and points to the most useful workflows when you are evaluating or adopting seedling.
+Practical workflows and API patterns for using seedling in your tests. Start with the [README Quick Start](../README.md#-quick-start) if you haven't set up seedling yet.
 
 ## Core Workflows
 
@@ -22,6 +22,22 @@ users := seedling.InsertMany[User](t, db, 3,
     }),
 )
 ```
+
+`InsertMany` batch-shares auto-created `BelongsTo` parents when each record resolves to the same static relation options.
+
+```go
+tasks := seedling.InsertMany[Task](t, db, 2,
+    seedling.Ref("project", seedling.Set("Name", "shared-project")),
+)
+```
+
+In this example, `project` is inserted once and both tasks point to the same row.
+
+- Sharing applies only to auto-created `BelongsTo` relations in `InsertMany`
+- The dedupe key is the relation path plus the resolved option tree for that path, after `Seq` and `SeqRef` are expanded per record
+- Static option trees made of `Set`, nested `Ref`, and `Omit` can be shared
+- `Use`, `With`, `Generate`, `When`, and rand-driven options make that relation non-shareable
+- If the resolved options differ per record, seedling inserts separate parent rows
 
 ### Plan-first workflows
 
@@ -169,9 +185,16 @@ Supported locales: `en` (default), `ja`, `zh`, `ko`, `de`, `fr`.
 
 `New(r)` defaults to `"en"` and is fully backward compatible.
 
+## Examples
+
+- [basic](../examples/basic) -- register blueprints and insert rows with automatic parent creation
+- [sqlc](../examples/sqlc) -- wire blueprints to sqlc-generated query code
+- [reuse-parent](../examples/reuse-parent) -- reuse existing rows with `Use`
+- [custom-defaults](../examples/custom-defaults) -- customize values with `Set`, `With`, and `Generate`
+
 ## More References
 
+- [Architecture](../ARCHITECTURE.md) -- internal pipeline design (planner, graph, executor)
+- [README](../README.md) -- project overview, Quick Start, and comparison table
 - [pkg.go.dev package docs](https://pkg.go.dev/github.com/mhiro2/seedling)
 - [faker package docs](https://pkg.go.dev/github.com/mhiro2/seedling/faker)
-- [basic example](../examples/basic)
-- [sqlc example](../examples/sqlc)

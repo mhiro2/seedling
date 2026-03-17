@@ -155,6 +155,11 @@
 //	)
 //	_ = users
 //
+// [InsertMany] batch-shares auto-created belongs-to relations when the same
+// relation path resolves to the same static option tree after [Seq] and
+// [SeqRef] are expanded. Relation-local [Use], [With], [Generate], [When], and
+// rand-driven options disable sharing for that relation.
+//
 // Skip unnecessary relations with [Only]:
 //
 //	// Only insert task + project subtree; skip assignee and other relations.

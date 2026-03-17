@@ -59,10 +59,11 @@ table "users" {
 
 	// Act
 	tables := mustParseAtlasHCL(t, hcl)
+
+	// Assert
 	if len(tables) != 2 {
 		t.Fatalf("expected 2 tables, got %d", len(tables))
 	}
-
 	if tables[0].Name != "companies" {
 		t.Fatalf("expected table 'companies', got %q", tables[0].Name)
 	}
@@ -122,10 +123,11 @@ table "article_tags" {
 
 	// Act
 	tables := mustParseAtlasHCL(t, hcl)
+
+	// Assert
 	if len(tables) != 1 {
 		t.Fatalf("expected 1 table, got %d", len(tables))
 	}
-
 	pkCount := 0
 	for _, col := range tables[0].Columns {
 		if col.IsPK {
@@ -176,10 +178,11 @@ table "items" {
 
 	// Act
 	tables := mustParseAtlasHCL(t, hcl)
+
+	// Assert
 	if len(tables) != 1 {
 		t.Fatalf("expected 1 table, got %d", len(tables))
 	}
-
 	tests := []struct {
 		colName string
 		goType  string
@@ -203,6 +206,7 @@ table "items" {
 }
 
 func TestSplitAtlasColumnRefs(t *testing.T) {
+	// Arrange
 	tests := []struct {
 		name  string
 		input string
@@ -239,6 +243,7 @@ func TestSplitAtlasColumnRefs(t *testing.T) {
 }
 
 func TestExtractAtlasRefTable(t *testing.T) {
+	// Arrange
 	tests := []struct {
 		name  string
 		input string
@@ -258,6 +263,7 @@ func TestExtractAtlasRefTable(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Act & Assert
 			got := extractAtlasRefTable(tt.input)
 			if got != tt.want {
 				t.Fatalf("got %q, want %q", got, tt.want)
@@ -385,6 +391,283 @@ table "items" {
 	}
 	if !strings.Contains(output, `Name:    "item"`) {
 		t.Fatalf("expected blueprint name 'item', got:\n%s", output)
+	}
+}
+
+func TestStripHCLComments(t *testing.T) {
+	// Arrange
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "hash comment",
+			input: "# comment\ntable \"t\" {",
+			want:  "\ntable \"t\" {",
+		},
+		{
+			name:  "double-slash comment",
+			input: "// comment\ntable \"t\" {",
+			want:  "\ntable \"t\" {",
+		},
+		{
+			name:  "comment inside string",
+			input: `column "name" { default = "# not a comment" }`,
+			want:  `column "name" { default = "# not a comment" }`,
+		},
+		{
+			name:  "no comments",
+			input: `table "t" { column "id" { type = int } }`,
+			want:  `table "t" { column "id" { type = int } }`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Act & Assert
+			got := stripHCLComments(tt.input)
+			if got != tt.want {
+				t.Fatalf("stripHCLComments(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseAtlasHCL_MultipleFKs(t *testing.T) {
+	// Arrange
+	hcl := `
+table "reviews" {
+  column "id" {
+    type = serial
+    null = false
+  }
+  column "author_id" {
+    type = int
+    null = false
+  }
+  column "reviewer_id" {
+    type = int
+    null = true
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  foreign_key "fk_author" {
+    columns     = [column.author_id]
+    ref_columns = [table.users.column.id]
+  }
+  foreign_key "fk_reviewer" {
+    columns     = [column.reviewer_id]
+    ref_columns = [table.users.column.id]
+  }
+}
+`
+	// Act
+	tables := mustParseAtlasHCL(t, hcl)
+
+	// Assert
+	if len(tables) != 1 {
+		t.Fatalf("expected 1 table, got %d", len(tables))
+	}
+	if len(tables[0].ForeignKeys) != 2 {
+		t.Fatalf("expected 2 FKs, got %d", len(tables[0].ForeignKeys))
+	}
+	for _, fk := range tables[0].ForeignKeys {
+		if fk.RefTable != "users" {
+			t.Fatalf("expected FK ref %q, got %q", "users", fk.RefTable)
+		}
+	}
+	if !tables[0].ForeignKeys[0].NotNull {
+		t.Fatal("expected author FK to be NOT NULL")
+	}
+	if tables[0].ForeignKeys[1].NotNull {
+		t.Fatal("expected reviewer FK to be nullable")
+	}
+}
+
+func TestParseAtlasHCL_CompositeFK(t *testing.T) {
+	// Arrange
+	hcl := `
+table "regions" {
+  column "country_code" {
+    type = text
+    null = false
+  }
+  column "region_code" {
+    type = text
+    null = false
+  }
+  primary_key {
+    columns = [column.country_code, column.region_code]
+  }
+}
+
+table "deployments" {
+  column "id" {
+    type = serial
+    null = false
+  }
+  column "region_country" {
+    type = text
+    null = false
+  }
+  column "region_code" {
+    type = text
+    null = false
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  foreign_key "fk_region" {
+    columns     = [column.region_country, column.region_code]
+    ref_columns = [table.regions.column.country_code, table.regions.column.region_code]
+  }
+}
+`
+	// Act
+	tables := mustParseAtlasHCL(t, hcl)
+
+	// Assert
+	if len(tables) != 2 {
+		t.Fatalf("expected 2 tables, got %d", len(tables))
+	}
+	deployments := tables[1]
+	if len(deployments.ForeignKeys) != 1 {
+		t.Fatalf("expected 1 FK, got %d", len(deployments.ForeignKeys))
+	}
+	fk := deployments.ForeignKeys[0]
+	if fk.RefTable != "regions" {
+		t.Fatalf("expected FK ref %q, got %q", "regions", fk.RefTable)
+	}
+	if len(fk.Columns) != 2 {
+		t.Fatalf("expected 2 FK columns, got %d", len(fk.Columns))
+	}
+	if fk.Columns[0] != "region_country" || fk.Columns[1] != "region_code" {
+		t.Fatalf("unexpected FK columns: %v", fk.Columns)
+	}
+}
+
+func TestParseAtlasHCL_SelfReferencingFK(t *testing.T) {
+	// Arrange
+	hcl := `
+table "categories" {
+  column "id" {
+    type = serial
+    null = false
+  }
+  column "parent_id" {
+    type = int
+    null = true
+  }
+  primary_key {
+    columns = [column.id]
+  }
+  foreign_key "fk_parent" {
+    columns     = [column.parent_id]
+    ref_columns = [table.categories.column.id]
+  }
+}
+`
+	// Act
+	tables := mustParseAtlasHCL(t, hcl)
+
+	// Assert
+	if len(tables) != 1 {
+		t.Fatalf("expected 1 table, got %d", len(tables))
+	}
+	if len(tables[0].ForeignKeys) != 1 {
+		t.Fatalf("expected 1 FK, got %d", len(tables[0].ForeignKeys))
+	}
+	fk := tables[0].ForeignKeys[0]
+	if fk.RefTable != "categories" {
+		t.Fatalf("expected self-ref FK to %q, got %q", "categories", fk.RefTable)
+	}
+	if fk.NotNull {
+		t.Fatal("expected self-referencing FK to be nullable")
+	}
+
+	// Verify column-level FK info.
+	var parentCol Column
+	for _, col := range tables[0].Columns {
+		if col.Name == "parent_id" {
+			parentCol = col
+			break
+		}
+	}
+	if !parentCol.IsFK {
+		t.Fatal("expected parent_id to be marked as FK")
+	}
+	if parentCol.FKRefTable != "categories" {
+		t.Fatalf("expected FKRefTable %q, got %q", "categories", parentCol.FKRefTable)
+	}
+}
+
+func TestParseAtlasHCL_WithComments(t *testing.T) {
+	// Arrange
+	tests := []struct {
+		name     string
+		hcl      string
+		wantCols int
+	}{
+		{
+			name: "hash comment",
+			hcl: `
+# Users table
+table "users" {
+  # Primary key
+  column "id" {
+    type = serial
+    null = false
+  }
+  column "name" {
+    type = text
+    null = false
+  }
+  primary_key {
+    columns = [column.id]
+  }
+}
+`,
+			wantCols: 2,
+		},
+		{
+			name: "double-slash comment",
+			hcl: `
+table "users" {
+  column "id" {
+    type = serial
+    null = false
+  }
+  // column "deprecated" {
+  //   type = text
+  // }
+  column "name" {
+    type = text
+    null = false
+  }
+  primary_key {
+    columns = [column.id]
+  }
+}
+`,
+			wantCols: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Act
+			tables := mustParseAtlasHCL(t, tt.hcl)
+
+			// Assert
+			if len(tables) != 1 {
+				t.Fatalf("expected 1 table, got %d", len(tables))
+			}
+			if len(tables[0].Columns) != tt.wantCols {
+				t.Fatalf("expected %d columns, got %d", tt.wantCols, len(tables[0].Columns))
+			}
+		})
 	}
 }
 
