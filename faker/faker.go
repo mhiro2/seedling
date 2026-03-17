@@ -23,17 +23,29 @@ import (
 
 // Faker generates deterministic fake data from a *rand.Rand source.
 type Faker struct {
-	rng *rand.Rand
+	rng    *rand.Rand
+	locale *localeData
 }
 
-// New creates a Faker backed by the given RNG.
+// New creates a Faker backed by the given RNG with the default "en" locale.
 // Passing the *rand.Rand from seedling.Generate ensures deterministic output.
 // It panics if r is nil.
 func New(r *rand.Rand) *Faker {
+	return NewWithLocale(r, "en")
+}
+
+// NewWithLocale creates a Faker backed by the given RNG with the specified locale.
+// Supported locales: "en", "ja", "zh", "ko", "de", "fr".
+// It panics if r is nil or the locale is unknown.
+func NewWithLocale(r *rand.Rand, locale string) *Faker {
 	if r == nil {
-		panic("faker: New requires a non-nil *rand.Rand")
+		panic("faker: NewWithLocale requires a non-nil *rand.Rand")
 	}
-	return &Faker{rng: r}
+	ld, ok := locales[locale]
+	if !ok {
+		panic(fmt.Sprintf("faker: unknown locale %q", locale))
+	}
+	return &Faker{rng: r, locale: ld}
 }
 
 // Default creates a Faker with a non-deterministic seed.
@@ -46,21 +58,41 @@ func Default() *Faker {
 // --- Person ---
 
 // FirstName returns a random first name.
-func (f *Faker) FirstName() string { return f.pick(firstNames) }
+func (f *Faker) FirstName() string { return f.pick(f.locale.firstNames) }
 
 // LastName returns a random last name.
-func (f *Faker) LastName() string { return f.pick(lastNames) }
+func (f *Faker) LastName() string { return f.pick(f.locale.lastNames) }
 
-// Name returns a random full name (first + last).
-func (f *Faker) Name() string { return f.FirstName() + " " + f.LastName() }
+// Name returns a random full name.
+// For CJK locales (ja, zh, ko), the name is formatted as LastFirst (no space).
+func (f *Faker) Name() string {
+	first := f.pick(f.locale.firstNames)
+	last := f.pick(f.locale.lastNames)
+	if f.locale.formatName != nil {
+		return f.locale.formatName(first, last)
+	}
+	return first + " " + last
+}
 
 // --- Internet ---
 
 // Email returns a random email address.
+// For non-Latin locales, romanized names are used to produce valid ASCII addresses.
 func (f *Faker) Email() string {
-	first := strings.ToLower(f.FirstName())
-	last := strings.ToLower(f.LastName())
+	fnames := f.locale.firstNames
+	lnames := f.locale.lastNames
+	if f.locale.romanizedFirstNames != nil {
+		fnames = f.locale.romanizedFirstNames
+	}
+	if f.locale.romanizedLastNames != nil {
+		lnames = f.locale.romanizedLastNames
+	}
+	first := strings.ToLower(f.pick(fnames))
+	last := strings.ToLower(f.pick(lnames))
 	domain := f.pick(domains)
+	if f.locale.formatEmail != nil {
+		return f.locale.formatEmail(first, last, domain)
+	}
 	return fmt.Sprintf("%s.%s@%s", first, last, domain)
 }
 
@@ -93,8 +125,11 @@ func (f *Faker) IPv4() string {
 
 // --- Phone ---
 
-// Phone returns a random phone number in +1-XXX-XXX-XXXX format.
+// Phone returns a random phone number in a locale-appropriate format.
 func (f *Faker) Phone() string {
+	if f.locale.formatPhone != nil {
+		return f.locale.formatPhone(f.rng)
+	}
 	return fmt.Sprintf("+1-%03d-%03d-%04d",
 		f.rng.IntN(900)+100,
 		f.rng.IntN(900)+100,
@@ -104,23 +139,32 @@ func (f *Faker) Phone() string {
 
 // --- Address ---
 
-// Address returns a random street address.
+// Address returns a random street address in a locale-appropriate format.
 func (f *Faker) Address() string {
-	return fmt.Sprintf("%d %s %s",
-		f.rng.IntN(9999)+1,
-		f.pick(streets),
-		f.pick(streetSuffixes),
-	)
+	if f.locale.formatAddress != nil {
+		street := f.pick(f.locale.streets)
+		suffix := f.pick(f.locale.streetSuffixes)
+		return f.locale.formatAddress(f.rng, street, suffix)
+	}
+	num := f.rng.IntN(9999) + 1
+	street := f.pick(f.locale.streets)
+	suffix := f.pick(f.locale.streetSuffixes)
+	return fmt.Sprintf("%d %s %s", num, street, suffix)
 }
 
 // City returns a random city name.
-func (f *Faker) City() string { return f.pick(cities) }
+func (f *Faker) City() string { return f.pick(f.locale.cities) }
 
 // Country returns a random country name.
 func (f *Faker) Country() string { return f.pick(countries) }
 
-// ZipCode returns a random 5-digit US zip code.
-func (f *Faker) ZipCode() string { return fmt.Sprintf("%05d", f.rng.IntN(100000)) }
+// ZipCode returns a random zip/postal code in a locale-appropriate format.
+func (f *Faker) ZipCode() string {
+	if f.locale.formatZipCode != nil {
+		return f.locale.formatZipCode(f.rng)
+	}
+	return fmt.Sprintf("%05d", f.rng.IntN(100000))
+}
 
 // --- Text ---
 
