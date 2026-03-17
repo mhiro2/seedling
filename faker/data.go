@@ -1,5 +1,15 @@
 package faker
 
+func init() {
+	registerLocale("en", &localeData{
+		firstNames:     firstNames,
+		lastNames:      lastNames,
+		cities:         cities,
+		streets:        streets,
+		streetSuffixes: streetSuffixes,
+	})
+}
+
 var firstNames = []string{
 	"James", "Mary", "Robert", "Patricia", "John", "Jennifer", "Michael", "Linda",
 	"David", "Elizabeth", "William", "Barbara", "Richard", "Susan", "Joseph", "Jessica",
