@@ -509,15 +509,20 @@ func TestBuilder_InsertManyE(t *testing.T) {
 	sess := seedling.NewSession[Company](reg)
 
 	// Act
-	companies, err := seedling.ForSession(sess).
+	result, err := seedling.ForSession(sess).
 		Set("Name", "batchE").
 		InsertManyE(t.Context(), nil, 2)
 		// Assert
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(companies) != 2 {
-		t.Fatalf("got len %d, want %d", len(companies), 2)
+	if got, want := result.Len(), 2; got != want {
+		t.Fatalf("got len %d, want %d", got, want)
+	}
+	for i, company := range result.Roots() {
+		if company.ID == 0 {
+			t.Fatalf("result[%d] has zero ID", i)
+		}
 	}
 }
 
@@ -583,10 +588,10 @@ func TestPackageLevelInsertManyE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(results) != 3 {
-		t.Fatalf("got %d results, want 3", len(results))
+	if got, want := results.Len(), 3; got != want {
+		t.Fatalf("got %d results, want 3", got)
 	}
-	for i, c := range results {
+	for i, c := range results.Roots() {
 		if c.ID == 0 {
 			t.Fatalf("result[%d] has zero ID", i)
 		}

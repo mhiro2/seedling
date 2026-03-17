@@ -244,6 +244,35 @@ func TestResult_DebugString_Empty(t *testing.T) {
 	}
 }
 
+func TestBatchResult_RootAccessors(t *testing.T) {
+	// Arrange
+	result := BatchResult[internalCompany]{
+		roots: []internalCompany{
+			{ID: 1, Name: "one"},
+			{ID: 2, Name: "two"},
+		},
+	}
+
+	// Act
+	roots := result.Roots()
+	root, ok := result.RootAt(1)
+
+	// Assert
+	if len(roots) != 2 {
+		t.Fatalf("got %v, want %v", len(roots), 2)
+	}
+	if !ok {
+		t.Fatal("expected root at index 1")
+	}
+	if got, want := root.Name, "two"; got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	roots[0].Name = "changed"
+	if got, want := result.MustRootAt(0).Name, "one"; got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
 func TestSessionBuildE_ReturnsErrorForUnknownTrait(t *testing.T) {
 	// Arrange
 	reg := NewRegistry()

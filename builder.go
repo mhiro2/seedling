@@ -135,10 +135,10 @@ func (b *Builder[T]) InsertMany(tb testing.TB, db DBTX, n int) []T {
 	return b.session.InsertMany(tb, db, n, b.opts...)
 }
 
-// InsertManyE creates and inserts n records, returning an error on failure.
+// InsertManyE creates and inserts n records, returning a [BatchResult].
 // Shared belongs-to dependencies are inserted once when their resolved options
 // are identical across records.
-func (b *Builder[T]) InsertManyE(ctx context.Context, db DBTX, n int) ([]T, error) {
+func (b *Builder[T]) InsertManyE(ctx context.Context, db DBTX, n int) (BatchResult[T], error) {
 	return b.session.InsertManyE(ctx, db, n, b.opts...)
 }
 

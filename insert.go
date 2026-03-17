@@ -63,34 +63,38 @@ func (s Session[T]) InsertMany(tb testing.TB, db DBTX, n int, opts ...Option) []
 	if err != nil {
 		tb.Fatal(err)
 	}
-	return result
+	return result.rootsView()
 }
 
-// InsertManyE creates and inserts n records of type T, returning an error on failure.
+// InsertManyE creates and inserts n records of type T, returning a [BatchResult]
+// for cleanup and graph inspection.
 // When Seq options are present, the sequence function is called with the 0-based
 // index for each record. Shared belongs-to dependencies are inserted once when
 // their resolved options are identical across records.
-func InsertManyE[T any](ctx context.Context, db DBTX, n int, opts ...Option) ([]T, error) {
+func InsertManyE[T any](ctx context.Context, db DBTX, n int, opts ...Option) (BatchResult[T], error) {
 	return NewSession[T](nil).InsertManyE(ctx, db, n, opts...)
 }
 
-// InsertManyE creates and inserts n records of type T, returning an error on failure.
+// InsertManyE creates and inserts n records of type T, returning a [BatchResult]
+// for cleanup and graph inspection.
 // When Seq options are present, the sequence function is called with the 0-based
 // index for each record. Shared belongs-to dependencies are inserted once when
 // their resolved options are identical across records.
-func (s Session[T]) InsertManyE(ctx context.Context, db DBTX, n int, opts ...Option) ([]T, error) {
+func (s Session[T]) InsertManyE(ctx context.Context, db DBTX, n int, opts ...Option) (BatchResult[T], error) {
 	ctx, opts = extractContext(ctx, opts)
+	var zero BatchResult[T]
+
 	if n < 0 {
-		return nil, fmt.Errorf("validate insert count: n must be >= 0, got %d: %w", n, ErrInvalidOption)
+		return zero, fmt.Errorf("validate insert count: n must be >= 0, got %d: %w", n, ErrInvalidOption)
 	}
 	if n == 0 {
-		return []T{}, nil
+		return BatchResult[T]{roots: []T{}}, nil
 	}
 
 	// Validate InsertMany-incompatible options before doing any work.
 	precheck := collectOptions(opts)
 	if err := validateInsertManyOptions(precheck); err != nil {
-		return nil, err
+		return zero, err
 	}
 
 	rootType := reflect.TypeFor[T]()
@@ -101,7 +105,7 @@ func (s Session[T]) InsertManyE(ctx context.Context, db DBTX, n int, opts ...Opt
 		resolved := resolveSeqs(opts, i)
 		prepared, err := prepareRootOptions(s.registry, rootType, resolved)
 		if err != nil {
-			return nil, err
+			return zero, err
 		}
 		collected[i] = prepared
 		internalOpts[i] = toOptionSet(prepared)
@@ -110,7 +114,7 @@ func (s Session[T]) InsertManyE(ctx context.Context, db DBTX, n int, opts ...Opt
 	adapter := newRegistryAdapter(s.registry)
 	plan, err := planner.PlanMany(adapter, rootType, internalOpts)
 	if err != nil {
-		return nil, fmt.Errorf("build plan: %w", err)
+		return zero, fmt.Errorf("build plan: %w", err)
 	}
 
 	// Extract logFn from the first collected optionSet (all share the same logFn).
@@ -140,35 +144,46 @@ func (s Session[T]) InsertManyE(ctx context.Context, db DBTX, n int, opts ...Opt
 
 	execResult, err := executor.Execute(ctx, s.resolveDB(db), plan.Graph, adapter, execLogFn)
 	if err != nil {
-		return nil, fmt.Errorf("execute plan: %w", err)
+		return zero, fmt.Errorf("execute plan: %w", err)
 	}
 
-	results := make([]T, len(plan.RootIDs))
+	roots := make([]T, len(plan.RootIDs))
 	for i, rootID := range plan.RootIDs {
 		node, ok := execResult.Nodes[rootID]
 		if !ok {
-			return results, fmt.Errorf("seedling: root node %q not found in batch result", rootID)
+			return zero, fmt.Errorf("seedling: root node %q not found in batch result", rootID)
 		}
 
 		root, ok := node.Value.(T)
 		if !ok {
-			return results, fmt.Errorf("%w: root node %q has value %T, want %s", ErrTypeMismatch, rootID, node.Value, rootType)
+			return zero, fmt.Errorf("%w: root node %q has value %T, want %s", ErrTypeMismatch, rootID, node.Value, rootType)
 		}
 
-		results[i] = root
+		roots[i] = root
+	}
+
+	result := BatchResult[T]{
+		roots:     roots,
+		nodes:     execResult.Nodes,
+		graph:     execResult.Graph,
+		registry:  s.registry,
+		deleteFns: snapshotDeleteFns(s.registry, execResult.Nodes),
+	}
+
+	for i, root := range roots {
 		for _, fn := range collected[i].afterInserts {
 			switch cb := fn.(type) {
 			case func(T, DBTX):
 				cb(root, s.resolveDB(db))
 			case func(T, DBTX) error:
 				if err := cb(root, s.resolveDB(db)); err != nil {
-					return results, fmt.Errorf("run after-insert callback: %w", err)
+					return result, fmt.Errorf("run after-insert callback: %w", err)
 				}
 			}
 		}
 	}
 
-	return results, nil
+	return result, nil
 }
 
 // extractContext extracts a WithContext option from opts and returns
