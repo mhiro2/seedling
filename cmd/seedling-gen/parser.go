@@ -55,6 +55,8 @@ func ParseSchemaWithDialect(sql, dialect string) ([]Table, error) {
 		return nil, fmt.Errorf("unsupported dialect %q", dialect)
 	}
 
+	sql = stripSQLComments(sql)
+
 	var tables []Table
 	enumTypes := extractEnumTypes(sql)
 
@@ -472,6 +474,68 @@ func singularize(s string) string {
 		return s[:len(s)-1]
 	}
 	return s
+}
+
+// stripSQLComments removes SQL line comments (--) and block comments (/* ... */)
+// while preserving comment-like sequences inside single-quoted string literals.
+func stripSQLComments(sql string) string {
+	var b strings.Builder
+	b.Grow(len(sql))
+
+	i := 0
+	inSingle := false
+	for i < len(sql) {
+		ch := sql[i]
+
+		if inSingle {
+			b.WriteByte(ch)
+			if ch == '\'' {
+				inSingle = false
+			}
+			i++
+			continue
+		}
+
+		if ch == '\'' {
+			inSingle = true
+			b.WriteByte(ch)
+			i++
+			continue
+		}
+
+		// Line comment: -- to end of line.
+		if ch == '-' && i+1 < len(sql) && sql[i+1] == '-' {
+			for i < len(sql) && sql[i] != '\n' {
+				i++
+			}
+			// Preserve the newline to keep line structure.
+			if i < len(sql) {
+				b.WriteByte('\n')
+				i++
+			}
+			continue
+		}
+
+		// Block comment: /* to */.
+		if ch == '/' && i+1 < len(sql) && sql[i+1] == '*' {
+			i += 2
+			for i+1 < len(sql) {
+				if sql[i] == '*' && sql[i+1] == '/' {
+					i += 2
+					break
+				}
+				i++
+			}
+			// Replace with a space to avoid joining tokens.
+			b.WriteByte(' ')
+			continue
+		}
+
+		b.WriteByte(ch)
+		i++
+	}
+
+	return b.String()
 }
 
 func trimIdentifierQuotes(s string) string {

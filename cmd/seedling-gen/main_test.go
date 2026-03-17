@@ -31,6 +31,7 @@ CREATE TABLE users (
 `
 
 func TestParseSchema_BasicTableMetadata(t *testing.T) {
+	// Arrange
 	tables := mustParseSchema(t, testSchema)
 	if len(tables) != 2 {
 		t.Fatalf("expected 2 tables, got %d", len(tables))
@@ -47,6 +48,7 @@ func TestParseSchema_BasicTableMetadata(t *testing.T) {
 		{name: "users", index: 1, wantName: "users", wantGoName: "User", wantBlueprintID: "user"},
 	}
 
+	// Assert
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			table := tables[tt.index]
@@ -64,6 +66,7 @@ func TestParseSchema_BasicTableMetadata(t *testing.T) {
 }
 
 func TestParseSchema_UserColumnMetadata(t *testing.T) {
+	// Arrange
 	tables := mustParseSchema(t, testSchema)
 	users := tables[1]
 
@@ -83,6 +86,7 @@ func TestParseSchema_UserColumnMetadata(t *testing.T) {
 		{name: "created_at", goName: "CreatedAt", goType: "time.Time", notNull: true},
 	}
 
+	// Assert
 	if len(users.Columns) != len(expected) {
 		t.Fatalf("expected %d columns, got %d", len(expected), len(users.Columns))
 	}
@@ -126,6 +130,7 @@ func TestSingularize(t *testing.T) {
 		{"statuses", "status"},
 	}
 	for _, tt := range tests {
+		// Act & Assert
 		got := singularize(tt.input)
 		if got != tt.want {
 			t.Errorf("singularize(%q) = %q, want %q", tt.input, got, tt.want)
@@ -144,6 +149,7 @@ func TestToGoFieldName(t *testing.T) {
 		{"api_url", "APIURL"},
 	}
 	for _, tt := range tests {
+		// Act & Assert
 		got := toGoFieldName(tt.input)
 		if got != tt.want {
 			t.Errorf("toGoFieldName(%q) = %q, want %q", tt.input, got, tt.want)
@@ -152,6 +158,7 @@ func TestToGoFieldName(t *testing.T) {
 }
 
 func TestSQLTypeToGoType(t *testing.T) {
+	// Arrange
 	tests := []struct {
 		input, want string
 	}{
@@ -175,6 +182,7 @@ func TestSQLTypeToGoType(t *testing.T) {
 		{"DOUBLE", "float64"},
 	}
 	for _, tt := range tests {
+		// Act & Assert
 		got := sqlTypeToGoType(tt.input)
 		if got != tt.want {
 			t.Errorf("sqlTypeToGoType(%q) = %q, want %q", tt.input, got, tt.want)
@@ -183,14 +191,17 @@ func TestSQLTypeToGoType(t *testing.T) {
 }
 
 func TestGenerate_OutputIncludesExpectedSections(t *testing.T) {
+	// Arrange
 	tables := mustParseSchema(t, testSchema)
+
+	// Act
 	var buf bytes.Buffer
 	if err := Generate(&buf, "blueprints", tables); err != nil {
 		t.Fatalf("Generate error: %v", err)
 	}
-
 	output := buf.String()
 
+	// Assert
 	tests := []struct {
 		name    string
 		substr  string
@@ -223,6 +234,7 @@ func TestGenerate_OutputIncludesExpectedSections(t *testing.T) {
 }
 
 func TestGenerate_NoTime(t *testing.T) {
+	// Arrange
 	schema := `
 CREATE TABLE tags (
     id SERIAL PRIMARY KEY,
@@ -230,11 +242,14 @@ CREATE TABLE tags (
 );
 `
 	tables := mustParseSchema(t, schema)
+
+	// Act
 	var buf bytes.Buffer
 	if err := Generate(&buf, "mypkg", tables); err != nil {
 		t.Fatalf("Generate error: %v", err)
 	}
 
+	// Assert
 	output := buf.String()
 	if strings.Contains(output, `"time"`) {
 		t.Error("output should not import time when no TIMESTAMP columns exist")
@@ -245,6 +260,7 @@ CREATE TABLE tags (
 }
 
 func TestParseSchema_VarcharWithLength(t *testing.T) {
+	// Arrange
 	schema := `
 CREATE TABLE products (
     id SERIAL PRIMARY KEY,
@@ -252,11 +268,14 @@ CREATE TABLE products (
     price NUMERIC(10,2) NOT NULL
 );
 `
+
+	// Act
 	tables := mustParseSchema(t, schema)
+
+	// Assert
 	if len(tables) != 1 {
 		t.Fatalf("expected 1 table, got %d", len(tables))
 	}
-
 	cols := tables[0].Columns
 	for _, col := range cols {
 		if col.Name == "sku" && col.GoType != "string" {
@@ -269,13 +288,18 @@ CREATE TABLE products (
 }
 
 func TestParseSchema_CaseInsensitive(t *testing.T) {
+	// Arrange
 	schema := `
 create table items (
     id serial primary key,
     name text not null
 );
 `
+
+	// Act
 	tables := mustParseSchema(t, schema)
+
+	// Assert
 	if len(tables) != 1 {
 		t.Fatalf("expected 1 table, got %d", len(tables))
 	}
@@ -288,6 +312,7 @@ create table items (
 }
 
 func TestParseSchema_TableLevelConstraints(t *testing.T) {
+	// Arrange
 	schema := `
 CREATE TABLE memberships (
     id BIGSERIAL,
@@ -296,11 +321,14 @@ CREATE TABLE memberships (
     CONSTRAINT memberships_company_id_fkey FOREIGN KEY (company_id) REFERENCES companies(id)
 );
 `
+
+	// Act
 	tables := mustParseSchema(t, schema)
+
+	// Assert
 	if len(tables) != 1 {
 		t.Fatalf("expected 1 table, got %d", len(tables))
 	}
-
 	var idCol, companyIDCol Column
 	for _, col := range tables[0].Columns {
 		switch col.Name {
@@ -323,13 +351,18 @@ CREATE TABLE memberships (
 }
 
 func TestParseSchema_QuotedIdentifiers(t *testing.T) {
+	// Arrange
 	schema := `
 CREATE TABLE "users" (
     "id" SERIAL PRIMARY KEY,
     "company_id" INTEGER REFERENCES "companies"("id")
 );
 `
+
+	// Act
 	tables := mustParseSchema(t, schema)
+
+	// Assert
 	if len(tables) != 1 {
 		t.Fatalf("expected 1 table, got %d", len(tables))
 	}
@@ -345,6 +378,7 @@ CREATE TABLE "users" (
 }
 
 func TestGenerate_RelationNamesFromColumnNames(t *testing.T) {
+	// Arrange
 	schema := `
 CREATE TABLE reviews (
     id SERIAL PRIMARY KEY,
@@ -353,11 +387,14 @@ CREATE TABLE reviews (
 );
 `
 	tables := mustParseSchema(t, schema)
+
+	// Act
 	var buf bytes.Buffer
 	if err := Generate(&buf, "blueprints", tables); err != nil {
 		t.Fatalf("Generate error: %v", err)
 	}
 
+	// Assert
 	output := buf.String()
 	if !strings.Contains(output, `{Name: "author"`) {
 		t.Fatalf("expected relation name derived from author_id: %s", output)
@@ -368,6 +405,7 @@ CREATE TABLE reviews (
 }
 
 func TestParseSchemaWithDialect_MySQL(t *testing.T) {
+	// Arrange
 	schema := "" +
 		"CREATE TABLE `companies` (\n" +
 		"    `id` BIGINT PRIMARY KEY AUTO_INCREMENT,\n" +
@@ -378,7 +416,9 @@ func TestParseSchemaWithDialect_MySQL(t *testing.T) {
 		"    `company_id` BIGINT NOT NULL,\n" +
 		"    CONSTRAINT `users_company_id_foreign` FOREIGN KEY (`company_id`) REFERENCES `companies`(`id`)\n" +
 		") ENGINE=InnoDB;\n"
+	// Act
 	tables, err := ParseSchemaWithDialect(schema, "mysql")
+	// Assert
 	if err != nil {
 		t.Fatalf("ParseSchemaWithDialect error: %v", err)
 	}
@@ -391,6 +431,7 @@ func TestParseSchemaWithDialect_MySQL(t *testing.T) {
 }
 
 func TestParseSchemaWithDialect_SQLite(t *testing.T) {
+	// Arrange
 	schema := `
 CREATE TABLE [companies] (
     [id] INTEGER PRIMARY KEY,
@@ -402,7 +443,10 @@ CREATE TABLE [users] (
     [company_id] INTEGER NOT NULL REFERENCES [companies]([id])
 );
 `
+
+	// Act
 	tables, err := ParseSchemaWithDialect(schema, "sqlite")
+	// Assert
 	if err != nil {
 		t.Fatalf("ParseSchemaWithDialect error: %v", err)
 	}
@@ -415,12 +459,14 @@ CREATE TABLE [users] (
 }
 
 func TestParseSchemaWithDialect_Unsupported(t *testing.T) {
+	// Act & Assert
 	if _, err := ParseSchemaWithDialect("CREATE TABLE x (id INT);", "oracle"); err == nil {
 		t.Fatal("expected unsupported dialect error")
 	}
 }
 
 func TestParseSchema_UnclosedParenthesis(t *testing.T) {
+	// Arrange
 	tests := []struct {
 		name   string
 		schema string
@@ -453,6 +499,7 @@ CREATE TABLE users (id INT, company_id INT`,
 }
 
 func TestGenerate_CompositePKAndFK(t *testing.T) {
+	// Arrange
 	schema := `
 CREATE TABLE regions (
     country_code TEXT NOT NULL,
@@ -468,11 +515,14 @@ CREATE TABLE deployments (
 );
 `
 	tables := mustParseSchema(t, schema)
+
+	// Act
 	var buf bytes.Buffer
 	if err := Generate(&buf, "blueprints", tables); err != nil {
 		t.Fatalf("Generate error: %v", err)
 	}
 
+	// Assert
 	output := buf.String()
 	if !strings.Contains(output, `PKFields: []string{"CountryCode", "RegionCode"}`) {
 		t.Fatalf("expected composite PKFields output, got: %s", output)
@@ -483,6 +533,7 @@ CREATE TABLE deployments (
 }
 
 func TestGenerate_OptionalRelation(t *testing.T) {
+	// Arrange
 	schema := `
 CREATE TABLE companies (
     id SERIAL PRIMARY KEY,
@@ -496,11 +547,14 @@ CREATE TABLE users (
 );
 `
 	tables := mustParseSchema(t, schema)
+
+	// Act
 	var buf bytes.Buffer
 	if err := Generate(&buf, "blueprints", tables); err != nil {
 		t.Fatalf("Generate error: %v", err)
 	}
 
+	// Assert
 	output := buf.String()
 	if !strings.Contains(output, "Optional: true") {
 		t.Fatalf("expected Optional: true for nullable FK, got:\n%s", output)
@@ -508,6 +562,7 @@ CREATE TABLE users (
 }
 
 func TestGenerateSqlc_DeleteWithCompositePK(t *testing.T) {
+	// Arrange
 	schema := `
 CREATE TABLE items (
     code TEXT NOT NULL,
@@ -529,13 +584,340 @@ CREATE TABLE items (
 		},
 	}
 
+	// Act
 	var buf bytes.Buffer
 	if err := GenerateSqlc(&buf, "testutil", "github.com/myapp/internal/db", tables, sqlcInfo); err != nil {
 		t.Fatalf("GenerateSqlc error: %v", err)
 	}
 
+	// Assert
 	output := buf.String()
 	if !strings.Contains(output, "Delete") {
 		t.Fatalf("expected Delete function in output, got:\n%s", output)
+	}
+}
+
+func TestStripSQLComments(t *testing.T) {
+	// Arrange
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "line comment",
+			input: "SELECT 1; -- comment\nSELECT 2;",
+			want:  "SELECT 1; \nSELECT 2;",
+		},
+		{
+			name:  "block comment",
+			input: "SELECT /* skip */ 1;",
+			want:  "SELECT   1;",
+		},
+		{
+			name:  "multiline block comment",
+			input: "SELECT\n/* line1\nline2\n*/\n1;",
+			want:  "SELECT\n \n1;",
+		},
+		{
+			name:  "comment inside single-quoted string",
+			input: "DEFAULT '-- not a comment'",
+			want:  "DEFAULT '-- not a comment'",
+		},
+		{
+			name:  "block comment inside string",
+			input: "DEFAULT '/* keep */'",
+			want:  "DEFAULT '/* keep */'",
+		},
+		{
+			name:  "no comments",
+			input: "CREATE TABLE t (id INT);",
+			want:  "CREATE TABLE t (id INT);",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Act & Assert
+			got := stripSQLComments(tt.input)
+			if got != tt.want {
+				t.Fatalf("stripSQLComments(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseSchema_SelfReferencingFK(t *testing.T) {
+	// Arrange
+	schema := `
+CREATE TABLE employees (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    manager_id INTEGER REFERENCES employees(id)
+);
+`
+
+	// Act
+	tables := mustParseSchema(t, schema)
+
+	// Assert
+	if len(tables) != 1 {
+		t.Fatalf("expected 1 table, got %d", len(tables))
+	}
+	var managerCol Column
+	for _, col := range tables[0].Columns {
+		if col.Name == "manager_id" {
+			managerCol = col
+			break
+		}
+	}
+
+	if !managerCol.IsFK {
+		t.Fatal("expected manager_id to be a foreign key")
+	}
+	if managerCol.FKRefTable != "employees" {
+		t.Fatalf("expected FKRefTable %q, got %q", "employees", managerCol.FKRefTable)
+	}
+	if managerCol.NotNull {
+		t.Fatal("expected manager_id to be nullable (self-referencing optional FK)")
+	}
+}
+
+func TestParseSchema_WithComments(t *testing.T) {
+	// Arrange
+	tests := []struct {
+		name     string
+		schema   string
+		wantCols int
+		colNames []string
+	}{
+		{
+			name: "line comment after column",
+			schema: `
+CREATE TABLE items (
+    id SERIAL PRIMARY KEY, -- auto-increment
+    name TEXT NOT NULL -- required
+);
+`,
+			wantCols: 2,
+			colNames: []string{"id", "name"},
+		},
+		{
+			name: "line comment between columns",
+			schema: `
+CREATE TABLE items (
+    id SERIAL PRIMARY KEY,
+    -- user-facing name
+    name TEXT NOT NULL
+);
+`,
+			wantCols: 2,
+			colNames: []string{"id", "name"},
+		},
+		{
+			name: "block comment wrapping column",
+			schema: `
+CREATE TABLE items (
+    id SERIAL PRIMARY KEY,
+    /* temporarily disabled
+    legacy_code TEXT,
+    */
+    name TEXT NOT NULL
+);
+`,
+			wantCols: 2,
+			colNames: []string{"id", "name"},
+		},
+		{
+			name: "comment-like content in string literal",
+			schema: `
+CREATE TABLE items (
+    id SERIAL PRIMARY KEY,
+    note TEXT NOT NULL DEFAULT '-- not a comment'
+);
+`,
+			wantCols: 2,
+			colNames: []string{"id", "note"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Act
+			tables := mustParseSchema(t, tt.schema)
+
+			// Assert
+			if len(tables) != 1 {
+				t.Fatalf("expected 1 table, got %d", len(tables))
+			}
+			if len(tables[0].Columns) != tt.wantCols {
+				t.Fatalf("expected %d columns, got %d", tt.wantCols, len(tables[0].Columns))
+			}
+			for i, want := range tt.colNames {
+				if tables[0].Columns[i].Name != want {
+					t.Fatalf("column[%d] = %q, want %q", i, tables[0].Columns[i].Name, want)
+				}
+			}
+		})
+	}
+}
+
+func TestParseSchema_SchemaQualifiedFKRef(t *testing.T) {
+	// Arrange
+	schema := `
+CREATE TABLE public.companies (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE public.users (
+    id SERIAL PRIMARY KEY,
+    company_id INTEGER NOT NULL,
+    CONSTRAINT users_company_fkey FOREIGN KEY (company_id) REFERENCES public.companies(id)
+);
+`
+	// Act
+	tables := mustParseSchema(t, schema)
+
+	// Assert
+	if len(tables) != 2 {
+		t.Fatalf("expected 2 tables, got %d", len(tables))
+	}
+	if tables[0].Name != "companies" {
+		t.Fatalf("expected table name %q, got %q", "companies", tables[0].Name)
+	}
+	if tables[1].Name != "users" {
+		t.Fatalf("expected table name %q, got %q", "users", tables[1].Name)
+	}
+	if len(tables[1].ForeignKeys) != 1 {
+		t.Fatalf("expected 1 FK, got %d", len(tables[1].ForeignKeys))
+	}
+	if tables[1].ForeignKeys[0].RefTable != "companies" {
+		t.Fatalf("expected FK ref %q, got %q", "companies", tables[1].ForeignKeys[0].RefTable)
+	}
+}
+
+func TestParseSchema_IfNotExists(t *testing.T) {
+	// Arrange
+	schema := `
+CREATE TABLE IF NOT EXISTS items (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL
+);
+`
+
+	// Act
+	tables := mustParseSchema(t, schema)
+
+	// Assert
+	if len(tables) != 1 {
+		t.Fatalf("expected 1 table, got %d", len(tables))
+	}
+	if tables[0].Name != "items" {
+		t.Fatalf("expected table name %q, got %q", "items", tables[0].Name)
+	}
+}
+
+func TestParseSchema_CheckConstraint(t *testing.T) {
+	// Arrange
+	schema := `
+CREATE TABLE products (
+    id SERIAL PRIMARY KEY,
+    price NUMERIC(10,2) NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 0,
+    CHECK (price > 0),
+    CONSTRAINT positive_qty CHECK (quantity >= 0)
+);
+`
+
+	// Act
+	tables := mustParseSchema(t, schema)
+
+	// Assert
+	if len(tables) != 1 {
+		t.Fatalf("expected 1 table, got %d", len(tables))
+	}
+	if len(tables[0].Columns) != 3 {
+		t.Fatalf("expected 3 columns, got %d", len(tables[0].Columns))
+	}
+	if len(tables[0].ForeignKeys) != 0 {
+		t.Fatalf("expected 0 FKs, got %d", len(tables[0].ForeignKeys))
+	}
+}
+
+func TestParseSchema_ComplexDefaults(t *testing.T) {
+	// Arrange
+	schema := `
+CREATE TABLE events (
+    id SERIAL PRIMARY KEY,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT (now() AT TIME ZONE 'UTC'),
+    status TEXT NOT NULL DEFAULT 'active',
+    metadata JSONB NOT NULL DEFAULT '{}'
+);
+`
+
+	// Act
+	tables := mustParseSchema(t, schema)
+
+	// Assert
+	if len(tables) != 1 {
+		t.Fatalf("expected 1 table, got %d", len(tables))
+	}
+	expected := []struct {
+		name   string
+		goType string
+	}{
+		{"id", "int"},
+		{"created_at", "time.Time"},
+		{"status", "string"},
+		{"metadata", "string"},
+	}
+
+	if len(tables[0].Columns) != len(expected) {
+		t.Fatalf("expected %d columns, got %d", len(expected), len(tables[0].Columns))
+	}
+	for i, want := range expected {
+		col := tables[0].Columns[i]
+		if col.Name != want.name {
+			t.Fatalf("column[%d] name = %q, want %q", i, col.Name, want.name)
+		}
+		if col.GoType != want.goType {
+			t.Fatalf("column[%d] GoType = %q, want %q", i, col.GoType, want.goType)
+		}
+	}
+}
+
+func TestParseSchema_MixedQuotedIdentifiers(t *testing.T) {
+	// Arrange
+	schema := `
+CREATE TABLE "orders" (
+    id SERIAL PRIMARY KEY,
+    "user_id" INTEGER NOT NULL REFERENCES users(id),
+    total NUMERIC(10,2) NOT NULL
+);
+`
+
+	// Act
+	tables := mustParseSchema(t, schema)
+
+	// Assert
+	if len(tables) != 1 {
+		t.Fatalf("expected 1 table, got %d", len(tables))
+	}
+	if tables[0].Name != "orders" {
+		t.Fatalf("expected table name %q, got %q", "orders", tables[0].Name)
+	}
+
+	colNames := []string{"id", "user_id", "total"}
+	for i, want := range colNames {
+		if tables[0].Columns[i].Name != want {
+			t.Fatalf("column[%d] = %q, want %q", i, tables[0].Columns[i].Name, want)
+		}
+	}
+	if !tables[0].Columns[1].IsFK {
+		t.Fatal("expected user_id to be a foreign key")
+	}
+	if tables[0].Columns[1].FKRefTable != "users" {
+		t.Fatalf("expected FKRefTable %q, got %q", "users", tables[0].Columns[1].FKRefTable)
 	}
 }

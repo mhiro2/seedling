@@ -19,6 +19,7 @@ var (
 
 // ParseAtlasHCL parses an Atlas HCL schema file and returns []Table.
 func ParseAtlasHCL(data string) ([]Table, error) {
+	data = stripHCLComments(data)
 	tableBlocks, err := extractAtlasTableBlocks(data)
 	if err != nil {
 		return nil, err
@@ -208,6 +209,64 @@ func normalizeAtlasType(t string) string {
 		t = t[:idx]
 	}
 	return strings.ToUpper(t)
+}
+
+// stripHCLComments removes HCL line comments (# and //) while preserving
+// comment-like sequences inside double-quoted string literals.
+func stripHCLComments(data string) string {
+	var b strings.Builder
+	b.Grow(len(data))
+
+	i := 0
+	inString := false
+	for i < len(data) {
+		ch := data[i]
+
+		if inString {
+			b.WriteByte(ch)
+			if ch == '"' {
+				inString = false
+			}
+			i++
+			continue
+		}
+
+		if ch == '"' {
+			inString = true
+			b.WriteByte(ch)
+			i++
+			continue
+		}
+
+		// Line comment: # to end of line.
+		if ch == '#' {
+			for i < len(data) && data[i] != '\n' {
+				i++
+			}
+			if i < len(data) {
+				b.WriteByte('\n')
+				i++
+			}
+			continue
+		}
+
+		// Line comment: // to end of line.
+		if ch == '/' && i+1 < len(data) && data[i+1] == '/' {
+			for i < len(data) && data[i] != '\n' {
+				i++
+			}
+			if i < len(data) {
+				b.WriteByte('\n')
+				i++
+			}
+			continue
+		}
+
+		b.WriteByte(ch)
+		i++
+	}
+
+	return b.String()
 }
 
 // splitAtlasColumnRefs splits "[column.id, column.name]" content into column names.
