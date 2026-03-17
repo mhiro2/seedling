@@ -150,6 +150,23 @@ seedling-gen -atlas schema.hcl -pkg blueprints
 
 Only one adapter flag can be specified at a time. All modes support `-pkg` (package name) and `-out` (output file path).
 
+## Faker Locales
+
+The `faker` package supports multiple locales for generating locale-appropriate fake data. Use `NewWithLocale` to select a locale:
+
+```go
+seedling.Generate(func(r *rand.Rand, u *User) {
+    f := faker.NewWithLocale(r, "ja")
+    u.Name  = f.Name()   // "佐藤太郎"
+    u.Email = f.Email()   // "taro.sato@example.com"
+    u.Phone = f.Phone()   // "+81-03-1234-5678"
+})
+```
+
+Supported locales: `en` (default), `ja`, `zh`, `ko`, `de`, `fr`.
+
+`New(r)` defaults to `"en"` and is fully backward compatible.
+
 ## More References
 
 - [pkg.go.dev package docs](https://pkg.go.dev/github.com/mhiro2/seedling)

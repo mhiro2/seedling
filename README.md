@@ -55,7 +55,7 @@ func TestCreateTask(t *testing.T) {
 - ♻️ `WithTx` for auto-rollback transactions -- no manual cleanup
 - 🔌 Works with sqlc, `database/sql`, pgx, GORM, or any other DB handle you own
 - 📊 Supports `HasMany`, `ManyToMany`, composite keys, cleanup, dry runs, and insert logging
-- 🎲 Includes deterministic fake data via [`seedling/faker`](https://pkg.go.dev/github.com/mhiro2/seedling/faker)
+- 🎲 Includes deterministic fake data via [`seedling/faker`](https://pkg.go.dev/github.com/mhiro2/seedling/faker) with multi-locale support (en, ja, zh, ko, de, fr)
 
 ## 🚀 Quick Start
 
