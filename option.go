@@ -89,6 +89,7 @@ func (u useOption) applyOption(o *optionSet) {
 }
 
 // Ref applies nested options to a specific relation's blueprint.
+// It also enables expansion for optional relations.
 //
 //	seedling.Ref("project", seedling.Set("Name", "renewal"))
 func Ref(name string, opts ...Option) Option {
@@ -121,8 +122,9 @@ func (om omitOption) applyOption(o *optionSet) {
 
 // When conditionally expands a relation based on the current record's state.
 // The predicate receives the owning record after defaults and Set/With options
-// are applied. If it returns true, the relation is expanded; if false, the
-// relation is skipped regardless of the blueprint's Required flag.
+// are applied. If it returns true, the relation is expanded, including optional
+// relations. If it returns false, the relation is skipped regardless of the
+// blueprint's Required flag.
 //
 // This provides dynamic, insert-time control over relation expansion:
 //

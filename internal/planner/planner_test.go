@@ -34,6 +34,15 @@ func newMockRegistry() *mockRegistry {
 	return r
 }
 
+func newEmptyOptionSet() *planner.OptionSet {
+	return &planner.OptionSet{
+		Sets:  make(map[string]any),
+		Uses:  make(map[string]any),
+		Refs:  make(map[string]*planner.OptionSet),
+		Omits: make(map[string]bool),
+	}
+}
+
 func TestPlan_SimpleCompany(t *testing.T) {
 	// Arrange
 	reg := newMockRegistry()
@@ -74,6 +83,71 @@ func TestPlan_UserExpandsCompany(t *testing.T) {
 	}
 	if order[1].BlueprintName != "user" {
 		t.Fatalf("got %v, want %v", order[1].BlueprintName, "user")
+	}
+}
+
+func TestPlan_OptionalBelongsToRefExpandsRelation(t *testing.T) {
+	// Arrange
+	reg := newMockRegistry()
+	userBP, err := reg.LookupByName("user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	userBP.Relations[0].Required = false
+
+	opts := newEmptyOptionSet()
+	opts.Refs["company"] = &planner.OptionSet{
+		Sets:  map[string]any{"Name": "custom-company"},
+		Uses:  make(map[string]any),
+		Refs:  make(map[string]*planner.OptionSet),
+		Omits: make(map[string]bool),
+	}
+
+	// Act
+	result, err := planner.Plan(reg, reflect.TypeFor[User](), opts)
+	// Assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	companyNode := result.Graph.Node("user.company")
+	if companyNode == nil {
+		t.Fatal("expected company node")
+	}
+	company := companyNode.Value.(Company)
+	if company.Name != "custom-company" {
+		t.Fatalf("got %v, want %v", company.Name, "custom-company")
+	}
+}
+
+func TestPlan_OptionalBelongsToWhenTrueExpandsRelation(t *testing.T) {
+	// Arrange
+	reg := newMockRegistry()
+	userBP, err := reg.LookupByName("user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	userBP.Relations[0].Required = false
+
+	opts := newEmptyOptionSet()
+	opts.Sets["Name"] = "expand-company"
+	opts.Whens = map[string]func(any) (bool, error){
+		"company": func(v any) (bool, error) {
+			user, ok := v.(User)
+			if !ok {
+				return false, errx.ErrTypeMismatch
+			}
+			return user.Name == "expand-company", nil
+		},
+	}
+
+	// Act
+	result, err := planner.Plan(reg, reflect.TypeFor[User](), opts)
+	// Assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Graph.Node("user.company") == nil {
+		t.Fatal("expected company node")
 	}
 }
 
@@ -302,6 +376,41 @@ func TestPlan_HasManyRefAppliesToChildren(t *testing.T) {
 				Omits: make(map[string]bool),
 			},
 		},
+		Omits: make(map[string]bool),
+	}
+
+	// Act
+	result, err := planner.Plan(reg, reflect.TypeFor[Department](), opts)
+	// Assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, nodeID := range []string{"department.employees[0]", "department.employees[1]"} {
+		node := result.Graph.Node(nodeID)
+		if node == nil {
+			t.Fatalf("expected node %q", nodeID)
+		}
+		employee := node.Value.(Employee)
+		if employee.Name != "custom-employee" {
+			t.Fatalf("%s Name mismatch: got %v, want %v", nodeID, employee.Name, "custom-employee")
+		}
+	}
+}
+
+func TestPlan_OptionalHasManyRefExpandsRelation(t *testing.T) {
+	// Arrange
+	reg := newMockRegistry()
+	departmentBP, err := reg.LookupByName("department")
+	if err != nil {
+		t.Fatal(err)
+	}
+	departmentBP.Relations[0].Required = false
+
+	opts := newEmptyOptionSet()
+	opts.Refs["employees"] = &planner.OptionSet{
+		Sets:  map[string]any{"Name": "custom-employee"},
+		Uses:  make(map[string]any),
+		Refs:  make(map[string]*planner.OptionSet),
 		Omits: make(map[string]bool),
 	}
 
@@ -591,6 +700,41 @@ func TestPlan_ManyToManyRefAppliesToChildren(t *testing.T) {
 		tag := node.Value.(Tag)
 		if tag.Name != "custom-tag" {
 			t.Fatalf("%s Name mismatch: got %v, want %v", nodeID, tag.Name, "custom-tag")
+		}
+	}
+}
+
+func TestPlan_OptionalManyToManyRefExpandsRelation(t *testing.T) {
+	// Arrange
+	reg := newMockRegistry()
+	articleBP, err := reg.LookupByName("article")
+	if err != nil {
+		t.Fatal(err)
+	}
+	articleBP.Relations[0].Required = false
+
+	opts := newEmptyOptionSet()
+	opts.Refs["tags"] = &planner.OptionSet{
+		Sets:  map[string]any{"Name": "custom-tag"},
+		Uses:  make(map[string]any),
+		Refs:  make(map[string]*planner.OptionSet),
+		Omits: make(map[string]bool),
+	}
+
+	// Act
+	result, err := planner.Plan(reg, reflect.TypeFor[Article](), opts)
+	// Assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, nodeID := range []string{
+		"article.tags[0]",
+		"article.tags[0].article_tag",
+		"article.tags[1]",
+		"article.tags[1].article_tag",
+	} {
+		if result.Graph.Node(nodeID) == nil {
+			t.Fatalf("expected node %q", nodeID)
 		}
 	}
 }

@@ -34,6 +34,9 @@ func (e *expander) expandRelation(
 	if err != nil || bound {
 		return err
 	}
+	if !relationEnabled(rel, opts) {
+		return nil
+	}
 
 	switch rel.Kind {
 	case BelongsTo:
@@ -91,10 +94,6 @@ func (e *expander) expandBelongsTo(
 		return nil
 	}
 
-	if !rel.Required {
-		return nil
-	}
-
 	parentBP, err := e.reg.LookupByName(rel.RefBlueprint)
 	if err != nil {
 		return fmt.Errorf("lookup belongs-to blueprint %q: %w", rel.RefBlueprint, err)
@@ -121,10 +120,6 @@ func (e *expander) expandHasMany(
 	rel RelationDef,
 	opts *OptionSet,
 ) error {
-	if !rel.Required {
-		return nil
-	}
-
 	parentEdgeBindings, err := buildLocalBindings(parentNode.BlueprintName, rel, parentNode.PrimaryKeyFields())
 	if err != nil {
 		return err
@@ -183,9 +178,6 @@ func (e *expander) expandManyToMany(
 	rel RelationDef,
 	opts *OptionSet,
 ) error {
-	if !rel.Required {
-		return nil
-	}
 	if rel.ThroughBlueprint == "" {
 		return fmt.Errorf("%w: relation %q on blueprint %q requires ThroughBlueprint for many_to_many", errx.ErrInvalidOption, rel.Name, parentNode.BlueprintName)
 	}
@@ -268,6 +260,13 @@ func relationOmitted(opts *OptionSet, relation string) bool {
 	return opts != nil && opts.Omits[relation]
 }
 
+func relationEnabled(rel RelationDef, opts *OptionSet) bool {
+	if rel.Required {
+		return true
+	}
+	return relationUsed(opts, rel.Name) || relationReferenced(opts, rel.Name) || relationHasPredicate(rel, opts)
+}
+
 // relationWhen evaluates the When predicate for a relation. An option-level When
 // (from the When[T] option) takes precedence over a blueprint-level When (from
 // the Relation.When field). If no When predicate is set, the function returns
@@ -291,12 +290,39 @@ func nestedRelationOpts(opts *OptionSet, relation string) *OptionSet {
 	return opts.Refs[relation]
 }
 
+func relationReferenced(opts *OptionSet, relation string) bool {
+	if opts == nil {
+		return false
+	}
+	_, ok := opts.Refs[relation]
+	return ok
+}
+
 func usedRelationValue(opts *OptionSet, relation string) (any, bool) {
 	if opts == nil {
 		return nil, false
 	}
 	value, ok := opts.Uses[relation]
 	return value, ok
+}
+
+func relationUsed(opts *OptionSet, relation string) bool {
+	if opts == nil {
+		return false
+	}
+	_, ok := opts.Uses[relation]
+	return ok
+}
+
+func relationHasPredicate(rel RelationDef, opts *OptionSet) bool {
+	if rel.When != nil {
+		return true
+	}
+	if opts == nil {
+		return false
+	}
+	_, ok := opts.Whens[rel.Name]
+	return ok
 }
 
 func relationCount(rel RelationDef) int {

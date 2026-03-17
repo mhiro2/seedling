@@ -122,6 +122,145 @@ func setupManyToManyBlueprints(tb testing.TB) {
 	useTestRegistry(tb, reg)
 }
 
+func setupOptionalBelongsToBlueprints(tb testing.TB) {
+	tb.Helper()
+	reg := seedlingtest.NewRegistry()
+	ids := seedlingtest.NewIDSequence()
+
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
+		Name:    "company",
+		Table:   "companies",
+		PKField: "ID",
+		Defaults: func() Company {
+			return Company{Name: "test-company"}
+		},
+		Insert: func(_ context.Context, _ seedling.DBTX, v Company) (Company, error) {
+			v.ID = ids.Next()
+			return v, nil
+		},
+	})
+
+	seedling.MustRegisterTo(reg, seedling.Blueprint[User]{
+		Name:    "user",
+		Table:   "users",
+		PKField: "ID",
+		Defaults: func() User {
+			return User{Name: "test-user"}
+		},
+		Relations: []seedling.Relation{
+			{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company", Optional: true},
+		},
+		Insert: func(_ context.Context, _ seedling.DBTX, v User) (User, error) {
+			v.ID = ids.Next()
+			return v, nil
+		},
+	})
+
+	useTestRegistry(tb, reg)
+}
+
+func setupOptionalHasManyBlueprints(tb testing.TB) {
+	tb.Helper()
+	reg := seedlingtest.NewRegistry()
+	ids := seedlingtest.NewIDSequence()
+
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Department]{
+		Name:    "department",
+		Table:   "departments",
+		PKField: "ID",
+		Defaults: func() Department {
+			return Department{Name: "engineering"}
+		},
+		Relations: []seedling.Relation{
+			{Name: "employees", Kind: seedling.HasMany, LocalField: "DepartmentID", RefBlueprint: "employee", Count: 2, Optional: true},
+		},
+		Insert: func(_ context.Context, _ seedling.DBTX, v Department) (Department, error) {
+			v.ID = ids.Next()
+			return v, nil
+		},
+	})
+
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Employee]{
+		Name:    "employee",
+		Table:   "employees",
+		PKField: "ID",
+		Defaults: func() Employee {
+			return Employee{Name: "employee"}
+		},
+		Relations: []seedling.Relation{
+			{Name: "department", Kind: seedling.BelongsTo, LocalField: "DepartmentID", RefBlueprint: "department"},
+		},
+		Insert: func(_ context.Context, _ seedling.DBTX, v Employee) (Employee, error) {
+			v.ID = ids.Next()
+			return v, nil
+		},
+	})
+
+	useTestRegistry(tb, reg)
+}
+
+func setupOptionalManyToManyBlueprints(tb testing.TB) {
+	tb.Helper()
+	reg := seedlingtest.NewRegistry()
+	ids := seedlingtest.NewIDSequence()
+
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Article]{
+		Name:    "article",
+		Table:   "articles",
+		PKField: "ID",
+		Defaults: func() Article {
+			return Article{Title: "seedling"}
+		},
+		Relations: []seedling.Relation{
+			{
+				Name:             "tags",
+				Kind:             seedling.ManyToMany,
+				LocalField:       "ArticleID",
+				RemoteField:      "TagID",
+				RefBlueprint:     "tag",
+				ThroughBlueprint: "article_tag",
+				Count:            2,
+				Optional:         true,
+			},
+		},
+		Insert: func(_ context.Context, _ seedling.DBTX, v Article) (Article, error) {
+			v.ID = ids.Next()
+			return v, nil
+		},
+	})
+
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Tag]{
+		Name:    "tag",
+		Table:   "tags",
+		PKField: "ID",
+		Defaults: func() Tag {
+			return Tag{Name: "tag"}
+		},
+		Insert: func(_ context.Context, _ seedling.DBTX, v Tag) (Tag, error) {
+			v.ID = ids.Next()
+			return v, nil
+		},
+	})
+
+	seedling.MustRegisterTo(reg, seedling.Blueprint[ArticleTag]{
+		Name:     "article_tag",
+		Table:    "article_tags",
+		PKFields: []string{"ArticleID", "TagID"},
+		Defaults: func() ArticleTag {
+			return ArticleTag{}
+		},
+		Relations: []seedling.Relation{
+			{Name: "article", Kind: seedling.BelongsTo, LocalField: "ArticleID", RefBlueprint: "article"},
+			{Name: "tag", Kind: seedling.BelongsTo, LocalField: "TagID", RefBlueprint: "tag"},
+		},
+		Insert: func(_ context.Context, _ seedling.DBTX, v ArticleTag) (ArticleTag, error) {
+			return v, nil
+		},
+	})
+
+	useTestRegistry(tb, reg)
+}
+
 func TestInsertOne_Simple(t *testing.T) {
 	// Arrange
 	setupBlueprints(t)
@@ -253,6 +392,33 @@ func TestInsertOne_Ref(t *testing.T) {
 	}
 	if project.Name != "custom-project" {
 		t.Fatalf("got %v, want %v", project.Name, "custom-project")
+	}
+}
+
+func TestRef_OptionalBelongsToExpandsRelation(t *testing.T) {
+	// Arrange
+	setupOptionalBelongsToBlueprints(t)
+	plan := build[User](t,
+		seedling.Ref("company", seedling.Set("Name", "custom-company")),
+	)
+
+	// Act
+	result := plan.Insert(t, nil)
+
+	// Assert
+	user := result.Root()
+	if user.CompanyID == 0 {
+		t.Fatal("expected non-zero CompanyID")
+	}
+	company, ok, err := seedling.NodeAs[Company](result, "company")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected company node in result")
+	}
+	if company.Name != "custom-company" {
+		t.Fatalf("got %v, want %v", company.Name, "custom-company")
 	}
 }
 
@@ -1056,6 +1222,33 @@ func TestRef_HasManyAppliesToAllChildren(t *testing.T) {
 	}
 }
 
+func TestRef_OptionalHasManyExpandsRelation(t *testing.T) {
+	// Arrange
+	setupOptionalHasManyBlueprints(t)
+	plan := build[Department](t,
+		seedling.Ref("employees", seedling.Set("Name", "custom-employee")),
+	)
+
+	// Act
+	result := plan.Insert(t, nil)
+
+	// Assert
+	employeeCount := 0
+	for id, node := range result.All() {
+		if node.Name() != "employee" {
+			continue
+		}
+		employeeCount++
+		employee := node.Value().(Employee)
+		if employee.Name != "custom-employee" {
+			t.Fatalf("%s Name mismatch: got %v, want %v", id, employee.Name, "custom-employee")
+		}
+	}
+	if employeeCount != 2 {
+		t.Fatalf("got %v, want %v", employeeCount, 2)
+	}
+}
+
 func TestBuild_DebugString_HasMany(t *testing.T) {
 	// Arrange
 	setupHasManyBlueprints(t)
@@ -1215,6 +1408,33 @@ func TestInsertOne_ManyToManyAutoExpand(t *testing.T) {
 func TestRef_ManyToManyAppliesToChildren(t *testing.T) {
 	// Arrange
 	setupManyToManyBlueprints(t)
+	plan := build[Article](t,
+		seedling.Ref("tags", seedling.Set("Name", "custom-tag")),
+	)
+
+	// Act
+	result := plan.Insert(t, nil)
+
+	// Assert
+	tagCount := 0
+	for _, node := range result.All() {
+		if node.Name() != "tag" {
+			continue
+		}
+		tagCount++
+		tag := node.Value().(Tag)
+		if tag.Name != "custom-tag" {
+			t.Fatalf("got %v, want %v", tag.Name, "custom-tag")
+		}
+	}
+	if tagCount != 2 {
+		t.Fatalf("got %v, want %v", tagCount, 2)
+	}
+}
+
+func TestRef_OptionalManyToManyExpandsRelation(t *testing.T) {
+	// Arrange
+	setupOptionalManyToManyBlueprints(t)
 	plan := build[Article](t,
 		seedling.Ref("tags", seedling.Set("Name", "custom-tag")),
 	)
@@ -1834,6 +2054,24 @@ func TestWhen_OptionExpandsRelationWhenTrue(t *testing.T) {
 	// Assert: assignee was created
 	if task.AssigneeUserID == 0 {
 		t.Fatal("expected AssigneeUserID to be populated when When returns true")
+	}
+}
+
+func TestWhen_OptionExpandsOptionalRelationWhenTrue(t *testing.T) {
+	// Arrange
+	setupOptionalBelongsToBlueprints(t)
+
+	// Act
+	user := insertOne[User](t, nil,
+		seedling.Set("Name", "expand-company"),
+		seedling.When("company", func(u User) bool {
+			return u.Name == "expand-company"
+		}),
+	)
+
+	// Assert
+	if user.CompanyID == 0 {
+		t.Fatal("expected CompanyID to be populated when When returns true")
 	}
 }
 
