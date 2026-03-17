@@ -5,7 +5,6 @@ Dependency-aware test data builder for Go and SQL databases.
 [![Go Reference](https://pkg.go.dev/badge/github.com/mhiro2/seedling.svg)](https://pkg.go.dev/github.com/mhiro2/seedling)
 [![CI](https://github.com/mhiro2/seedling/actions/workflows/ci.yaml/badge.svg)](https://github.com/mhiro2/seedling/actions/workflows/ci.yaml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Go Report Card](https://goreportcard.com/badge/github.com/mhiro2/seedling)](https://goreportcard.com/report/github.com/mhiro2/seedling)
 
 seedling lets tests create only the rows they need while automatically resolving foreign-key dependencies in the correct order. You provide the insert logic. seedling handles planning, FK assignment, and execution order.
 

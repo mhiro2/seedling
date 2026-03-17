@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -17,17 +18,24 @@ var (
 )
 
 // ParseAtlasHCL parses an Atlas HCL schema file and returns []Table.
-func ParseAtlasHCL(data string) []Table {
-	tableBlocks := extractAtlasTableBlocks(data)
+func ParseAtlasHCL(data string) ([]Table, error) {
+	tableBlocks, err := extractAtlasTableBlocks(data)
+	if err != nil {
+		return nil, err
+	}
 	if len(tableBlocks) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	var tables []Table
 	for _, block := range tableBlocks {
-		tables = append(tables, parseAtlasTable(block))
+		t, err := parseAtlasTable(block)
+		if err != nil {
+			return nil, err
+		}
+		tables = append(tables, t)
 	}
-	return tables
+	return tables, nil
 }
 
 type atlasTableBlock struct {
@@ -35,7 +43,7 @@ type atlasTableBlock struct {
 	Body string
 }
 
-func extractAtlasTableBlocks(data string) []atlasTableBlock {
+func extractAtlasTableBlocks(data string) ([]atlasTableBlock, error) {
 	var blocks []atlasTableBlock
 	locs := atlasTableRE.FindAllStringSubmatchIndex(data, -1)
 	for _, loc := range locs {
@@ -43,14 +51,14 @@ func extractAtlasTableBlocks(data string) []atlasTableBlock {
 		braceStart := loc[1] - 1
 		braceEnd := findAtlasMatchingBrace(data, braceStart)
 		if braceEnd == -1 {
-			continue
+			return nil, fmt.Errorf("parse table %q: unclosed brace", tableName)
 		}
 		blocks = append(blocks, atlasTableBlock{
 			Name: tableName,
 			Body: data[braceStart+1 : braceEnd],
 		})
 	}
-	return blocks
+	return blocks, nil
 }
 
 func findAtlasMatchingBrace(s string, openIdx int) int {
@@ -76,7 +84,7 @@ func findAtlasMatchingBrace(s string, openIdx int) int {
 	return -1
 }
 
-func parseAtlasTable(block atlasTableBlock) Table {
+func parseAtlasTable(block atlasTableBlock) (Table, error) {
 	tableName := block.Name
 	t := Table{
 		Name:        tableName,
@@ -85,7 +93,10 @@ func parseAtlasTable(block atlasTableBlock) Table {
 	}
 
 	// Parse columns.
-	columnBlocks := extractAtlasColumnBlocks(block.Body)
+	columnBlocks, err := extractAtlasColumnBlocks(tableName, block.Body)
+	if err != nil {
+		return Table{}, err
+	}
 	columnIndex := make(map[string]int, len(columnBlocks))
 
 	for _, cb := range columnBlocks {
@@ -135,7 +146,7 @@ func parseAtlasTable(block atlasTableBlock) Table {
 		}
 	}
 
-	return t
+	return t, nil
 }
 
 type atlasColumnBlock struct {
@@ -143,7 +154,7 @@ type atlasColumnBlock struct {
 	Body string
 }
 
-func extractAtlasColumnBlocks(tableBody string) []atlasColumnBlock {
+func extractAtlasColumnBlocks(tableName, tableBody string) ([]atlasColumnBlock, error) {
 	var blocks []atlasColumnBlock
 	locs := atlasColumnRE.FindAllStringSubmatchIndex(tableBody, -1)
 	for _, loc := range locs {
@@ -151,19 +162,19 @@ func extractAtlasColumnBlocks(tableBody string) []atlasColumnBlock {
 		// Find the opening brace after "column "name" "
 		braceIdx := strings.IndexByte(tableBody[loc[1]-1:], '{')
 		if braceIdx == -1 {
-			continue
+			return nil, fmt.Errorf("parse table %q column %q: missing opening brace", tableName, colName)
 		}
 		braceStart := loc[1] - 1 + braceIdx
 		braceEnd := findAtlasMatchingBrace(tableBody, braceStart)
 		if braceEnd == -1 {
-			continue
+			return nil, fmt.Errorf("parse table %q column %q: unclosed brace", tableName, colName)
 		}
 		blocks = append(blocks, atlasColumnBlock{
 			Name: colName,
 			Body: tableBody[braceStart+1 : braceEnd],
 		})
 	}
-	return blocks
+	return blocks, nil
 }
 
 func parseAtlasColumn(cb atlasColumnBlock) Column {

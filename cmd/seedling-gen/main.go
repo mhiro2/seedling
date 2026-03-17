@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -19,7 +20,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	pkg := fs.String("pkg", "blueprints", "package name for generated code")
 	out := fs.String("out", "", "output file path (default: stdout)")
-	dialect := fs.String("dialect", "auto", "schema dialect: auto, postgres, mysql, sqlite")
+	dialect := fs.String("dialect", "auto", "schema dialect hint for validation (auto, postgres, mysql, sqlite)")
 	sqlcDir := fs.String("sqlc", "", "path to sqlc-generated Go files directory")
 	sqlcPkg := fs.String("sqlc-pkg", "", "Go import path for sqlc package (required with -sqlc)")
 	sqlcConfig := fs.String("sqlc-config", "", "path to sqlc.yaml config file (auto-resolves schema, output, and import path)")
@@ -54,48 +55,59 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	w := stdout
-	var closeOutput func() error
+
+	generate := func(w io.Writer) error {
+		switch {
+		case *sqlcConfig != "":
+			return runSqlcConfig(w, stderr, *pkg, *dialect, *sqlcConfig)
+		case *gormDir != "":
+			return runGorm(w, stderr, *pkg, *gormDir, *gormPkg)
+		case *entDir != "":
+			return runEnt(w, stderr, *pkg, *entDir, *entPkg)
+		case *atlasFile != "":
+			return runAtlas(w, stderr, *pkg, *atlasFile)
+		default:
+			return runDefault(w, stderr, fs, *pkg, *dialect, *sqlcDir, *sqlcPkg)
+		}
+	}
+
 	if *out != "" {
-		f, err := os.Create(*out)
-		if err != nil {
-			_, _ = fmt.Fprintf(stderr, "Error creating output file: %v\n", err)
+		if err := atomicWrite(*out, generate); err != nil {
+			_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
 			return 1
 		}
-		w = f
-		closeOutput = f.Close
+		return 0
 	}
 
-	var genErr error
-
-	switch {
-	case *sqlcConfig != "":
-		genErr = runSqlcConfig(w, stderr, *pkg, *dialect, *sqlcConfig)
-	case *gormDir != "":
-		genErr = runGorm(w, stderr, *pkg, *gormDir, *gormPkg)
-	case *entDir != "":
-		genErr = runEnt(w, stderr, *pkg, *entDir, *entPkg)
-	case *atlasFile != "":
-		genErr = runAtlas(w, stderr, *pkg, *atlasFile)
-	default:
-		genErr = runDefault(w, stderr, fs, *pkg, *dialect, *sqlcDir, *sqlcPkg)
-	}
-
-	if genErr != nil {
-		_, _ = fmt.Fprintf(stderr, "Error: %v\n", genErr)
-		if closeOutput != nil {
-			_ = closeOutput()
-		}
+	if err := generate(w); err != nil {
+		_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
 		return 1
 	}
 
-	if closeOutput != nil {
-		if err := closeOutput(); err != nil {
-			_, _ = fmt.Fprintf(stderr, "Error closing output file: %v\n", err)
-			return 1
-		}
-	}
-
 	return 0
+}
+
+// atomicWrite writes to a temporary file and renames it to dest on success.
+// On failure the temporary file is removed and no partial output remains.
+func atomicWrite(dest string, fn func(w io.Writer) error) error {
+	f, err := os.CreateTemp(filepath.Dir(dest), ".seedling-gen-*.go")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpPath := f.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+
+	if err := fn(f); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, dest); err != nil {
+		return fmt.Errorf("rename temp file: %w", err)
+	}
+	return nil
 }
 
 func countNonEmpty(vals ...string) int {
@@ -153,7 +165,10 @@ func runAtlas(w, _ io.Writer, pkg, atlasPath string) error {
 		return fmt.Errorf("read atlas file: %w", err)
 	}
 
-	tables := ParseAtlasHCL(string(data))
+	tables, err := ParseAtlasHCL(string(data))
+	if err != nil {
+		return err
+	}
 	if len(tables) == 0 {
 		return fmt.Errorf("no tables found in %s", atlasPath)
 	}

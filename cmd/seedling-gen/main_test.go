@@ -6,6 +6,15 @@ import (
 	"testing"
 )
 
+func mustParseSchema(t *testing.T, sql string) []Table {
+	t.Helper()
+	tables, err := ParseSchema(sql)
+	if err != nil {
+		t.Fatalf("ParseSchema error: %v", err)
+	}
+	return tables
+}
+
 const testSchema = `
 CREATE TABLE companies (
     id SERIAL PRIMARY KEY,
@@ -22,7 +31,7 @@ CREATE TABLE users (
 `
 
 func TestParseSchema_BasicTableMetadata(t *testing.T) {
-	tables := ParseSchema(testSchema)
+	tables := mustParseSchema(t, testSchema)
 	if len(tables) != 2 {
 		t.Fatalf("expected 2 tables, got %d", len(tables))
 	}
@@ -55,7 +64,7 @@ func TestParseSchema_BasicTableMetadata(t *testing.T) {
 }
 
 func TestParseSchema_UserColumnMetadata(t *testing.T) {
-	tables := ParseSchema(testSchema)
+	tables := mustParseSchema(t, testSchema)
 	users := tables[1]
 
 	expected := []struct {
@@ -174,7 +183,7 @@ func TestSQLTypeToGoType(t *testing.T) {
 }
 
 func TestGenerate_OutputIncludesExpectedSections(t *testing.T) {
-	tables := ParseSchema(testSchema)
+	tables := mustParseSchema(t, testSchema)
 	var buf bytes.Buffer
 	if err := Generate(&buf, "blueprints", tables); err != nil {
 		t.Fatalf("Generate error: %v", err)
@@ -220,7 +229,7 @@ CREATE TABLE tags (
     label TEXT NOT NULL
 );
 `
-	tables := ParseSchema(schema)
+	tables := mustParseSchema(t, schema)
 	var buf bytes.Buffer
 	if err := Generate(&buf, "mypkg", tables); err != nil {
 		t.Fatalf("Generate error: %v", err)
@@ -243,7 +252,7 @@ CREATE TABLE products (
     price NUMERIC(10,2) NOT NULL
 );
 `
-	tables := ParseSchema(schema)
+	tables := mustParseSchema(t, schema)
 	if len(tables) != 1 {
 		t.Fatalf("expected 1 table, got %d", len(tables))
 	}
@@ -266,7 +275,7 @@ create table items (
     name text not null
 );
 `
-	tables := ParseSchema(schema)
+	tables := mustParseSchema(t, schema)
 	if len(tables) != 1 {
 		t.Fatalf("expected 1 table, got %d", len(tables))
 	}
@@ -287,7 +296,7 @@ CREATE TABLE memberships (
     CONSTRAINT memberships_company_id_fkey FOREIGN KEY (company_id) REFERENCES companies(id)
 );
 `
-	tables := ParseSchema(schema)
+	tables := mustParseSchema(t, schema)
 	if len(tables) != 1 {
 		t.Fatalf("expected 1 table, got %d", len(tables))
 	}
@@ -320,7 +329,7 @@ CREATE TABLE "users" (
     "company_id" INTEGER REFERENCES "companies"("id")
 );
 `
-	tables := ParseSchema(schema)
+	tables := mustParseSchema(t, schema)
 	if len(tables) != 1 {
 		t.Fatalf("expected 1 table, got %d", len(tables))
 	}
@@ -343,7 +352,7 @@ CREATE TABLE reviews (
     reviewer_id INTEGER REFERENCES users(id)
 );
 `
-	tables := ParseSchema(schema)
+	tables := mustParseSchema(t, schema)
 	var buf bytes.Buffer
 	if err := Generate(&buf, "blueprints", tables); err != nil {
 		t.Fatalf("Generate error: %v", err)
@@ -411,6 +420,38 @@ func TestParseSchemaWithDialect_Unsupported(t *testing.T) {
 	}
 }
 
+func TestParseSchema_UnclosedParenthesis(t *testing.T) {
+	tests := []struct {
+		name   string
+		schema string
+	}{
+		{
+			name:   "missing closing paren",
+			schema: "CREATE TABLE users (id INT, name TEXT",
+		},
+		{
+			name: "second table broken",
+			schema: `CREATE TABLE companies (id INT PRIMARY KEY);
+CREATE TABLE users (id INT, company_id INT`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Act
+			_, err := ParseSchema(tt.schema)
+
+			// Assert
+			if err == nil {
+				t.Fatal("expected error for unclosed parenthesis")
+			}
+			if !strings.Contains(err.Error(), "unclosed parenthesis") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestGenerate_CompositePKAndFK(t *testing.T) {
 	schema := `
 CREATE TABLE regions (
@@ -426,7 +467,7 @@ CREATE TABLE deployments (
     CONSTRAINT deployments_region_fkey FOREIGN KEY (region_country_code, region_code) REFERENCES regions(country_code, region_code)
 );
 `
-	tables := ParseSchema(schema)
+	tables := mustParseSchema(t, schema)
 	var buf bytes.Buffer
 	if err := Generate(&buf, "blueprints", tables); err != nil {
 		t.Fatalf("Generate error: %v", err)
@@ -454,7 +495,7 @@ CREATE TABLE users (
     company_id INTEGER REFERENCES companies(id)
 );
 `
-	tables := ParseSchema(schema)
+	tables := mustParseSchema(t, schema)
 	var buf bytes.Buffer
 	if err := Generate(&buf, "blueprints", tables); err != nil {
 		t.Fatalf("Generate error: %v", err)
@@ -474,7 +515,7 @@ CREATE TABLE items (
     PRIMARY KEY (code, region)
 );
 `
-	tables := ParseSchema(schema)
+	tables := mustParseSchema(t, schema)
 	sqlcInfo := &SqlcInfo{
 		Package: "db",
 		Models: []SqlcModel{

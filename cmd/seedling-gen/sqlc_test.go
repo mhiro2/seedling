@@ -277,7 +277,7 @@ CREATE TABLE users (
     company_id INTEGER NOT NULL REFERENCES companies(id)
 );
 `
-	tables := ParseSchema(schema)
+	tables := mustParseSchema(t, schema)
 
 	sqlcInfo := &SqlcInfo{
 		Package: "db",
@@ -358,7 +358,7 @@ CREATE TABLE tags (
     label TEXT NOT NULL
 );
 `
-	tables := ParseSchema(schema)
+	tables := mustParseSchema(t, schema)
 
 	sqlcInfo := &SqlcInfo{
 		Package: "db",
@@ -386,7 +386,7 @@ CREATE TABLE article_tags (
     PRIMARY KEY (article_id, tag_id)
 );
 `
-	tables := ParseSchema(schema)
+	tables := mustParseSchema(t, schema)
 	sqlcInfo := &SqlcInfo{
 		Package: "db",
 		Models: []SqlcModel{
