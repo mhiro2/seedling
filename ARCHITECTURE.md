@@ -174,3 +174,5 @@ flowchart LR
 ```
 
 SQL DDL, sqlc config, and Atlas HCL share the common `[]Table` intermediate type and reuse `Generate()` / `GenerateSqlc()`. GORM and ent have adapter-specific types (`[]GormModel`, `[]EntSchema`) and dedicated generators that emit ORM-specific Insert/Delete callbacks.
+
+All parsers treat malformed input (unclosed parentheses, mismatched braces) as a hard error rather than returning partial results. When `-out` is specified, the output is written atomically via a temporary file so that a failure never leaves a partial file on disk.

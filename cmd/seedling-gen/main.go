@@ -20,7 +20,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	pkg := fs.String("pkg", "blueprints", "package name for generated code")
 	out := fs.String("out", "", "output file path (default: stdout)")
-	dialect := fs.String("dialect", "auto", "schema dialect: auto, postgres, mysql, sqlite")
+	dialect := fs.String("dialect", "auto", "schema dialect hint for validation (auto, postgres, mysql, sqlite)")
 	sqlcDir := fs.String("sqlc", "", "path to sqlc-generated Go files directory")
 	sqlcPkg := fs.String("sqlc-pkg", "", "Go import path for sqlc package (required with -sqlc)")
 	sqlcConfig := fs.String("sqlc-config", "", "path to sqlc.yaml config file (auto-resolves schema, output, and import path)")
