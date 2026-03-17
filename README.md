@@ -150,6 +150,8 @@ seedling handles FK ordering, graph expansion, and cleanup so your tests stay fo
 
 - [Guide](./docs/guide.md) -- workflows, option reference, and integration patterns
 - [Architecture](./ARCHITECTURE.md) -- internal pipeline design (planner, graph, executor)
+- [Agent Skill: seedling-gen CLI](./skills/seedling-gen-cli/SKILL.md) -- instructions for AI agents that need to choose the right generator mode and scaffold blueprints
+- [Agent Skill: seedling test setup](./skills/seedling-test-setup/SKILL.md) -- instructions for AI agents that write Go tests using seedling blueprints
 - [pkg.go.dev API reference](https://pkg.go.dev/github.com/mhiro2/seedling) -- full type and function docs
 
 ## 📝 License
