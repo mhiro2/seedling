@@ -1,6 +1,6 @@
 # seedling architecture
 
-This document explains how seedling turns a root model plus options into inserted records.
+Internal design documentation explaining how seedling turns a root model plus options into inserted records. For practical usage, see the [Guide](./docs/guide.md).
 
 ## Overview
 
@@ -176,3 +176,9 @@ flowchart LR
 SQL DDL, sqlc config, and Atlas HCL share the common `[]Table` intermediate type and reuse `Generate()` / `GenerateSqlc()`. GORM and ent have adapter-specific types (`[]GormModel`, `[]EntSchema`) and dedicated generators that emit ORM-specific Insert/Delete callbacks.
 
 All parsers treat malformed input (unclosed parentheses, mismatched braces) as a hard error rather than returning partial results. When `-out` is specified, the output is written atomically via a temporary file so that a failure never leaves a partial file on disk.
+
+## See Also
+
+- [Guide](./docs/guide.md) -- practical workflows and API usage patterns
+- [README](./README.md) -- project overview, Quick Start, and comparison table
+- [pkg.go.dev API reference](https://pkg.go.dev/github.com/mhiro2/seedling) -- full type and function documentation

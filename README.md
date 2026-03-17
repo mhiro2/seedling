@@ -8,9 +8,9 @@ Dependency-aware test data builder for Go and SQL databases.
 
 seedling lets tests create only the rows they need while automatically resolving foreign-key dependencies in the correct order. You provide the insert logic. seedling handles planning, FK assignment, and execution order.
 
-## 🔄 Before / After
+## ✨ Why seedling?
 
-**Before** -- manually wiring FK dependencies across 4 tables:
+Manually wiring FK dependencies across 4 tables:
 
 ```go
 func TestCreateTask(t *testing.T) {
@@ -36,7 +36,7 @@ func TestCreateTask(t *testing.T) {
 }
 ```
 
-**After** -- seedling resolves the graph automatically:
+With seedling, the graph is resolved automatically:
 
 ```go
 func TestCreateTask(t *testing.T) {
@@ -46,7 +46,7 @@ func TestCreateTask(t *testing.T) {
 }
 ```
 
-## ✨ Why seedling?
+seedling handles FK ordering, graph expansion, and cleanup so your tests stay focused on what matters:
 
 - 🔗 Automatic FK resolution with topological insert ordering
 - 🌿 Minimal graph expansion: only required ancestors are inserted
@@ -58,74 +58,74 @@ func TestCreateTask(t *testing.T) {
 
 ## 🚀 Quick Start
 
-### 1. Generate blueprints from your schema
+1. **Generate blueprints from your schema**
 
-```bash
-go install github.com/mhiro2/seedling/cmd/seedling-gen@latest
+   ```bash
+   go install github.com/mhiro2/seedling/cmd/seedling-gen@latest
 
-# From SQL DDL
-seedling-gen -pkg testutil -out blueprints.go schema.sql
+   # From SQL DDL
+   seedling-gen -pkg testutil -out blueprints.go schema.sql
 
-# Or from other sources:
-seedling-gen -sqlc-config sqlc.yaml -pkg testutil -out blueprints.go
-seedling-gen -gorm ./models -gorm-pkg github.com/you/app/models -pkg testutil
-seedling-gen -ent ./ent/schema -ent-pkg github.com/you/app/ent -pkg testutil
-seedling-gen -atlas schema.hcl -pkg testutil
-```
+   # Or from other sources:
+   seedling-gen -sqlc-config sqlc.yaml -pkg testutil -out blueprints.go
+   seedling-gen -gorm ./models -gorm-pkg github.com/you/app/models -pkg testutil
+   seedling-gen -ent ./ent/schema -ent-pkg github.com/you/app/ent -pkg testutil
+   seedling-gen -atlas schema.hcl -pkg testutil
+   ```
 
-This generates struct types, `RegisterBlueprints()`, relations, and Insert stubs. Fill in the `// TODO` callbacks with your DB logic:
+   This generates struct types, `RegisterBlueprints()`, relations, and Insert stubs. Fill in the `// TODO` callbacks with your DB logic:
 
-```go
-Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
-    return insertCompany(ctx, db, v) // your DB call
-},
-```
+   ```go
+   Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
+       return insertCompany(ctx, db, v) // your DB call
+   },
+   ```
 
-### 2. Use it in tests
+2. **Use it in tests**
 
-```go
-func TestUser(t *testing.T) {
-    tx := seedling.WithTx(t, db) // auto-rollback at cleanup
+   ```go
+   func TestUser(t *testing.T) {
+       tx := seedling.WithTx(t, db) // auto-rollback at cleanup
 
-    result := seedling.InsertOne[User](t, tx)
-    user := result.Root()
+       result := seedling.InsertOne[User](t, tx)
+       user := result.Root()
 
-    if user.ID == 0 {
-        t.Fatal("expected user ID to be set")
-    }
-    if user.CompanyID == 0 {
-        t.Fatal("expected company to be inserted automatically")
-    }
-}
-```
+       if user.ID == 0 {
+           t.Fatal("expected user ID to be set")
+       }
+       if user.CompanyID == 0 {
+           t.Fatal("expected company to be inserted automatically")
+       }
+   }
+   ```
 
-### 3. Override only what the test cares about
+3. **Override only what the test cares about**
 
-```go
-func TestNamedUser(t *testing.T) {
-    tx := seedling.WithTx(t, db)
-    company := seedling.InsertOne[Company](t, tx).Root()
+   ```go
+   func TestNamedUser(t *testing.T) {
+       tx := seedling.WithTx(t, db)
+       company := seedling.InsertOne[Company](t, tx).Root()
 
-    result := seedling.InsertOne[User](t, tx,
-        seedling.Set("Name", "alice"),
-        seedling.Use("company", company),
-    )
+       result := seedling.InsertOne[User](t, tx,
+           seedling.Set("Name", "alice"),
+           seedling.Use("company", company),
+       )
 
-    user := result.Root()
-    _ = user
-}
+       user := result.Root()
+       _ = user
+   }
 
-func TestTaskProject(t *testing.T) {
-    tx := seedling.WithTx(t, db)
+   func TestTaskProject(t *testing.T) {
+       tx := seedling.WithTx(t, db)
 
-    // Only("project") inserts task + project subtree only,
-    // skipping the assignee relation entirely.
-    result := seedling.InsertOne[Task](t, tx,
-        seedling.Only("project"),
-    )
-    _ = result
-}
-```
+       // Only("project") inserts task + project subtree only,
+       // skipping the assignee relation entirely.
+       result := seedling.InsertOne[Task](t, tx,
+           seedling.Only("project"),
+       )
+       _ = result
+   }
+   ```
 
 ## ⚖️ Comparison
 
@@ -146,11 +146,9 @@ func TestTaskProject(t *testing.T) {
 
 ## 📚 Learn More
 
-- [pkg.go.dev package docs](https://pkg.go.dev/github.com/mhiro2/seedling)
-- [Guide](./docs/guide.md)
-- [ARCHITECTURE.md](./ARCHITECTURE.md)
-- [`example_test.go`](./example_test.go): runnable package examples used by pkg.go.dev
-- [`cmd/seedling-gen`](./cmd/seedling-gen): generate blueprint skeletons from SQL DDL, sqlc config, GORM models, ent schemas, or Atlas HCL
+- [Guide](./docs/guide.md) -- workflows, option reference, and integration patterns
+- [Architecture](./ARCHITECTURE.md) -- internal pipeline design (planner, graph, executor)
+- [pkg.go.dev API reference](https://pkg.go.dev/github.com/mhiro2/seedling) -- full type and function docs
 
 ## 📝 License
 
