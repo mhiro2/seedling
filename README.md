@@ -51,7 +51,7 @@ seedling handles FK ordering, graph expansion, and cleanup so your tests stay fo
 - 🔗 Automatic FK resolution with topological insert ordering
 - 🌿 Minimal graph expansion: only required ancestors are inserted
 - 🔧 Type-safe per-test overrides with `Set`, `Use`, `Ref`, `With`, `When`, and `Only`
-- ♻️ `WithTx` for auto-rollback transactions -- no manual cleanup
+- ♻️ `WithTx` / `WithPgxTx` for auto-rollback transactions -- no manual cleanup
 - 🔌 Works with sqlc, `database/sql`, pgx, GORM, or any other DB handle you own
 - 📊 Supports `HasMany`, `ManyToMany`, composite keys, cleanup, dry runs, and insert logging
 - 🎲 Includes deterministic fake data via [`seedling/faker`](https://pkg.go.dev/github.com/mhiro2/seedling/faker) with multi-locale support (en, ja, zh, ko, de, fr)
@@ -142,6 +142,7 @@ seedling handles FK ordering, graph expansion, and cleanup so your tests stay fo
 - [sqlc](./examples/sqlc): wire blueprints to sqlc-generated query code
 - [reuse-parent](./examples/reuse-parent): reuse existing rows with `Use`
 - [custom-defaults](./examples/custom-defaults): customize values with `Set`, `With`, and `Generate`
+- pgx transactions: use `WithPgxTx` / `NewPgxTestSession` with `pgxpool.Pool` or `*pgx.Conn`
 - GORM / ent / Atlas: use `seedling-gen` with `-gorm`, `-ent`, or `-atlas` flags to generate blueprints from your existing schema definitions
 
 ## 📚 Learn More

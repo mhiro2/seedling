@@ -79,6 +79,23 @@ func ExampleInsertMany() {
 	// Output: company-0, company-1, company-2
 }
 
+func ExampleInsertManyE() {
+	setupExampleBlueprints()
+
+	result, err := seedling.InsertManyE[ExCompany](context.Background(), nil, 2,
+		seedling.Seq("Name", func(i int) string {
+			return fmt.Sprintf("company-%d", i)
+		}),
+	)
+	if err != nil {
+		return
+	}
+
+	companies := result.Roots()
+	fmt.Printf("%d: %s, %s\n", result.Len(), companies[0].Name, companies[1].Name)
+	// Output: 2: company-0, company-1
+}
+
 func ExampleBuild() {
 	setupExampleBlueprints()
 
@@ -199,4 +216,12 @@ func ExampleGenerate() {
 	).Root()
 	fmt.Println(user.Name)
 	// Output: Amanda Sanders
+}
+
+func ExampleWithPgxTx() {
+	beginner := &stubPgxBeginner{tx: &stubPgxTx{}}
+	t := &testing.T{}
+
+	tx := seedling.WithPgxTx(t, beginner)
+	_ = tx
 }

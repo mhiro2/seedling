@@ -115,7 +115,8 @@
 //
 // [Build] returns a plan for inspection or validation before execution.
 // [InsertOne] returns a [Result] so you can access the root record and any
-// related inserted nodes.
+// related inserted nodes. [InsertManyE] returns a [BatchResult] with the batch
+// roots plus cleanup/debug helpers for the full execution graph.
 //
 // [Session]
 //
@@ -125,6 +126,12 @@
 // returns a *sql.Tx directly with automatic rollback on cleanup:
 //
 //	tx := seedling.WithTx(t, db)
+//	result := seedling.InsertOne[User](t, tx)
+//
+// For pgx users, [NewPgxTestSession] and [WithPgxTx] provide the same pattern
+// for pgx transactions:
+//
+//	tx := seedling.WithPgxTx(t, pool)
 //	result := seedling.InsertOne[User](t, tx)
 //
 // # Common Workflows
@@ -153,6 +160,15 @@
 //	        return fmt.Sprintf("user-%d@example.com", i)
 //	    }),
 //	)
+//	_ = users
+//
+// Or inspect / clean up the full batch execution with [InsertManyE]:
+//
+//	result, err := seedling.InsertManyE[User](ctx, db, 3)
+//	if err != nil {
+//	    _ = result.CleanupE(ctx, db)
+//	}
+//	users := result.Roots()
 //	_ = users
 //
 // [InsertMany] batch-shares auto-created belongs-to relations when the same
@@ -193,6 +209,7 @@
 //   - [Seq], [Generate], [WithRand], [WithSeed]
 //   - [WithContext], [WithInsertLog]
 //   - [Plan.Validate], [Plan.DebugString], [Plan.DryRunString]
-//   - [WithTx], [NewTestSession]
+//   - [WithTx], [NewTestSession], [WithPgxTx], [NewPgxTestSession]
 //   - [Result.Root], [Result.DebugString], [Result.Cleanup], [Result.CleanupE]
+//   - [BatchResult.Roots], [BatchResult.DebugString], [BatchResult.Cleanup], [BatchResult.CleanupE]
 package seedling

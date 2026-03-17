@@ -28,8 +28,8 @@ func NewSession[T any](reg *Registry) Session[T] {
 // it back during test cleanup.
 //
 // This helper is specific to database/sql. If you use a different driver (e.g.
-// pgx), begin and defer-rollback the transaction yourself and pass it via
-// [NewSession] + [Session.WithDB].
+// pgx), use [NewPgxTestSession] / [WithPgxTx] or begin and defer-rollback the
+// transaction yourself and pass it via [NewSession] + [Session.WithDB].
 func NewTestSession[T any](tb testing.TB, reg *Registry, db TxBeginner, txOptions *sql.TxOptions) Session[T] {
 	tb.Helper()
 
