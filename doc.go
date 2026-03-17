@@ -136,7 +136,8 @@
 //	    seedling.Use("company", company),
 //	).Root()
 //
-// Customize an auto-created relation with [Ref]:
+// Customize an auto-created relation with [Ref]. This also explicitly enables
+// optional relations:
 //
 //	plan := seedling.Build[User](t,
 //	    seedling.Ref("company", seedling.Set("Name", "renewal")),

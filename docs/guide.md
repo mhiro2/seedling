@@ -87,11 +87,11 @@ For more control (custom `sql.TxOptions`, registry binding), use `NewTestSession
 ## Common Options
 
 - `Set`: override one field by Go struct field name
-- `Ref`: customize the auto-created node behind a relation
+- `Ref`: customize the auto-created node behind a relation and explicitly enable an optional relation
 - `Use`: reuse an existing record instead of inserting a new relation target
 - `Omit`: skip an optional relation
 - `Only`: restrict insertion to specific relation subtrees
-- `When`: expand a relation only when the current record matches a condition
+- `When`: expand a relation only when the current record matches a condition, including optional relations when the predicate returns true
 - `With`: mutate the root struct with full type safety
 - `Generate` + `WithSeed` / `WithRand`: generate deterministic values for property-style tests
 - `WithInsertLog`: observe insert steps and FK assignments during execution

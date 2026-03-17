@@ -40,10 +40,11 @@ type Relation struct {
 	// Only used for ManyToMany.
 	RemoteFields []string
 
-	// Optional disables automatic expansion for this relation.
+	// Optional disables default automatic expansion for this relation.
 	// When false (the zero value), the relation is required and the planner
 	// will automatically expand it. Set to true when you want to keep a
-	// relation nullable or handle it manually.
+	// relation nullable by default; Ref, Use, or a true When predicate can
+	// still enable expansion explicitly.
 	Optional bool
 
 	// Count specifies how many related records to create for HasMany and
