@@ -6,6 +6,15 @@ import (
 	"testing"
 )
 
+func mustParseAtlasHCL(t *testing.T, data string) []Table {
+	t.Helper()
+	tables, err := ParseAtlasHCL(data)
+	if err != nil {
+		t.Fatalf("ParseAtlasHCL error: %v", err)
+	}
+	return tables
+}
+
 func TestParseAtlasHCL_BasicTables(t *testing.T) {
 	// Arrange
 	hcl := `
@@ -49,7 +58,7 @@ table "users" {
 `
 
 	// Act
-	tables := ParseAtlasHCL(hcl)
+	tables := mustParseAtlasHCL(t, hcl)
 	if len(tables) != 2 {
 		t.Fatalf("expected 2 tables, got %d", len(tables))
 	}
@@ -112,7 +121,7 @@ table "article_tags" {
 `
 
 	// Act
-	tables := ParseAtlasHCL(hcl)
+	tables := mustParseAtlasHCL(t, hcl)
 	if len(tables) != 1 {
 		t.Fatalf("expected 1 table, got %d", len(tables))
 	}
@@ -130,7 +139,11 @@ table "article_tags" {
 
 func TestParseAtlasHCL_EmptyInput(t *testing.T) {
 	// Act
-	tables := ParseAtlasHCL("")
+	tables, err := ParseAtlasHCL("")
+	// Assert
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if tables != nil {
 		t.Fatalf("expected nil tables, got %d", len(tables))
 	}
@@ -162,7 +175,7 @@ table "items" {
 `
 
 	// Act
-	tables := ParseAtlasHCL(hcl)
+	tables := mustParseAtlasHCL(t, hcl)
 	if len(tables) != 1 {
 		t.Fatalf("expected 1 table, got %d", len(tables))
 	}
@@ -270,7 +283,7 @@ table "tags" {
   }
 }
 `
-	tables := ParseAtlasHCL(hcl)
+	tables := mustParseAtlasHCL(t, hcl)
 
 	// Act
 	var buf bytes.Buffer
@@ -288,6 +301,48 @@ table "tags" {
 	}
 	if !strings.Contains(output, `Table:   "tags"`) {
 		t.Fatalf("expected table 'tags', got:\n%s", output)
+	}
+}
+
+func TestParseAtlasHCL_UnclosedBrace(t *testing.T) {
+	tests := []struct {
+		name string
+		hcl  string
+		want string
+	}{
+		{
+			name: "table brace",
+			hcl: `table "users" {
+  column "id" {
+    type = int
+  }
+`,
+			want: `parse table "users": unclosed brace`,
+		},
+		{
+			name: "column brace",
+			hcl: `table "users" {
+  column "id" {
+    type = int
+}
+`,
+			want: `unclosed brace`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Act
+			_, err := ParseAtlasHCL(tt.hcl)
+
+			// Assert
+			if err == nil {
+				t.Fatal("expected error for unclosed brace")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected error containing %q, got: %v", tt.want, err)
+			}
+		})
 	}
 }
 

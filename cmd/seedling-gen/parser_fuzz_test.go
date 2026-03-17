@@ -24,22 +24,24 @@ func FuzzParseSchemaWithDialect(f *testing.F) {
 		tables, err := ParseSchemaWithDialect(sql, dialect)
 
 		// Assert
-		if isSupportedDialect(dialect) {
-			if err != nil {
-				t.Fatalf("ParseSchemaWithDialect returned error for supported dialect %q: %v", dialect, err)
+		if !isSupportedDialect(dialect) {
+			if err == nil {
+				t.Fatal("expected unsupported dialect error")
 			}
-
-			var buf bytes.Buffer
-			_ = Generate(&buf, "blueprints", tables)
+			if !strings.Contains(err.Error(), "unsupported dialect") {
+				t.Fatalf("unexpected error: %v", err)
+			}
 			return
 		}
 
-		if err == nil {
-			t.Fatal("expected unsupported dialect error")
+		// Supported dialect: parse errors are allowed for malformed input,
+		// but must not panic.
+		if err != nil {
+			return
 		}
-		if !strings.Contains(err.Error(), "unsupported dialect") {
-			t.Fatalf("unexpected error: %v", err)
-		}
+
+		var buf bytes.Buffer
+		_ = Generate(&buf, "blueprints", tables)
 	})
 }
 

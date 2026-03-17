@@ -153,7 +153,10 @@ func runAtlas(w, _ io.Writer, pkg, atlasPath string) error {
 		return fmt.Errorf("read atlas file: %w", err)
 	}
 
-	tables := ParseAtlasHCL(string(data))
+	tables, err := ParseAtlasHCL(string(data))
+	if err != nil {
+		return err
+	}
 	if len(tables) == 0 {
 		return fmt.Errorf("no tables found in %s", atlasPath)
 	}

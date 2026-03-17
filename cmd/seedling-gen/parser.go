@@ -43,9 +43,8 @@ type Table struct {
 }
 
 // ParseSchema parses SQL schema text and returns a slice of Tables.
-func ParseSchema(sql string) []Table {
-	tables, _ := ParseSchemaWithDialect(sql, "auto")
-	return tables
+func ParseSchema(sql string) ([]Table, error) {
+	return ParseSchemaWithDialect(sql, "auto")
 }
 
 // ParseSchemaWithDialect parses SQL schema text for the given dialect.
@@ -59,7 +58,11 @@ func ParseSchemaWithDialect(sql, dialect string) ([]Table, error) {
 	var tables []Table
 	enumTypes := extractEnumTypes(sql)
 
-	for _, block := range extractCreateTableBlocks(sql) {
+	blocks, err := extractCreateTableBlocks(sql)
+	if err != nil {
+		return nil, err
+	}
+	for _, block := range blocks {
 		tableName := normalizeIdent(block.Name)
 		body := block.Body
 		columns, foreignKeys := parseColumns(body, enumTypes)
@@ -81,14 +84,14 @@ type createTableBlock struct {
 	Body string
 }
 
-func extractCreateTableBlocks(sql string) []createTableBlock {
+func extractCreateTableBlocks(sql string) ([]createTableBlock, error) {
 	var blocks []createTableBlock
 	searchFrom := 0
 
 	for {
 		loc := createTableStartRE.FindStringSubmatchIndex(sql[searchFrom:])
 		if loc == nil {
-			return blocks
+			return blocks, nil
 		}
 
 		matchStart := searchFrom + loc[0]
@@ -96,13 +99,14 @@ func extractCreateTableBlocks(sql string) []createTableBlock {
 		nameStart := searchFrom + loc[2]
 		nameEnd := searchFrom + loc[3]
 
+		tableName := sql[nameStart:nameEnd]
 		bodyEnd := findMatchingParen(sql, bodyStart-1)
 		if bodyEnd == -1 {
-			return blocks
+			return nil, fmt.Errorf("parse CREATE TABLE %s: unclosed parenthesis", tableName)
 		}
 
 		blocks = append(blocks, createTableBlock{
-			Name: sql[nameStart:nameEnd],
+			Name: tableName,
 			Body: sql[bodyStart:bodyEnd],
 		})
 
