@@ -370,6 +370,24 @@ func writeSchemaFile(t *testing.T, schema string) string {
 	return path
 }
 
+func TestRun_AtomicWrite_NoFileOnError(t *testing.T) {
+	// Arrange
+	outputPath := filepath.Join(t.TempDir(), "output.go")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	// Act: run without schema path to trigger an error with -out set.
+	exitCode := run([]string{"-pkg", "fixtures", "-out", outputPath}, &stdout, &stderr)
+
+	// Assert
+	if exitCode != 1 {
+		t.Fatalf("expected exit code 1, got %d", exitCode)
+	}
+	if _, err := os.Stat(outputPath); err == nil {
+		t.Fatal("expected output file to not exist after failure")
+	}
+}
+
 func findColumn(t *testing.T, table Table, name string) Column {
 	t.Helper()
 
