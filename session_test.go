@@ -4,10 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"path/filepath"
 	"testing"
-
-	_ "modernc.org/sqlite"
 
 	"github.com/mhiro2/seedling"
 	"github.com/mhiro2/seedling/seedlingtest"
@@ -86,8 +83,7 @@ func TestSession_WithDB_ExplicitDBOverridesBoundDB(t *testing.T) {
 
 func TestNewTestSession_RollsBackTransactionOnCleanup(t *testing.T) {
 	// Arrange
-	dbPath := filepath.Join(t.TempDir(), "seedling.db")
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := openStubSQLDB(t)
 	if err != nil {
 		t.Fatal(err)
 	}

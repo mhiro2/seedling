@@ -217,11 +217,3 @@ func ExampleGenerate() {
 	fmt.Println(user.Name)
 	// Output: Amanda Sanders
 }
-
-func ExampleWithPgxTx() {
-	beginner := &stubPgxBeginner{tx: &stubPgxTx{}}
-	t := &testing.T{}
-
-	tx := seedling.WithPgxTx(t, beginner)
-	_ = tx
-}

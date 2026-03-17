@@ -128,10 +128,10 @@
 //	tx := seedling.WithTx(t, db)
 //	result := seedling.InsertOne[User](t, tx)
 //
-// For pgx users, [NewPgxTestSession] and [WithPgxTx] provide the same pattern
-// for pgx transactions:
+// For pgx users, the companion package github.com/mhiro2/seedling/seedlingpgx
+// provides the same pattern for pgx transactions:
 //
-//	tx := seedling.WithPgxTx(t, pool)
+//	tx := seedlingpgx.WithTx(t, pool)
 //	result := seedling.InsertOne[User](t, tx)
 //
 // # Common Workflows
@@ -209,7 +209,7 @@
 //   - [Seq], [Generate], [WithRand], [WithSeed]
 //   - [WithContext], [WithInsertLog]
 //   - [Plan.Validate], [Plan.DebugString], [Plan.DryRunString]
-//   - [WithTx], [NewTestSession], [WithPgxTx], [NewPgxTestSession]
+//   - [WithTx], [NewTestSession]
 //   - [Result.Root], [Result.DebugString], [Result.Cleanup], [Result.CleanupE]
 //   - [BatchResult.Roots], [BatchResult.DebugString], [BatchResult.Cleanup], [BatchResult.CleanupE]
 package seedling
