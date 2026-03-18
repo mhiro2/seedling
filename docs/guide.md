@@ -154,7 +154,7 @@ The execution model and graph expansion rules are documented in [ARCHITECTURE.md
 
 seedling does not generate SQL at runtime. Your blueprint owns the `Insert` and optional `Delete` callbacks, so the library works with any DB abstraction that your code already uses.
 
-- sqlc: map `Insert` callbacks to generated query methods. Use `-sqlc-config` for automatic setup
+- sqlc: map `Insert` callbacks to generated query methods. Prefer `seedling-gen sqlc --config ...` for automatic setup
 - `database/sql`: pass `*sql.DB` or `*sql.Tx`
 - pgx: pass your pool or transaction handle, or use `github.com/mhiro2/seedling/seedlingpgx` for rollback-on-cleanup helpers
 - GORM: use `-gorm` to generate blueprints with `gorm.DB`-based Insert/Delete callbacks
@@ -177,25 +177,33 @@ When you use `database/sql`, [`WithTx`](https://pkg.go.dev/github.com/mhiro2/see
 [`seedling-gen`](../cmd/seedling-gen) generates model and blueprint skeletons from multiple input sources:
 
 ```bash
-# SQL DDL (default mode)
-seedling-gen -pkg blueprints schema.sql
+# SQL DDL
+seedling-gen sql --pkg blueprints schema.sql
 
 # sqlc config: auto-resolves schema, output dir, and import path from sqlc.yaml
-seedling-gen -sqlc-config sqlc.yaml -pkg blueprints
+seedling-gen sqlc --config sqlc.yaml --pkg blueprints
+
+# sqlc manual mode: use generated Go files plus an explicit schema.sql
+seedling-gen sqlc --dir ./internal/db --import-path github.com/you/app/internal/db --pkg blueprints schema.sql
 
 # GORM models: parses Go source with gorm struct tags
-seedling-gen -gorm ./models -gorm-pkg github.com/you/app/models -pkg blueprints
+seedling-gen gorm --dir ./models --import-path github.com/you/app/models --pkg blueprints
 
 # ent schemas: parses ent schema directory (Fields/Edges methods)
-seedling-gen -ent ./ent/schema -ent-pkg github.com/you/app/ent -pkg blueprints
+seedling-gen ent --dir ./ent/schema --import-path github.com/you/app/ent --pkg blueprints
 
 # Atlas HCL: parses Atlas schema file
-seedling-gen -atlas schema.hcl -pkg blueprints
+seedling-gen atlas --pkg blueprints schema.hcl
 ```
 
-Only one adapter flag (`-sqlc`, `-sqlc-config`, `-gorm`, `-ent`, `-atlas`) can be specified at a time. All modes support `-pkg` (package name) and `-out` (output file path). When `-out` is specified, the output is written atomically via a temporary file so that a generation failure never leaves a partial file on disk.
+All subcommands support `--pkg` (generated package name) and `--out` (output file path). The `sql` and `sqlc` subcommands also support `--dialect` (`auto`, `postgres`, `mysql`, `sqlite`) as a validation hint. The SQL parser itself uses the same logic for all dialects, so `--dialect` does not change parsing behavior.
 
-The `-dialect` flag (`auto`, `postgres`, `mysql`, `sqlite`) is a validation hint that rejects unknown dialect names. The SQL parser itself uses the same logic for all dialects, so `-dialect` does not change parsing behavior.
+The `sqlc` subcommand has two input modes:
+
+- `--config`: read `sqlc.yaml` and auto-resolve schema files, output directory, and Go import path
+- `--dir` + `--import-path` + `<schema.sql>`: manually point at generated sqlc Go files and the schema DDL
+
+When `--out` is specified, the output is written atomically via a temporary file so that a generation failure never leaves a partial file on disk.
 
 ## Faker Locales
 

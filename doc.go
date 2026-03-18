@@ -192,11 +192,11 @@
 // and optional Delete callbacks, so the library works with any DB abstraction.
 // The seedling-gen CLI can generate blueprint skeletons from multiple sources:
 //
-//   - SQL DDL: seedling-gen schema.sql
-//   - sqlc config: seedling-gen -sqlc-config sqlc.yaml
-//   - GORM models: seedling-gen -gorm ./models -gorm-pkg example/models
-//   - ent schemas: seedling-gen -ent ./ent/schema -ent-pkg example/ent
-//   - Atlas HCL: seedling-gen -atlas schema.hcl
+//   - SQL DDL: seedling-gen sql schema.sql
+//   - sqlc config: seedling-gen sqlc --config sqlc.yaml
+//   - GORM models: seedling-gen gorm --dir ./models --import-path example/models
+//   - ent schemas: seedling-gen ent --dir ./ent/schema --import-path example/ent
+//   - Atlas HCL: seedling-gen atlas schema.hcl
 //
 // # Related APIs
 //
