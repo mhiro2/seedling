@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"go/ast"
-	"go/format"
 	"go/parser"
 	"go/token"
 	"io"
@@ -11,7 +10,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
-	"text/template"
 )
 
 // GormModel represents a parsed GORM model struct.
@@ -302,152 +300,13 @@ func toSnakeCase(s string) string {
 	return b.String()
 }
 
-const gormCodeTemplate = `package {{.Package}}
-
-import (
-	"context"
-
-	"github.com/mhiro2/seedling"
-	"gorm.io/gorm"
-	{{.ModelPkgAlias}} "{{.ModelImportPath}}"
-)
-
-func RegisterBlueprints() {
-{{- range $i, $entry := .Entries}}
-{{- if $i}}
-{{end}}
-	seedling.MustRegister(seedling.Blueprint[{{$.ModelPkgAlias}}.{{$entry.GoName}}]{
-		Name:  "{{$entry.BlueprintID}}",
-		Table: "{{$entry.TableName}}",
-{{- if $entry.CompositePK}}
-		PKFields: []string{ {{- range $i, $field := $entry.PKFields}}{{if $i}}, {{end}}"{{$field}}"{{end}} },
-{{- else}}
-		PKField: "{{$entry.PKField}}",
-{{- end}}
-		Defaults: func() {{$.ModelPkgAlias}}.{{$entry.GoName}} {
-			return {{$.ModelPkgAlias}}.{{$entry.GoName}}{}
-		},
-{{- if $entry.HasRelations}}
-		Relations: []seedling.Relation{
-{{- range $entry.Relations}}
-			{Name: "{{.Name}}", Kind: seedling.BelongsTo, {{- if .Composite}} LocalFields: []string{ {{- range $i, $field := .LocalFields}}{{if $i}}, {{end}}"{{$field}}"{{end}} }, {{- else}} LocalField: "{{.LocalField}}", {{- end}} RefBlueprint: "{{.RefBlueprint}}"{{- if .Optional}}, Optional: true{{- end}}},
-{{- end}}
-		},
-{{- end}}
-		Insert: func(ctx context.Context, dbtx seedling.DBTX, v {{$.ModelPkgAlias}}.{{$entry.GoName}}) ({{$.ModelPkgAlias}}.{{$entry.GoName}}, error) {
-			if err := dbtx.(*gorm.DB).WithContext(ctx).Create(&v).Error; err != nil {
-				return v, err
-			}
-			return v, nil
-		},
-		Delete: func(ctx context.Context, dbtx seedling.DBTX, v {{$.ModelPkgAlias}}.{{$entry.GoName}}) error {
-			return dbtx.(*gorm.DB).WithContext(ctx).Delete(&v).Error
-		},
-	})
-{{- end}}
-}
-`
-
-type gormEntry struct {
-	GoName       string
-	BlueprintID  string
-	TableName    string
-	PKField      string
-	PKFields     []string
-	CompositePK  bool
-	HasRelations bool
-	Relations    []relationInfo
-}
-
-type gormTemplateData struct {
-	Package         string
-	ModelPkgAlias   string
-	ModelImportPath string
-	Entries         []gormEntry
-}
-
 // GenerateGorm generates Blueprint registration code for GORM models.
 func GenerateGorm(w io.Writer, pkg, modelImportPath string, models []GormModel) error {
 	alias := filepath.Base(modelImportPath)
-
-	entries := make([]gormEntry, 0, len(models))
-	for _, m := range models {
-		entry := gormEntry{
-			GoName:      m.Name,
-			BlueprintID: strings.ToLower(m.Name[:1]) + m.Name[1:],
-			TableName:   m.Table,
-		}
-
-		// Extract PKs.
-		var pks []string
-		for _, f := range m.Fields {
-			if f.IsPK {
-				pks = append(pks, f.Name)
-			}
-		}
-		if len(pks) == 0 {
-			pks = []string{"ID"}
-		}
-		entry.PKField = pks[0]
-		entry.PKFields = pks
-		entry.CompositePK = len(pks) > 1
-
-		// Build relations from detected relationships.
-		var rels []relationInfo
-		for _, f := range m.Fields {
-			if f.Relation == nil {
-				continue
-			}
-			rel := f.Relation
-			if rel.Kind != "BelongsTo" {
-				continue // Only BelongsTo for now.
-			}
-			fkField := rel.ForeignKey
-			if fkField == "" {
-				fkField = f.Name + "ID"
-			}
-			refBP := strings.ToLower(rel.RefModel[:1]) + rel.RefModel[1:]
-			rels = append(rels, relationInfo{
-				Name:         strings.ToLower(f.Name[:1]) + f.Name[1:],
-				LocalField:   fkField,
-				LocalFields:  []string{fkField},
-				RefBlueprint: refBP,
-				Optional:     !f.NotNull,
-			})
-		}
-		entry.HasRelations = len(rels) > 0
-		entry.Relations = rels
-
-		entry.BlueprintID = singularize(strings.ToLower(m.Name))
-
-		entries = append(entries, entry)
-	}
-
-	data := gormTemplateData{
-		Package:         pkg,
-		ModelPkgAlias:   alias,
-		ModelImportPath: modelImportPath,
-		Entries:         entries,
-	}
-
-	tmpl, err := template.New("gorm").Parse(gormCodeTemplate)
-	if err != nil {
-		return fmt.Errorf("parse gorm template: %w", err)
-	}
-
-	var buf strings.Builder
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return fmt.Errorf("execute gorm template: %w", err)
-	}
-
-	formatted, err := format.Source([]byte(buf.String()))
-	if err != nil {
-		return fmt.Errorf("format gorm generated code: %w", err)
-	}
-
-	_, err = w.Write(formatted)
-	if err != nil {
-		return fmt.Errorf("write gorm generated code: %w", err)
-	}
-	return nil
+	return generateNormalizedCode(w, "gorm", pkg, []string{
+		`"context"`,
+		`"github.com/mhiro2/seedling"`,
+		`"gorm.io/gorm"`,
+		alias + ` "` + modelImportPath + `"`,
+	}, normalizeGormModels(models, alias), false)
 }

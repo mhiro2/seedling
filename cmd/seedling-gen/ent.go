@@ -3,14 +3,12 @@ package main
 import (
 	"fmt"
 	"go/ast"
-	"go/format"
 	"go/parser"
 	"go/token"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"text/template"
 )
 
 // EntSchema represents a parsed ent schema.
@@ -373,132 +371,11 @@ func entTypeToGoType(entType string) string {
 	}
 }
 
-const entCodeTemplate = `package {{.Package}}
-
-import (
-	"context"
-
-	"github.com/mhiro2/seedling"
-	"{{.EntImportPath}}"
-)
-
-func RegisterBlueprints() {
-{{- range $i, $entry := .Entries}}
-{{- if $i}}
-{{end}}
-	seedling.MustRegister(seedling.Blueprint[*ent.{{$entry.GoName}}]{
-		Name:  "{{$entry.BlueprintID}}",
-		Table: "{{$entry.TableName}}",
-		PKField: "ID",
-		Defaults: func() *ent.{{$entry.GoName}} {
-			return &ent.{{$entry.GoName}}{}
-		},
-{{- if $entry.HasRelations}}
-		Relations: []seedling.Relation{
-{{- range $entry.Relations}}
-			{Name: "{{.Name}}", Kind: seedling.BelongsTo, LocalField: "{{.LocalField}}", RefBlueprint: "{{.RefBlueprint}}"{{- if .Optional}}, Optional: true{{- end}}},
-{{- end}}
-		},
-{{- end}}
-		Insert: func(ctx context.Context, dbtx seedling.DBTX, v *ent.{{$entry.GoName}}) (*ent.{{$entry.GoName}}, error) {
-			builder := dbtx.(*ent.Client).{{$entry.GoName}}.Create()
-{{- range $entry.SetterFields}}
-			builder.Set{{.SetterName}}(v.{{.FieldName}})
-{{- end}}
-			return builder.Save(ctx)
-		},
-		Delete: func(ctx context.Context, dbtx seedling.DBTX, v *ent.{{$entry.GoName}}) error {
-			return dbtx.(*ent.Client).{{$entry.GoName}}.DeleteOneID(v.ID).Exec(ctx)
-		},
-	})
-{{- end}}
-}
-`
-
-type entEntry struct {
-	GoName       string
-	BlueprintID  string
-	TableName    string
-	HasRelations bool
-	Relations    []relationInfo
-	SetterFields []entSetterField
-}
-
-type entSetterField struct {
-	FieldName  string
-	SetterName string
-}
-
-type entTemplateData struct {
-	Package       string
-	EntImportPath string
-	Entries       []entEntry
-}
-
 // GenerateEnt generates Blueprint registration code for ent schemas.
 func GenerateEnt(w io.Writer, pkg, entImportPath string, schemas []EntSchema) error {
-	entries := make([]entEntry, 0, len(schemas))
-	for _, s := range schemas {
-		entry := entEntry{
-			GoName:      s.Name,
-			BlueprintID: singularize(strings.ToLower(s.Name)),
-			TableName:   singularize(strings.ToLower(s.Name)) + "s",
-		}
-
-		// Build setter fields for the Insert template.
-		for _, f := range s.Fields {
-			entry.SetterFields = append(entry.SetterFields, entSetterField{
-				FieldName:  toGoFieldName(f.Name),
-				SetterName: toGoFieldName(f.Name),
-			})
-		}
-
-		// Build relations from edges.
-		var rels []relationInfo
-		for _, e := range s.Edges {
-			if e.Direction == "From" {
-				// edge.From -> BelongsTo
-				fkField := toGoFieldName(e.Name) + "ID"
-				refBP := singularize(strings.ToLower(e.Type))
-				rels = append(rels, relationInfo{
-					Name:         e.Name,
-					LocalField:   fkField,
-					LocalFields:  []string{fkField},
-					RefBlueprint: refBP,
-					Optional:     !e.Required,
-				})
-			}
-		}
-		entry.HasRelations = len(rels) > 0
-		entry.Relations = rels
-
-		entries = append(entries, entry)
-	}
-
-	data := entTemplateData{
-		Package:       pkg,
-		EntImportPath: entImportPath,
-		Entries:       entries,
-	}
-
-	tmpl, err := template.New("ent").Parse(entCodeTemplate)
-	if err != nil {
-		return fmt.Errorf("parse ent template: %w", err)
-	}
-
-	var buf strings.Builder
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return fmt.Errorf("execute ent template: %w", err)
-	}
-
-	formatted, err := format.Source([]byte(buf.String()))
-	if err != nil {
-		return fmt.Errorf("format ent generated code: %w", err)
-	}
-
-	_, err = w.Write(formatted)
-	if err != nil {
-		return fmt.Errorf("write ent generated code: %w", err)
-	}
-	return nil
+	return generateNormalizedCode(w, "ent", pkg, []string{
+		`"context"`,
+		`"github.com/mhiro2/seedling"`,
+		`ent "` + entImportPath + `"`,
+	}, normalizeEntModels(schemas), false)
 }
