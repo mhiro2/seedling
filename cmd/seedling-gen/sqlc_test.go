@@ -446,9 +446,10 @@ CREATE TABLE items (
 	var stderr bytes.Buffer
 
 	exitCode := run([]string{
+		"sqlc",
 		"-pkg", "testutil",
-		"-sqlc", sqlcDir,
-		"-sqlc-pkg", "github.com/myapp/internal/db",
+		"--dir", sqlcDir,
+		"--import-path", "github.com/myapp/internal/db",
 		schemaPath,
 	}, &stdout, &stderr)
 
@@ -468,22 +469,26 @@ CREATE TABLE items (
 	}
 }
 
-func TestRun_SqlcRequiresSqlcPkg(t *testing.T) {
+func TestRun_SqlcRequiresImportPath(t *testing.T) {
+	// Arrange
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
 	schemaPath := writeSchemaFile(t, `CREATE TABLE x (id INT);`)
 
+	// Act
 	exitCode := run([]string{
-		"-sqlc", "/some/dir",
+		"sqlc",
+		"--dir", "/some/dir",
 		schemaPath,
 	}, &stdout, &stderr)
 
+	// Assert
 	if exitCode != 1 {
 		t.Fatalf("expected exit code 1, got %d", exitCode)
 	}
-	if !strings.Contains(stderr.String(), "-sqlc-pkg is required") {
-		t.Fatalf("expected sqlc-pkg required error, got: %s", stderr.String())
+	if !strings.Contains(stderr.String(), "--import-path is required") {
+		t.Fatalf("expected import-path required error, got: %s", stderr.String())
 	}
 }
 

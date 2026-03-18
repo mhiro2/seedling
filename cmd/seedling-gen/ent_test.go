@@ -208,19 +208,19 @@ func TestGenerateEnt_BasicOutput(t *testing.T) {
 	}
 }
 
-func TestRun_EntRequiresEntPkg(t *testing.T) {
+func TestRun_EntRequiresImportPath(t *testing.T) {
 	// Arrange
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
 	// Act
-	exitCode := run([]string{"-ent", "/some/dir"}, &stdout, &stderr)
+	exitCode := run([]string{"ent", "--dir", "/some/dir"}, &stdout, &stderr)
 
 	// Assert
 	if exitCode != 1 {
 		t.Fatalf("expected exit code 1, got %d", exitCode)
 	}
-	if !strings.Contains(stderr.String(), "-ent-pkg is required") {
-		t.Fatalf("expected ent-pkg required error, got: %s", stderr.String())
+	if !strings.Contains(stderr.String(), "--import-path is required") {
+		t.Fatalf("expected import-path required error, got: %s", stderr.String())
 	}
 }

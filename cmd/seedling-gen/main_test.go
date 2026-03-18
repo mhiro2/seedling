@@ -233,44 +233,20 @@ func TestGenerate_OutputIncludesExpectedSections(t *testing.T) {
 	}
 }
 
-func TestRun_MutualExclusivity(t *testing.T) {
-	tests := []struct {
-		name string
-		args []string
-	}{
-		{
-			name: "gorm and atlas",
-			args: []string{
-				"-gorm", "/a",
-				"-atlas", "/b",
-			},
-		},
-		{
-			name: "sqlc and gorm",
-			args: []string{
-				"-sqlc", "/sqlc",
-				"-gorm", "/gorm",
-			},
-		},
+func TestRun_UnknownCommand(t *testing.T) {
+	// Arrange
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	// Act
+	exitCode := run([]string{"unknown"}, &stdout, &stderr)
+
+	// Assert
+	if exitCode != 1 {
+		t.Fatalf("expected exit code 1, got %d", exitCode)
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Arrange
-			var stdout bytes.Buffer
-			var stderr bytes.Buffer
-
-			// Act
-			exitCode := run(tt.args, &stdout, &stderr)
-
-			// Assert
-			if exitCode != 1 {
-				t.Fatalf("expected exit code 1, got %d", exitCode)
-			}
-			if !strings.Contains(stderr.String(), "only one adapter flag") {
-				t.Fatalf("expected mutual exclusivity error, got: %s", stderr.String())
-			}
-		})
+	if !strings.Contains(stderr.String(), `Error: unknown command "unknown"`) {
+		t.Fatalf("expected unknown command error, got: %s", stderr.String())
 	}
 }
 

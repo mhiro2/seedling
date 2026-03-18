@@ -376,8 +376,9 @@ table "items" {
 
 	// Act
 	exitCode := run([]string{
-		"-atlas", dir + "/atlas.hcl",
+		"atlas",
 		"-pkg", "testutil",
+		dir + "/atlas.hcl",
 	}, &stdout, &stderr)
 
 	// Assert
