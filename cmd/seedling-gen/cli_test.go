@@ -78,7 +78,7 @@ CREATE TABLE users (
 	var stderr bytes.Buffer
 
 	// Act
-	exitCode := run([]string{"-dialect", "postgres", "-pkg", "fixtures", schemaPath}, &stdout, &stderr)
+	exitCode := run([]string{"sql", "-dialect", "postgres", "-pkg", "fixtures", schemaPath}, &stdout, &stderr)
 
 	// Assert
 	if exitCode != 0 {
@@ -112,7 +112,7 @@ CREATE TABLE companies (
 	var stderr bytes.Buffer
 
 	// Act
-	exitCode := run([]string{"-pkg", "fixtures", "-out", outputPath, schemaPath}, &stdout, &stderr)
+	exitCode := run([]string{"sql", "-pkg", "fixtures", "-out", outputPath, schemaPath}, &stdout, &stderr)
 
 	// Assert
 	if exitCode != 0 {
@@ -137,13 +137,13 @@ CREATE TABLE companies (
 	}
 }
 
-func TestRun_RequiresSchemaPath(t *testing.T) {
+func TestRun_RequiresCommand(t *testing.T) {
 	// Arrange
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
 	// Act
-	exitCode := run([]string{"-pkg", "fixtures"}, &stdout, &stderr)
+	exitCode := run(nil, &stdout, &stderr)
 
 	// Assert
 	if got, want := exitCode, 1; got != want {
@@ -152,8 +152,31 @@ func TestRun_RequiresSchemaPath(t *testing.T) {
 	if s := stdout.String(); s != "" {
 		t.Errorf("got %v, want empty string", s)
 	}
-	if !strings.Contains(stderr.String(), "Usage: seedling-gen [flags] <schema.sql>") {
-		t.Errorf("stderr does not contain %q", "Usage: seedling-gen [flags] <schema.sql>")
+	if !strings.Contains(stderr.String(), "Usage:\n  seedling-gen <command> [flags]") {
+		t.Errorf("stderr does not contain root usage")
+	}
+	if !strings.Contains(stderr.String(), "Error: command is required") {
+		t.Errorf("stderr does not contain %q", "Error: command is required")
+	}
+}
+
+func TestRun_SQLRequiresSchemaPath(t *testing.T) {
+	// Arrange
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	// Act
+	exitCode := run([]string{"sql", "-pkg", "fixtures"}, &stdout, &stderr)
+
+	// Assert
+	if got, want := exitCode, 1; got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if s := stdout.String(); s != "" {
+		t.Errorf("got %v, want empty string", s)
+	}
+	if !strings.Contains(stderr.String(), "Usage: seedling-gen sql [flags] <schema.sql>") {
+		t.Errorf("stderr does not contain sql usage")
 	}
 }
 
@@ -169,7 +192,7 @@ CREATE TABLE users (
 	var stderr bytes.Buffer
 
 	// Act
-	exitCode := run([]string{"-dialect", "oracle", schemaPath}, &stdout, &stderr)
+	exitCode := run([]string{"sql", "-dialect", "oracle", schemaPath}, &stdout, &stderr)
 
 	// Assert
 	if got, want := exitCode, 1; got != want {
@@ -377,7 +400,7 @@ func TestRun_AtomicWrite_NoFileOnError(t *testing.T) {
 	var stderr bytes.Buffer
 
 	// Act: run without schema path to trigger an error with -out set.
-	exitCode := run([]string{"-pkg", "fixtures", "-out", outputPath}, &stdout, &stderr)
+	exitCode := run([]string{"sql", "-pkg", "fixtures", "-out", outputPath}, &stdout, &stderr)
 
 	// Assert
 	if exitCode != 1 {

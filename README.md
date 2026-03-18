@@ -65,13 +65,13 @@ seedling handles FK ordering, graph expansion, and cleanup so your tests stay fo
    go install github.com/mhiro2/seedling/cmd/seedling-gen@latest
 
    # From SQL DDL
-   seedling-gen -pkg testutil -out blueprints.go schema.sql
+   seedling-gen sql --pkg testutil --out blueprints.go schema.sql
 
    # Or from other sources:
-   seedling-gen -sqlc-config sqlc.yaml -pkg testutil -out blueprints.go
-   seedling-gen -gorm ./models -gorm-pkg github.com/you/app/models -pkg testutil
-   seedling-gen -ent ./ent/schema -ent-pkg github.com/you/app/ent -pkg testutil
-   seedling-gen -atlas schema.hcl -pkg testutil
+   seedling-gen sqlc --config sqlc.yaml --pkg testutil --out blueprints.go
+   seedling-gen gorm --dir ./models --import-path github.com/you/app/models --pkg testutil
+   seedling-gen ent --dir ./ent/schema --import-path github.com/you/app/ent --pkg testutil
+   seedling-gen atlas --pkg testutil schema.hcl
    ```
 
    This generates struct types, `RegisterBlueprints()`, relations, and Insert stubs. Fill in the `// TODO` callbacks with your DB logic:

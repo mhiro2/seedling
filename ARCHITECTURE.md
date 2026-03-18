@@ -151,8 +151,10 @@ That split also enables `DebugString()`, `DryRunString()`, `Validate()`, graph c
 
 ```mermaid
 flowchart LR
-    SQL["SQL DDL<br/>schema.sql"] --> Parse["ParseSchema"]
-    SQLC["sqlc config<br/>sqlc.yaml"] --> ParseC["ParseSqlcConfig<br/>+ ParseSchema"]
+    SQL["sql subcommand<br/>schema.sql"] --> Parse["ParseSchema"]
+    SQLCConfig["sqlc --config<br/>sqlc.yaml"] --> ParseC["ParseSqlcConfig<br/>+ ParseSchema"]
+    SQLCManual["sqlc --dir + schema.sql<br/>generated Go + SQL DDL"] --> Parse
+    SQLCManual --> ParseSqlc["ParseSqlcDir"]
     GORM["GORM models<br/>*.go with gorm tags"] --> ParseG["ParseGormDir<br/>go/ast"]
     ENT["ent schemas<br/>Fields() / Edges()"] --> ParseE["ParseEntSchemaDir<br/>go/ast"]
     ATLAS["Atlas HCL<br/>schema.hcl"] --> ParseA["ParseAtlasHCL<br/>regex"]
@@ -163,6 +165,7 @@ flowchart LR
 
     ParseG --> GM["[]GormModel"]
     ParseE --> ES["[]EntSchema"]
+    ParseSqlc --> Gen["Generate /<br/>GenerateSqlc"]
 
     T --> Gen["Generate /<br/>GenerateSqlc"]
     GM --> GenG["GenerateGorm"]
@@ -173,7 +176,7 @@ flowchart LR
     GenE --> Out
 ```
 
-SQL DDL, sqlc config, and Atlas HCL share the common `[]Table` intermediate type and reuse `Generate()` / `GenerateSqlc()`. GORM and ent have adapter-specific types (`[]GormModel`, `[]EntSchema`) and dedicated generators that emit ORM-specific Insert/Delete callbacks.
+SQL DDL, sqlc config, manual sqlc mode, and Atlas HCL share the common `[]Table` intermediate type and reuse `Generate()` / `GenerateSqlc()`. GORM and ent have adapter-specific types (`[]GormModel`, `[]EntSchema`) and dedicated generators that emit ORM-specific Insert/Delete callbacks.
 
 All parsers treat malformed input (unclosed parentheses, mismatched braces) as a hard error rather than returning partial results. When `-out` is specified, the output is written atomically via a temporary file so that a failure never leaves a partial file on disk.
 

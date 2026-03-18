@@ -305,19 +305,19 @@ func TestParseGormTag(t *testing.T) {
 	}
 }
 
-func TestRun_GormRequiresGormPkg(t *testing.T) {
+func TestRun_GormRequiresImportPath(t *testing.T) {
 	// Arrange
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
 	// Act
-	exitCode := run([]string{"-gorm", "/some/dir"}, &stdout, &stderr)
+	exitCode := run([]string{"gorm", "--dir", "/some/dir"}, &stdout, &stderr)
 
 	// Assert
 	if exitCode != 1 {
 		t.Fatalf("expected exit code 1, got %d", exitCode)
 	}
-	if !strings.Contains(stderr.String(), "-gorm-pkg is required") {
-		t.Fatalf("expected gorm-pkg required error, got: %s", stderr.String())
+	if !strings.Contains(stderr.String(), "--import-path is required") {
+		t.Fatalf("expected import-path required error, got: %s", stderr.String())
 	}
 }

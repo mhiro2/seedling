@@ -376,8 +376,9 @@ table "items" {
 
 	// Act
 	exitCode := run([]string{
-		"-atlas", dir + "/atlas.hcl",
+		"atlas",
 		"-pkg", "testutil",
+		dir + "/atlas.hcl",
 	}, &stdout, &stderr)
 
 	// Assert
@@ -668,25 +669,5 @@ table "users" {
 				t.Fatalf("expected %d columns, got %d", tt.wantCols, len(tables[0].Columns))
 			}
 		})
-	}
-}
-
-func TestRun_MutualExclusivity(t *testing.T) {
-	// Arrange
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-
-	// Act
-	exitCode := run([]string{
-		"-gorm", "/a",
-		"-atlas", "/b",
-	}, &stdout, &stderr)
-
-	// Assert
-	if exitCode != 1 {
-		t.Fatalf("expected exit code 1, got %d", exitCode)
-	}
-	if !strings.Contains(stderr.String(), "only one adapter flag") {
-		t.Fatalf("expected mutual exclusivity error, got: %s", stderr.String())
 	}
 }

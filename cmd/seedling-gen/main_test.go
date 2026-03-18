@@ -233,6 +233,23 @@ func TestGenerate_OutputIncludesExpectedSections(t *testing.T) {
 	}
 }
 
+func TestRun_UnknownCommand(t *testing.T) {
+	// Arrange
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	// Act
+	exitCode := run([]string{"unknown"}, &stdout, &stderr)
+
+	// Assert
+	if exitCode != 1 {
+		t.Fatalf("expected exit code 1, got %d", exitCode)
+	}
+	if !strings.Contains(stderr.String(), `Error: unknown command "unknown"`) {
+		t.Fatalf("expected unknown command error, got: %s", stderr.String())
+	}
+}
+
 func TestGenerate_NoTime(t *testing.T) {
 	// Arrange
 	schema := `
