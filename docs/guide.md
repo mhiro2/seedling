@@ -38,6 +38,10 @@ if err != nil {
 
 users := result.Roots()
 _ = users
+
+company, ok := result.NodeAt(1, "company")
+_ = company
+_ = ok
 ```
 
 `InsertMany` batch-shares auto-created `BelongsTo` parents when each record resolves to the same static relation options.
@@ -74,6 +78,8 @@ task := result.Root()
 _ = task
 ```
 
+When a plan includes `AfterInsert` / `AfterInsertE`, remember that those callbacks are captured once at `Build` time. Reusing the same `Plan` also reuses any closure state captured by those callbacks, so rebuild the plan if each execution needs isolated callback state.
+
 ### Reusing existing rows
 
 Use `Use` to bind a relation to a row that already exists.
@@ -100,7 +106,7 @@ result := seedling.InsertOne[Task](t, db,
 result := seedling.InsertOne[Task](t, db, seedling.Only())
 ```
 
-`Only` is not supported by `InsertMany`.
+`Only` also works with `InsertMany`. The filter is applied per root before batch sharing is resolved, so matching `BelongsTo` parents can still be shared across the batch.
 
 ### Transaction auto-rollback
 
@@ -168,9 +174,13 @@ When you use `database/sql`, [`WithTx`](https://pkg.go.dev/github.com/mhiro2/see
 - `Plan.DebugString`: inspect the dependency tree before inserts
 - `Plan.DryRunString`: inspect insert order and FK assignments without executing inserts
 - `Result.DebugString`: inspect inserted nodes with primary-key values
+- `Result.Node(name)`: returns the lexicographically smallest matching node ID when multiple nodes share the same blueprint name
+- `Result.Nodes(name)`: returns all matching nodes in node ID order
 - `Result.Cleanup` / `CleanupE`: delete inserted rows in reverse dependency order when transaction rollback is not available
 - `BatchResult.DebugString`: inspect the full batch execution graph with primary-key values
-- `BatchResult.Cleanup` / `CleanupE`: delete rows inserted by `InsertManyE`
+- `BatchResult.Node(name)`: searches across the full batch, so use it only when cross-root ambiguity is acceptable
+- `BatchResult.NodeAt(rootIndex, name)` / `NodesForRoot(rootIndex, name)`: inspect one root and its shared ancestors without mixing in sibling roots
+- `BatchResult.Cleanup` / `CleanupE`: delete rows inserted by `InsertManyE`; cleanup is fail-fast and stops at the first delete error
 
 ## CLI
 

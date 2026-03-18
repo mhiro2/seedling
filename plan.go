@@ -16,9 +16,10 @@ import (
 // A plan can be executed multiple times. Each execution operates on a cloned
 // graph so the built plan remains unchanged.
 //
-// Note: AfterInsert callbacks registered via options are shared across
-// executions. If a callback is stateful (e.g. captures a counter in a
-// closure), state will carry over between calls to InsertE.
+// Note: AfterInsert callbacks registered via options are captured at Build time
+// and shared across executions. Go closures cannot be cloned, so reusing a
+// plan also reuses any callback state captured by those closures. Prefer
+// stateless callbacks, or rebuild the plan when callback state must be isolated.
 type Plan[T any] struct {
 	graph        *graph.Graph
 	afterInserts []any // func(T, DBTX) closures
@@ -349,16 +350,6 @@ func validateResolvedOptions(os *optionSet) error {
 		if err := validateResolvedOptions(collectOptions(refOpts)); err != nil {
 			return fmt.Errorf("%w: ref %q", err, name)
 		}
-	}
-	return nil
-}
-
-func validateInsertManyOptions(os *optionSet) error {
-	if os == nil {
-		return nil
-	}
-	if os.only != nil {
-		return fmt.Errorf("%w: Only is not supported by InsertMany", ErrInvalidOption)
 	}
 	return nil
 }

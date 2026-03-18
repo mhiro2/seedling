@@ -114,9 +114,13 @@
 // [Plan] and [Result]
 //
 // [Build] returns a plan for inspection or validation before execution.
+// Reusing a [Plan] reuses its [AfterInsert] callbacks too, so state captured by
+// those closures carries across executions.
 // [InsertOne] returns a [Result] so you can access the root record and any
 // related inserted nodes. [InsertManyE] returns a [BatchResult] with the batch
-// roots plus cleanup/debug helpers for the full execution graph.
+// roots plus cleanup/debug helpers for the full execution graph, including
+// root-scoped lookup helpers such as [BatchResult.NodeAt] and
+// [BatchResult.NodesForRoot].
 //
 // [Session]
 //
@@ -168,6 +172,9 @@
 //	if err != nil {
 //	    _ = result.CleanupE(ctx, db)
 //	}
+//	company, ok := result.NodeAt(1, "company")
+//	_ = company
+//	_ = ok
 //	users := result.Roots()
 //	_ = users
 //
@@ -182,6 +189,12 @@
 //	result := seedling.InsertOne[Task](t, db,
 //	    seedling.Only("project"),
 //	)
+//
+//	// Only also works with InsertMany and applies per root.
+//	result, _ := seedling.InsertManyE[Task](ctx, db, 2,
+//	    seedling.Only("project"),
+//	)
+//	_ = result
 //
 // Generate deterministic fake values with [Generate], [WithSeed], and the
 // seedling/faker subpackage.
@@ -211,5 +224,6 @@
 //   - [Plan.Validate], [Plan.DebugString], [Plan.DryRunString]
 //   - [WithTx], [NewTestSession]
 //   - [Result.Root], [Result.DebugString], [Result.Cleanup], [Result.CleanupE]
-//   - [BatchResult.Roots], [BatchResult.DebugString], [BatchResult.Cleanup], [BatchResult.CleanupE]
+//   - [BatchResult.Roots], [BatchResult.RootAt], [BatchResult.NodeAt], [BatchResult.NodesForRoot]
+//   - [BatchResult.DebugString], [BatchResult.Cleanup], [BatchResult.CleanupE]
 package seedling

@@ -1611,6 +1611,33 @@ func TestInsertMany_CountValidation(t *testing.T) {
 	}
 }
 
+func TestPlanInsertE_ReusedAfterInsertSharesClosureState(t *testing.T) {
+	// Arrange
+	setupBlueprints(t)
+
+	var seen []int
+	plan := build[Company](t,
+		seedling.AfterInsert(func(c Company, db seedling.DBTX) {
+			seen = append(seen, c.ID)
+		}),
+	)
+
+	// Act
+	first := plan.Insert(t, nil).Root()
+	second := plan.Insert(t, nil).Root()
+
+	// Assert
+	if len(seen) != 2 {
+		t.Fatalf("got %d callback calls, want 2", len(seen))
+	}
+	if seen[0] != first.ID {
+		t.Fatalf("got first callback ID %d, want %d", seen[0], first.ID)
+	}
+	if seen[1] != second.ID {
+		t.Fatalf("got second callback ID %d, want %d", seen[1], second.ID)
+	}
+}
+
 // Diamond: Task depends on both Project and User.
 // Both Project and User depend on Company.
 // Without Use(), each gets its own Company (no reuse).
