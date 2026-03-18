@@ -44,6 +44,30 @@ func TestGeneratorOutputsCompile(t *testing.T) {
 		ensureCompiles(t, "sql", buf.String())
 	})
 
+	t.Run("sql with go keyword identifiers", func(t *testing.T) {
+		// Arrange
+		tables := []Table{
+			{
+				Name:        "types",
+				GoName:      "Type",
+				BlueprintID: "type",
+				Columns: []Column{
+					{Name: "id", GoName: "ID", GoType: "int64", IsPK: true, NotNull: true},
+					{Name: "func", GoName: "Func", GoType: "string", NotNull: true},
+				},
+			},
+		}
+
+		// Act
+		var buf strings.Builder
+		if err := Generate(&buf, "compile", tables); err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+
+		// Assert
+		ensureCompiles(t, "sql_keywords", buf.String())
+	})
+
 	t.Run("sqlc", func(t *testing.T) {
 		tables := []Table{
 			{
@@ -119,6 +143,29 @@ func TestGeneratorOutputsCompile(t *testing.T) {
 			t.Fatalf("GenerateGorm: %v", err)
 		}
 		ensureCompiles(t, "gorm", buf.String())
+	})
+
+	t.Run("gorm composite pk", func(t *testing.T) {
+		// Arrange
+		models := []GormModel{
+			{
+				Name:  "Membership",
+				Table: "memberships",
+				Fields: []GormField{
+					{Name: "CompanyID", Type: "uint", IsPK: true},
+					{Name: "UserID", Type: "uint", IsPK: true},
+				},
+			},
+		}
+
+		// Act
+		var buf strings.Builder
+		if err := GenerateGorm(&buf, "compile", "github.com/mhiro2/seedling/cmd/seedling-gen/testmodels", models); err != nil {
+			t.Fatalf("GenerateGorm: %v", err)
+		}
+
+		// Assert
+		ensureCompiles(t, "gorm_composite_pk", buf.String())
 	})
 
 	t.Run("ent", func(t *testing.T) {

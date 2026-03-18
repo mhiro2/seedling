@@ -106,7 +106,7 @@ func generateNormalizedCode(w io.Writer, kind, pkg string, imports []string, mod
 
 	blueprints, err := renderNormalizedTemplate("blueprints", normalizedBlueprintTemplate, models, template.FuncMap{
 		"pkField": func(model normalizedModel) string {
-			return model.PKFields[0]
+			return normalizedPKField(model.PKFields)
 		},
 		"isCompositePK": func(model normalizedModel) bool {
 			return len(model.PKFields) > 1
@@ -350,6 +350,13 @@ func normalizedPKFields(columns []Column) []string {
 		return []string{"ID"}
 	}
 	return fields
+}
+
+func normalizedPKField(fields []string) string {
+	if len(fields) == 0 {
+		return "ID"
+	}
+	return fields[0]
 }
 
 func normalizeTableRelations(table Table) []normalizedRelation {

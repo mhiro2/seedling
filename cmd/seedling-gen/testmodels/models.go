@@ -10,3 +10,8 @@ type User struct {
 	Name      string
 	CompanyID uint
 }
+
+type Membership struct {
+	CompanyID uint
+	UserID    uint
+}
