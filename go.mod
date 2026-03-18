@@ -36,3 +36,6 @@ tool (
 	github.com/google/go-licenses/v2
 	gotest.tools/gotestsum
 )
+
+// Local stub used to keep compile-time tests zero-dependency while still type-checking GORM output.
+replace gorm.io/gorm => ./third_party/gorm
