@@ -333,4 +333,66 @@ func TestCleanupE(t *testing.T) {
 			t.Fatal("db was not passed to delete function")
 		}
 	})
+
+	t.Run("stops at first delete error", func(t *testing.T) {
+		// Arrange
+		ids := seedlingtest.NewIDSequence()
+		reg := seedling.NewRegistry()
+		deleteErr := errors.New("delete failed")
+		var deleted []string
+
+		seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
+			Name:    "company",
+			Table:   "companies",
+			PKField: "ID",
+			Defaults: func() Company {
+				return Company{Name: "cleanup-company"}
+			},
+			Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
+				v.ID = ids.Next()
+				return v, nil
+			},
+			Delete: func(ctx context.Context, db seedling.DBTX, v Company) error {
+				deleted = append(deleted, fmt.Sprintf("company:%d", v.ID))
+				return nil
+			},
+		})
+
+		seedling.MustRegisterTo(reg, seedling.Blueprint[User]{
+			Name:    "user",
+			Table:   "users",
+			PKField: "ID",
+			Defaults: func() User {
+				return User{Name: "cleanup-user"}
+			},
+			Relations: []seedling.Relation{
+				{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
+			},
+			Insert: func(ctx context.Context, db seedling.DBTX, v User) (User, error) {
+				v.ID = ids.Next()
+				return v, nil
+			},
+			Delete: func(ctx context.Context, db seedling.DBTX, v User) error {
+				deleted = append(deleted, fmt.Sprintf("user:%d", v.ID))
+				return deleteErr
+			},
+		})
+		useTestRegistry(t, reg)
+
+		result := build[User](t).Insert(t, nil)
+
+		// Act
+		err := result.CleanupE(t.Context(), nil)
+
+		// Assert
+		if !errors.Is(err, deleteErr) {
+			t.Fatalf("got %v, want %v", err, deleteErr)
+		}
+		if len(deleted) != 1 {
+			t.Fatalf("got %d delete calls, want 1", len(deleted))
+		}
+		if got, want := deleted[0], fmt.Sprintf("user:%d", result.Root().ID); got != want {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	})
 }

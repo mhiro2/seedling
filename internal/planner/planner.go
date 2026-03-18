@@ -51,7 +51,7 @@ func PlanMany(reg Registry, rootType reflect.Type, opts []*OptionSet) (*PlanMany
 			graph:   g,
 			visited: visited,
 			share:   shared,
-			only:    nil, // Only is not supported by InsertMany
+			only:    opt.Only,
 		}
 		if _, err := exp.expandBlueprint(bp, rootID, opt, nil, ""); err != nil {
 			return nil, err

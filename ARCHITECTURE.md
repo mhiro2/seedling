@@ -31,6 +31,7 @@ At a high level:
 - `BuildE` creates the graph once.
 - `InsertE` clones that graph before execution.
 - `AfterInsert` callbacks run after executor completion.
+- `AfterInsert` closures are captured once at build time, so reusing a plan also reuses any callback state they hold.
 
 ### 2. Planner
 

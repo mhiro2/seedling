@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/mhiro2/seedling/internal/debug"
@@ -98,6 +99,8 @@ func (r Result[T]) Cleanup(tb testing.TB, db DBTX) {
 //
 // Delete functions are captured at result creation time, so cleanup behavior
 // is not affected by subsequent registry resets or re-registrations.
+//
+// CleanupE is fail-fast: it stops at the first delete error and returns it.
 func (r Result[T]) CleanupE(ctx context.Context, db DBTX) error {
 	return cleanupResultGraph(ctx, r.graph, r.deleteFns, db)
 }
@@ -132,6 +135,7 @@ type NodeResult struct {
 // BatchResult holds all created nodes after batch insertion.
 type BatchResult[T any] struct {
 	roots     []T
+	rootIDs   []string
 	nodes     map[string]executor.NodeResult
 	graph     *graph.Graph
 	registry  *Registry
@@ -170,14 +174,40 @@ func (r BatchResult[T]) MustRootAt(index int) T {
 	return root
 }
 
-// Node returns a named node from the dependency graph by blueprint name.
+// Node returns a named node from the full batch dependency graph by blueprint name.
+// If multiple nodes share the same blueprint name, the one with the
+// lexicographically smallest node ID is returned across all roots.
+//
+// For root-scoped lookups, use [BatchResult.NodeAt] or [BatchResult.NodesForRoot].
 func (r BatchResult[T]) Node(name string) (NodeResult, bool) {
 	return lookupNodeResult(r.nodes, name)
 }
 
-// Nodes returns all nodes that match the given blueprint name.
+// Nodes returns all nodes that match the given blueprint name across the full batch.
 func (r BatchResult[T]) Nodes(name string) []NodeResult {
 	return lookupNodeResults(r.nodes, name)
+}
+
+// NodeAt returns the named node associated with the root at index.
+// Shared belongs-to dependencies are included when that root references them.
+func (r BatchResult[T]) NodeAt(rootIndex int, name string) (NodeResult, bool) {
+	return lookupNodeResult(r.nodesForRoot(rootIndex), name)
+}
+
+// NodesForRoot returns all named nodes associated with the root at index,
+// sorted by node ID. Shared belongs-to dependencies are included when that
+// root references them.
+func (r BatchResult[T]) NodesForRoot(rootIndex int, name string) []NodeResult {
+	return lookupNodeResults(r.nodesForRoot(rootIndex), name)
+}
+
+// MustNodeAt returns the named node associated with the root at index or panics.
+func (r BatchResult[T]) MustNodeAt(rootIndex int, name string) NodeResult {
+	nr, ok := r.NodeAt(rootIndex, name)
+	if !ok {
+		panic(fmt.Sprintf("seedling: node %q not found for root index %d", name, rootIndex))
+	}
+	return nr
 }
 
 // MustNode returns a named node or panics.
@@ -208,6 +238,7 @@ func (r BatchResult[T]) Cleanup(tb testing.TB, db DBTX) {
 }
 
 // CleanupE deletes all records that were inserted by seedling in reverse dependency order.
+// CleanupE is fail-fast: it stops at the first delete error and returns it.
 func (r BatchResult[T]) CleanupE(ctx context.Context, db DBTX) error {
 	return cleanupResultGraph(ctx, r.graph, r.deleteFns, db)
 }
@@ -325,6 +356,81 @@ func debugResultString(g *graph.Graph) string {
 		return "(empty)"
 	}
 	return debug.ResultString(g)
+}
+
+func emptyBatchResult[T any]() BatchResult[T] {
+	return BatchResult[T]{
+		roots:   []T{},
+		rootIDs: []string{},
+	}
+}
+
+func (r BatchResult[T]) nodesForRoot(rootIndex int) map[string]executor.NodeResult {
+	rootID, ok := r.rootNodeID(rootIndex)
+	if !ok {
+		return nil
+	}
+
+	selected := make(map[string]struct{})
+	var pending []string
+
+	for id := range r.nodes {
+		if id == rootID || strings.HasPrefix(id, rootID+".") {
+			if _, exists := selected[id]; exists {
+				continue
+			}
+			selected[id] = struct{}{}
+			pending = append(pending, id)
+		}
+	}
+
+	if r.graph == nil {
+		return selectNodeResults(r.nodes, selected)
+	}
+
+	for len(pending) > 0 {
+		last := len(pending) - 1
+		id := pending[last]
+		pending = pending[:last]
+
+		node := r.graph.Node(id)
+		if node == nil {
+			continue
+		}
+
+		for _, edge := range node.Dependencies() {
+			parentID := edge.Parent.ID
+			if _, exists := selected[parentID]; exists {
+				continue
+			}
+			selected[parentID] = struct{}{}
+			pending = append(pending, parentID)
+		}
+	}
+
+	return selectNodeResults(r.nodes, selected)
+}
+
+func selectNodeResults(nodes map[string]executor.NodeResult, selected map[string]struct{}) map[string]executor.NodeResult {
+	scoped := make(map[string]executor.NodeResult, len(selected))
+	for id := range selected {
+		nr, ok := nodes[id]
+		if !ok {
+			continue
+		}
+		scoped[id] = nr
+	}
+	return scoped
+}
+
+func (r BatchResult[T]) rootNodeID(rootIndex int) (string, bool) {
+	if rootIndex < 0 || rootIndex >= len(r.roots) {
+		return "", false
+	}
+	if len(r.rootIDs) == len(r.roots) {
+		return r.rootIDs[rootIndex], true
+	}
+	return fmt.Sprintf("root[%d]", rootIndex), true
 }
 
 func cleanupResultGraph(ctx context.Context, g *graph.Graph, deleteFns map[string]deleteFn, db DBTX) error {

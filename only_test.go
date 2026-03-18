@@ -1,7 +1,6 @@
 package seedling_test
 
 import (
-	"errors"
 	"strings"
 	"testing"
 
@@ -138,14 +137,69 @@ func TestOnly_PlanDebugStringShowsLazyGraph(t *testing.T) {
 	}
 }
 
-func TestOnly_InsertManyReturnsError(t *testing.T) {
+func TestOnly_InsertManySelectiveInsert(t *testing.T) {
 	setupBlueprints(t)
 
-	_, err := insertManyE[Task](t.Context(), t, nil, 3, seedling.Only("project"))
-	if err == nil {
-		t.Fatal("expected error when using Only with InsertMany")
+	// Arrange
+	result, err := insertManyE[Task](t.Context(), t, nil, 3, seedling.Only("project"))
+	// Act & Assert
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !errors.Is(err, seedling.ErrInvalidOption) {
-		t.Fatalf("expected ErrInvalidOption, got: %v", err)
+
+	roots := result.Roots()
+	if len(roots) != 3 {
+		t.Fatalf("got %d roots, want 3", len(roots))
+	}
+	for i, task := range roots {
+		if task.ProjectID == 0 {
+			t.Fatalf("root %d: expected non-zero ProjectID", i)
+		}
+		if task.AssigneeUserID != 0 {
+			t.Fatalf("root %d: expected zero AssigneeUserID, got %d", i, task.AssigneeUserID)
+		}
+	}
+
+	project0 := result.MustNodeAt(0, "project").Value().(Project)
+	project1 := result.MustNodeAt(1, "project").Value().(Project)
+	if project0.ID == 0 || project1.ID == 0 {
+		t.Fatal("expected non-zero shared project IDs")
+	}
+	if project0.ID != project1.ID {
+		t.Fatalf("got project IDs %d and %d, want shared project", project0.ID, project1.ID)
+	}
+
+	if _, ok := result.NodeAt(0, "user"); ok {
+		t.Fatal("expected assignee node to be absent for root 0")
+	}
+	if _, ok := result.NodeAt(1, "user"); ok {
+		t.Fatal("expected assignee node to be absent for root 1")
+	}
+}
+
+func TestOnly_InsertManyRootOnly(t *testing.T) {
+	setupBlueprints(t)
+
+	// Arrange
+	result, err := insertManyE[Task](t.Context(), t, nil, 2, seedling.Only())
+	// Act & Assert
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i, task := range result.Roots() {
+		if task.ProjectID != 0 {
+			t.Fatalf("root %d: expected zero ProjectID, got %d", i, task.ProjectID)
+		}
+		if task.AssigneeUserID != 0 {
+			t.Fatalf("root %d: expected zero AssigneeUserID, got %d", i, task.AssigneeUserID)
+		}
+	}
+
+	if _, ok := result.NodeAt(0, "project"); ok {
+		t.Fatal("expected project node to be absent for root 0")
+	}
+	if _, ok := result.NodeAt(1, "user"); ok {
+		t.Fatal("expected user node to be absent for root 1")
 	}
 }

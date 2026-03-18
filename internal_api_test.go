@@ -251,6 +251,7 @@ func TestBatchResult_RootAccessors(t *testing.T) {
 			{ID: 1, Name: "one"},
 			{ID: 2, Name: "two"},
 		},
+		rootIDs: []string{"root[0]", "root[1]"},
 	}
 
 	// Act
@@ -270,6 +271,53 @@ func TestBatchResult_RootAccessors(t *testing.T) {
 	roots[0].Name = "changed"
 	if got, want := result.MustRootAt(0).Name, "one"; got != want {
 		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestBatchResult_NodeAt_ReturnsSharedAncestorWithoutCrossingRoots(t *testing.T) {
+	// Arrange
+	g := graph.New()
+	shared := &graph.Node{ID: "shared.project", BlueprintName: "project"}
+	root0 := &graph.Node{ID: "root[0]", BlueprintName: "task"}
+	root1 := &graph.Node{ID: "root[1]", BlueprintName: "task"}
+	assignee0 := &graph.Node{ID: "root[0].assignee", BlueprintName: "user"}
+	g.AddNode(shared)
+	g.AddNode(root0)
+	g.AddNode(root1)
+	g.AddNode(assignee0)
+	g.AddEdge(shared, root0, "ProjectID")
+	g.AddEdge(shared, root1, "ProjectID")
+	g.AddEdge(root0, assignee0, "TaskID")
+
+	result := BatchResult[internalCompany]{
+		roots:   []internalCompany{{ID: 1, Name: "one"}, {ID: 2, Name: "two"}},
+		rootIDs: []string{"root[0]", "root[1]"},
+		nodes: map[string]executor.NodeResult{
+			"shared.project":   {Name: "project", Value: "shared-project"},
+			"root[0]":          {Name: "task", Value: "task-0"},
+			"root[1]":          {Name: "task", Value: "task-1"},
+			"root[0].assignee": {Name: "user", Value: "user-0"},
+		},
+		graph: g,
+	}
+
+	// Act
+	project0, ok0 := result.NodeAt(0, "project")
+	project1, ok1 := result.NodeAt(1, "project")
+	_, assigneeForRoot1 := result.NodeAt(1, "user")
+
+	// Assert
+	if !ok0 || !ok1 {
+		t.Fatal("expected project node for both roots")
+	}
+	if got, want := project0.Value(), "shared-project"; got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if got, want := project1.Value(), "shared-project"; got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if assigneeForRoot1 {
+		t.Fatal("expected root 1 lookup to exclude root 0 descendant nodes")
 	}
 }
 
