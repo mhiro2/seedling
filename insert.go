@@ -88,13 +88,7 @@ func (s Session[T]) InsertManyE(ctx context.Context, db DBTX, n int, opts ...Opt
 		return zero, fmt.Errorf("validate insert count: n must be >= 0, got %d: %w", n, ErrInvalidOption)
 	}
 	if n == 0 {
-		return BatchResult[T]{roots: []T{}}, nil
-	}
-
-	// Validate InsertMany-incompatible options before doing any work.
-	precheck := collectOptions(opts)
-	if err := validateInsertManyOptions(precheck); err != nil {
-		return zero, err
+		return emptyBatchResult[T](), nil
 	}
 
 	rootType := reflect.TypeFor[T]()
@@ -164,6 +158,7 @@ func (s Session[T]) InsertManyE(ctx context.Context, db DBTX, n int, opts ...Opt
 
 	result := BatchResult[T]{
 		roots:     roots,
+		rootIDs:   plan.RootIDs,
 		nodes:     execResult.Nodes,
 		graph:     execResult.Graph,
 		registry:  s.registry,
