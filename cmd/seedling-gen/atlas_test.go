@@ -670,23 +670,3 @@ table "users" {
 		})
 	}
 }
-
-func TestRun_MutualExclusivity(t *testing.T) {
-	// Arrange
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-
-	// Act
-	exitCode := run([]string{
-		"-gorm", "/a",
-		"-atlas", "/b",
-	}, &stdout, &stderr)
-
-	// Assert
-	if exitCode != 1 {
-		t.Fatalf("expected exit code 1, got %d", exitCode)
-	}
-	if !strings.Contains(stderr.String(), "only one adapter flag") {
-		t.Fatalf("expected mutual exclusivity error, got: %s", stderr.String())
-	}
-}

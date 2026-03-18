@@ -193,7 +193,7 @@ seedling-gen -ent ./ent/schema -ent-pkg github.com/you/app/ent -pkg blueprints
 seedling-gen -atlas schema.hcl -pkg blueprints
 ```
 
-Only one adapter flag can be specified at a time. All modes support `-pkg` (package name) and `-out` (output file path). When `-out` is specified, the output is written atomically via a temporary file so that a generation failure never leaves a partial file on disk.
+Only one adapter flag (`-sqlc`, `-sqlc-config`, `-gorm`, `-ent`, `-atlas`) can be specified at a time. All modes support `-pkg` (package name) and `-out` (output file path). When `-out` is specified, the output is written atomically via a temporary file so that a generation failure never leaves a partial file on disk.
 
 The `-dialect` flag (`auto`, `postgres`, `mysql`, `sqlite`) is a validation hint that rejects unknown dialect names. The SQL parser itself uses the same logic for all dialects, so `-dialect` does not change parsing behavior.
 

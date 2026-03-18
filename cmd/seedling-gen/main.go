@@ -48,9 +48,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	// Mutual exclusivity check for adapter modes.
-	adapterCount := countNonEmpty(*sqlcConfig, *gormDir, *entDir, *atlasFile)
+	adapterCount := countNonEmpty(*sqlcDir, *sqlcConfig, *gormDir, *entDir, *atlasFile)
 	if adapterCount > 1 {
-		_, _ = fmt.Fprintf(stderr, "Error: only one adapter flag (-sqlc-config, -gorm, -ent, -atlas) can be specified at a time\n")
+		_, _ = fmt.Fprintf(stderr, "Error: only one adapter flag (-sqlc, -sqlc-config, -gorm, -ent, -atlas) can be specified at a time\n")
 		return 1
 	}
 
