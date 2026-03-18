@@ -237,6 +237,31 @@ func TestGenerateGorm_BasicOutput(t *testing.T) {
 	}
 }
 
+func TestGenerateGorm_CompositePK(t *testing.T) {
+	// Arrange
+	models := []GormModel{
+		{
+			Name:  "Membership",
+			Table: "memberships",
+			Fields: []GormField{
+				{Name: "CompanyID", Type: "uint", IsPK: true},
+				{Name: "UserID", Type: "uint", IsPK: true},
+			},
+		},
+	}
+
+	// Act
+	var buf bytes.Buffer
+	err := GenerateGorm(&buf, "testutil", "github.com/myapp/models", models)
+	// Assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), `PKFields: []string{"CompanyID", "UserID"}`) {
+		t.Fatalf("expected composite PKFields, got:\n%s", buf.String())
+	}
+}
+
 func TestToSnakeCase(t *testing.T) {
 	tests := []struct {
 		input, want string

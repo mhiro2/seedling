@@ -139,6 +139,7 @@ func TestSingularize(t *testing.T) {
 }
 
 func TestToGoFieldName(t *testing.T) {
+	// Arrange
 	tests := []struct {
 		input, want string
 	}{
@@ -147,12 +148,35 @@ func TestToGoFieldName(t *testing.T) {
 		{"company_id", "CompanyID"},
 		{"created_at", "CreatedAt"},
 		{"api_url", "APIURL"},
+		{"type", "Type"},
+		{"func", "Func"},
 	}
+
+	// Act & Assert
 	for _, tt := range tests {
-		// Act & Assert
 		got := toGoFieldName(tt.input)
 		if got != tt.want {
 			t.Errorf("toGoFieldName(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestToGoStructName(t *testing.T) {
+	// Arrange
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{input: "users", want: "User"},
+		{input: "types", want: "Type"},
+		{input: "funcs", want: "Func"},
+	}
+
+	// Act & Assert
+	for _, tt := range tests {
+		got := toGoStructName(tt.input)
+		if got != tt.want {
+			t.Errorf("toGoStructName(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
@@ -273,6 +297,88 @@ CREATE TABLE tags (
 	}
 	if !strings.Contains(output, "package mypkg") {
 		t.Error("output should use custom package name")
+	}
+}
+
+func TestGenerate_EmptyInput(t *testing.T) {
+	// Arrange
+	var buf bytes.Buffer
+
+	// Act
+	err := Generate(&buf, "empty", nil)
+	// Assert
+	if err != nil {
+		t.Fatalf("Generate error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "package empty") {
+		t.Fatalf("expected package declaration, got:\n%s", output)
+	}
+	if !strings.Contains(output, "func RegisterBlueprints()") {
+		t.Fatalf("expected RegisterBlueprints function, got:\n%s", output)
+	}
+}
+
+func TestNormalizeTableModels_EmptyInput(t *testing.T) {
+	// Arrange
+	var tables []Table
+
+	// Act
+	models := normalizeTableModels(tables)
+
+	// Assert
+	if len(models) != 0 {
+		t.Fatalf("expected no models, got %d", len(models))
+	}
+}
+
+func TestNormalizeTableModels_ZeroColumnTableDefaultsPK(t *testing.T) {
+	// Arrange
+	tables := []Table{
+		{
+			Name:        "configs",
+			GoName:      "Config",
+			BlueprintID: "config",
+		},
+	}
+
+	// Act
+	models := normalizeTableModels(tables)
+
+	// Assert
+	if len(models) != 1 {
+		t.Fatalf("expected 1 model, got %d", len(models))
+	}
+	if len(models[0].Fields) != 0 {
+		t.Fatalf("expected no fields, got %d", len(models[0].Fields))
+	}
+	if len(models[0].PKFields) != 1 || models[0].PKFields[0] != "ID" {
+		t.Fatalf("expected PKFields to default to ID, got %v", models[0].PKFields)
+	}
+}
+
+func TestParseSchema_GoKeywordIdentifiersRemainValidGoNames(t *testing.T) {
+	// Arrange
+	schema := `
+CREATE TABLE types (
+    id SERIAL PRIMARY KEY,
+    func TEXT NOT NULL
+);
+`
+
+	// Act
+	tables := mustParseSchema(t, schema)
+
+	// Assert
+	if len(tables) != 1 {
+		t.Fatalf("expected 1 table, got %d", len(tables))
+	}
+	if tables[0].GoName != "Type" {
+		t.Fatalf("expected GoName %q, got %q", "Type", tables[0].GoName)
+	}
+	if tables[0].Columns[1].GoName != "Func" {
+		t.Fatalf("expected column GoName %q, got %q", "Func", tables[0].Columns[1].GoName)
 	}
 }
 

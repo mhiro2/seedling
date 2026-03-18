@@ -147,7 +147,7 @@ That split also enables `DebugString()`, `DryRunString()`, `Validate()`, graph c
 
 ## seedling-gen code generation pipeline
 
-`seedling-gen` generates blueprint registration code from various schema sources. All adapters converge on a shared intermediate representation before code generation.
+`seedling-gen` generates blueprint registration code from various schema sources. Adapters parse their inputs independently, then normalize the results into a shared intermediate representation before rendering.
 
 ```mermaid
 flowchart LR
@@ -165,18 +165,18 @@ flowchart LR
 
     ParseG --> GM["[]GormModel"]
     ParseE --> ES["[]EntSchema"]
-    ParseSqlc --> Gen["Generate /<br/>GenerateSqlc"]
+    ParseSqlc --> SQLC["SqlcInfo"]
 
-    T --> Gen["Generate /<br/>GenerateSqlc"]
-    GM --> GenG["GenerateGorm"]
-    ES --> GenE["GenerateEnt"]
+    T --> IR["[]normalizedModel"]
+    GM --> IR
+    ES --> IR
+    SQLC --> IR
 
-    Gen --> Out["Go source code<br/>Blueprint registrations"]
-    GenG --> Out
-    GenE --> Out
+    IR --> Render["shared blueprint renderer"]
+    Render --> Out["Go source code<br/>Blueprint registrations"]
 ```
 
-SQL DDL, sqlc config, manual sqlc mode, and Atlas HCL share the common `[]Table` intermediate type and reuse `Generate()` / `GenerateSqlc()`. GORM and ent have adapter-specific types (`[]GormModel`, `[]EntSchema`) and dedicated generators that emit ORM-specific Insert/Delete callbacks.
+SQL DDL, sqlc config, manual sqlc mode, and Atlas HCL still share the common `[]Table` parser output. GORM and ent continue to parse into adapter-specific types (`[]GormModel`, `[]EntSchema`). Before code generation, each adapter is normalized into the same `[]normalizedModel` IR, including PK metadata, belongs-to relations, and Insert/Delete hook bodies. The final renderer is shared, so adapter-specific logic is isolated to parsing and normalization rather than duplicated template code.
 
 All parsers treat malformed input (unclosed parentheses, mismatched braces) as a hard error rather than returning partial results. When `-out` is specified, the output is written atomically via a temporary file so that a failure never leaves a partial file on disk.
 
