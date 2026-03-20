@@ -123,7 +123,7 @@ func newFlagSet(name string, stderr io.Writer, usage string) *flag.FlagSet {
 	return fs
 }
 
-func writeGeneratedOutput(stdout, stderr io.Writer, out string, generate func(w io.Writer) error) int {
+func writeOutput(stdout, stderr io.Writer, out string, generate func(w io.Writer) error) int {
 	if out != "" {
 		if err := atomicWrite(out, generate); err != nil {
 			_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -169,6 +169,8 @@ func runSQLCmd(args []string, stdout, stderr io.Writer) int {
 	pkg := fs.String("pkg", "blueprints", "package name for generated code")
 	out := fs.String("out", "", "output file path (default: stdout)")
 	dialect := fs.String("dialect", "auto", "schema dialect hint for validation (auto, postgres, mysql, sqlite)")
+	explain := fs.Bool("explain", false, "print parsed tables and inferred blueprints instead of generated code")
+	jsonOutput := fs.Bool("json", false, "print diagnostic output as JSON instead of generated code")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -182,7 +184,16 @@ func runSQLCmd(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	return writeGeneratedOutput(stdout, stderr, *out, func(w io.Writer) error {
+	if diagnosticModeEnabled(*explain, *jsonOutput) {
+		report, err := buildSQLReportFromPath(*dialect, schemaPath)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
+			return 1
+		}
+		return writeDiagnosticOutput(stdout, stderr, *out, report, resolveDiagnosticFormat(*jsonOutput))
+	}
+
+	return writeOutput(stdout, stderr, *out, func(w io.Writer) error {
 		return runSQL(w, *pkg, *dialect, schemaPath)
 	})
 }
@@ -196,6 +207,8 @@ func runSQLCCmd(args []string, stdout, stderr io.Writer) int {
 	configPath := fs.String("config", "", "path to sqlc config file (auto-resolves schema, output, and import path)")
 	sqlcDir := fs.String("dir", "", "path to sqlc-generated Go files directory")
 	importPath := fs.String("import-path", "", "Go import path for sqlc package")
+	explain := fs.Bool("explain", false, "print parsed tables and inferred blueprints instead of generated code")
+	jsonOutput := fs.Bool("json", false, "print diagnostic output as JSON instead of generated code")
 	fs.Usage = func() {
 		_, _ = fmt.Fprint(stderr, `Usage:
   seedling-gen sqlc [flags] --config <sqlc.yaml>
@@ -222,7 +235,16 @@ Flags:
 		if !requireNoExtraArgs(fs, stderr, "schema file") {
 			return 1
 		}
-		return writeGeneratedOutput(stdout, stderr, *out, func(w io.Writer) error {
+		if diagnosticModeEnabled(*explain, *jsonOutput) {
+			report, err := buildSQLCConfigReport(*dialect, *configPath)
+			if err != nil {
+				_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
+				return 1
+			}
+			return writeDiagnosticOutput(stdout, stderr, *out, report, resolveDiagnosticFormat(*jsonOutput))
+		}
+
+		return writeOutput(stdout, stderr, *out, func(w io.Writer) error {
 			return runSqlcConfig(w, *pkg, *dialect, *configPath)
 		})
 	}
@@ -242,7 +264,16 @@ Flags:
 		return 1
 	}
 
-	return writeGeneratedOutput(stdout, stderr, *out, func(w io.Writer) error {
+	if diagnosticModeEnabled(*explain, *jsonOutput) {
+		report, err := buildSQLCManualReport(*dialect, schemaPath, *sqlcDir, *importPath)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
+			return 1
+		}
+		return writeDiagnosticOutput(stdout, stderr, *out, report, resolveDiagnosticFormat(*jsonOutput))
+	}
+
+	return writeOutput(stdout, stderr, *out, func(w io.Writer) error {
 		return runSQLCManual(w, *pkg, *dialect, schemaPath, *sqlcDir, *importPath)
 	})
 }
@@ -253,6 +284,8 @@ func runGormCmd(args []string, stdout, stderr io.Writer) int {
 	out := fs.String("out", "", "output file path (default: stdout)")
 	dir := fs.String("dir", "", "path to GORM model Go source files directory")
 	importPath := fs.String("import-path", "", "Go import path for GORM models package")
+	explain := fs.Bool("explain", false, "print parsed models and inferred blueprints instead of generated code")
+	jsonOutput := fs.Bool("json", false, "print diagnostic output as JSON instead of generated code")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -274,7 +307,16 @@ func runGormCmd(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	return writeGeneratedOutput(stdout, stderr, *out, func(w io.Writer) error {
+	if diagnosticModeEnabled(*explain, *jsonOutput) {
+		report, err := buildGormReport(*dir, *importPath)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
+			return 1
+		}
+		return writeDiagnosticOutput(stdout, stderr, *out, report, resolveDiagnosticFormat(*jsonOutput))
+	}
+
+	return writeOutput(stdout, stderr, *out, func(w io.Writer) error {
 		return runGorm(w, *pkg, *dir, *importPath)
 	})
 }
@@ -285,6 +327,8 @@ func runEntCmd(args []string, stdout, stderr io.Writer) int {
 	out := fs.String("out", "", "output file path (default: stdout)")
 	dir := fs.String("dir", "", "path to ent schema directory")
 	importPath := fs.String("import-path", "", "Go import path for ent client package")
+	explain := fs.Bool("explain", false, "print parsed schemas and inferred blueprints instead of generated code")
+	jsonOutput := fs.Bool("json", false, "print diagnostic output as JSON instead of generated code")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -306,7 +350,16 @@ func runEntCmd(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	return writeGeneratedOutput(stdout, stderr, *out, func(w io.Writer) error {
+	if diagnosticModeEnabled(*explain, *jsonOutput) {
+		report, err := buildEntReport(*dir)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
+			return 1
+		}
+		return writeDiagnosticOutput(stdout, stderr, *out, report, resolveDiagnosticFormat(*jsonOutput))
+	}
+
+	return writeOutput(stdout, stderr, *out, func(w io.Writer) error {
 		return runEnt(w, *pkg, *dir, *importPath)
 	})
 }
@@ -315,6 +368,8 @@ func runAtlasCmd(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("atlas", stderr, "seedling-gen atlas [flags] <schema.hcl>")
 	pkg := fs.String("pkg", "blueprints", "package name for generated code")
 	out := fs.String("out", "", "output file path (default: stdout)")
+	explain := fs.Bool("explain", false, "print parsed tables and inferred blueprints instead of generated code")
+	jsonOutput := fs.Bool("json", false, "print diagnostic output as JSON instead of generated code")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -328,31 +383,22 @@ func runAtlasCmd(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	return writeGeneratedOutput(stdout, stderr, *out, func(w io.Writer) error {
+	if diagnosticModeEnabled(*explain, *jsonOutput) {
+		report, err := buildAtlasReport(atlasPath)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
+			return 1
+		}
+		return writeDiagnosticOutput(stdout, stderr, *out, report, resolveDiagnosticFormat(*jsonOutput))
+	}
+
+	return writeOutput(stdout, stderr, *out, func(w io.Writer) error {
 		return runAtlas(w, *pkg, atlasPath)
 	})
 }
 
 func runSqlcConfig(w io.Writer, pkg, dialect, configPath string) error {
-	cfg, err := ParseSqlcConfig(configPath)
-	if err != nil {
-		return err
-	}
-
-	schemaSQL, err := readSchemaFiles(cfg.SchemaFiles)
-	if err != nil {
-		return err
-	}
-
-	tables, err := ParseSchemaWithDialect(schemaSQL, dialect)
-	if err != nil {
-		return err
-	}
-	if len(tables) == 0 {
-		return fmt.Errorf("no CREATE TABLE statements found in schema files")
-	}
-
-	sqlcInfo, err := ParseSqlcDir(cfg.SqlcDir)
+	cfg, tables, sqlcInfo, err := loadSQLCConfigInputs(dialect, configPath)
 	if err != nil {
 		return err
 	}
@@ -369,18 +415,9 @@ func runGorm(w io.Writer, pkg, dir, importPath string) error {
 }
 
 func runAtlas(w io.Writer, pkg, atlasPath string) error {
-	//nolint:gosec // CLI reads the atlas file path provided by the caller.
-	data, err := os.ReadFile(atlasPath)
-	if err != nil {
-		return fmt.Errorf("read atlas file: %w", err)
-	}
-
-	tables, err := ParseAtlasHCL(string(data))
+	tables, err := loadAtlasTables(atlasPath)
 	if err != nil {
 		return err
-	}
-	if len(tables) == 0 {
-		return fmt.Errorf("no tables found in %s", atlasPath)
 	}
 
 	return Generate(w, pkg, tables)
@@ -395,44 +432,146 @@ func runEnt(w io.Writer, pkg, dir, importPath string) error {
 }
 
 func runSQL(w io.Writer, pkg, dialect, schemaPath string) error {
-	//nolint:gosec // The CLI is expected to read the schema path explicitly provided by the caller.
-	data, err := os.ReadFile(schemaPath)
-	if err != nil {
-		return fmt.Errorf("read schema file: %w", err)
-	}
-
-	tables, err := ParseSchemaWithDialect(string(data), dialect)
+	tables, err := loadSQLTables(schemaPath, dialect)
 	if err != nil {
 		return err
-	}
-	if len(tables) == 0 {
-		return fmt.Errorf("no CREATE TABLE statements found in %s", schemaPath)
 	}
 
 	return Generate(w, pkg, tables)
 }
 
 func runSQLCManual(w io.Writer, pkg, dialect, schemaPath, sqlcDir, importPath string) error {
-	//nolint:gosec // The CLI is expected to read the schema path explicitly provided by the caller.
-	data, err := os.ReadFile(schemaPath)
-	if err != nil {
-		return fmt.Errorf("read schema file: %w", err)
-	}
-
-	tables, err := ParseSchemaWithDialect(string(data), dialect)
-	if err != nil {
-		return err
-	}
-	if len(tables) == 0 {
-		return fmt.Errorf("no CREATE TABLE statements found in %s", schemaPath)
-	}
-
-	sqlcInfo, err := ParseSqlcDir(sqlcDir)
+	tables, sqlcInfo, err := loadSQLCManualInputs(dialect, schemaPath, sqlcDir)
 	if err != nil {
 		return err
 	}
 
 	return GenerateSqlc(w, pkg, importPath, tables, sqlcInfo)
+}
+
+func buildSQLReportFromPath(dialect, schemaPath string) (diagnosticReport, error) {
+	tables, err := loadSQLTables(schemaPath, dialect)
+	if err != nil {
+		return diagnosticReport{}, err
+	}
+	return buildSQLDiagnosticReport(dialect, tables), nil
+}
+
+func buildSQLCConfigReport(dialect, configPath string) (diagnosticReport, error) {
+	cfg, tables, sqlcInfo, err := loadSQLCConfigInputs(dialect, configPath)
+	if err != nil {
+		return diagnosticReport{}, err
+	}
+	return buildSQLCDiagnosticReport(dialect, cfg.SqlcImportPath, tables, sqlcInfo), nil
+}
+
+func buildSQLCManualReport(dialect, schemaPath, sqlcDir, importPath string) (diagnosticReport, error) {
+	tables, sqlcInfo, err := loadSQLCManualInputs(dialect, schemaPath, sqlcDir)
+	if err != nil {
+		return diagnosticReport{}, err
+	}
+	return buildSQLCDiagnosticReport(dialect, importPath, tables, sqlcInfo), nil
+}
+
+func buildGormReport(dir, importPath string) (diagnosticReport, error) {
+	models, err := ParseGormDir(dir)
+	if err != nil {
+		return diagnosticReport{}, err
+	}
+	return buildGormDiagnosticReport(importPath, models), nil
+}
+
+func buildEntReport(dir string) (diagnosticReport, error) {
+	schemas, err := ParseEntSchemaDir(dir)
+	if err != nil {
+		return diagnosticReport{}, err
+	}
+	return buildEntDiagnosticReport(schemas), nil
+}
+
+func buildAtlasReport(atlasPath string) (diagnosticReport, error) {
+	tables, err := loadAtlasTables(atlasPath)
+	if err != nil {
+		return diagnosticReport{}, err
+	}
+	return buildAtlasDiagnosticReport(tables), nil
+}
+
+func loadSQLCConfigInputs(dialect, configPath string) (*SqlcConfig, []Table, *SqlcInfo, error) {
+	cfg, err := ParseSqlcConfig(configPath)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	schemaSQL, err := readSchemaFiles(cfg.SchemaFiles)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	tables, err := ParseSchemaWithDialect(schemaSQL, dialect)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if len(tables) == 0 {
+		return nil, nil, nil, fmt.Errorf("no CREATE TABLE statements found in schema files")
+	}
+
+	sqlcInfo, err := ParseSqlcDir(cfg.SqlcDir)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	return cfg, tables, sqlcInfo, nil
+}
+
+func loadSQLCManualInputs(dialect, schemaPath, sqlcDir string) ([]Table, *SqlcInfo, error) {
+	tables, err := loadSQLTables(schemaPath, dialect)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	sqlcInfo, err := ParseSqlcDir(sqlcDir)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return tables, sqlcInfo, nil
+}
+
+func loadAtlasTables(atlasPath string) ([]Table, error) {
+	//nolint:gosec // CLI reads the atlas file path provided by the caller.
+	data, err := os.ReadFile(atlasPath)
+	if err != nil {
+		return nil, fmt.Errorf("read atlas file: %w", err)
+	}
+
+	tables, err := ParseAtlasHCL(string(data))
+	if err != nil {
+		return nil, err
+	}
+	if len(tables) == 0 {
+		return nil, fmt.Errorf("no tables found in %s", atlasPath)
+	}
+
+	return tables, nil
+}
+
+func loadSQLTables(schemaPath, dialect string) ([]Table, error) {
+	//nolint:gosec // The CLI is expected to read the schema path explicitly provided by the caller.
+	data, err := os.ReadFile(schemaPath)
+	if err != nil {
+		return nil, fmt.Errorf("read schema file: %w", err)
+	}
+
+	tables, err := ParseSchemaWithDialect(string(data), dialect)
+	if err != nil {
+		return nil, err
+	}
+	if len(tables) == 0 {
+		return nil, fmt.Errorf("no CREATE TABLE statements found in %s", schemaPath)
+	}
+
+	return tables, nil
 }
 
 // readSchemaFiles reads and concatenates multiple schema files.
