@@ -328,6 +328,83 @@ func TestPlan_InvalidRelation(t *testing.T) {
 	}
 }
 
+func TestPlan_OnlyUnknownRelationIsInvalid(t *testing.T) {
+	// Arrange
+	reg := newMockRegistry()
+	opts := newEmptyOptionSet()
+	opts.Only = map[string]bool{"missing": true}
+
+	// Act & Assert
+	_, err := planner.Plan(reg, reflect.TypeFor[Task](), opts)
+	if !errors.Is(err, errx.ErrRelationNotFound) {
+		t.Fatalf("got %v, want %v", err, errx.ErrRelationNotFound)
+	}
+}
+
+func TestPlan_NestedOnlyIsInvalid(t *testing.T) {
+	// Arrange
+	reg := newMockRegistry()
+	opts := newEmptyOptionSet()
+	opts.Refs["project"] = &planner.OptionSet{
+		Sets:  make(map[string]any),
+		Uses:  make(map[string]any),
+		Refs:  make(map[string]*planner.OptionSet),
+		Omits: make(map[string]bool),
+		Only:  map[string]bool{"company": true},
+	}
+
+	// Act & Assert
+	_, err := planner.Plan(reg, reflect.TypeFor[Task](), opts)
+	if !errors.Is(err, errx.ErrInvalidOption) {
+		t.Fatalf("got %v, want %v", err, errx.ErrInvalidOption)
+	}
+}
+
+func TestPlan_OmitAndRefConflict(t *testing.T) {
+	// Arrange
+	reg := newMockRegistry()
+	userBP, err := reg.LookupByName("user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	userBP.Relations[0].Required = false
+
+	opts := newEmptyOptionSet()
+	opts.Omits["company"] = true
+	opts.Refs["company"] = &planner.OptionSet{
+		Sets:  map[string]any{"Name": "custom-company"},
+		Uses:  make(map[string]any),
+		Refs:  make(map[string]*planner.OptionSet),
+		Omits: make(map[string]bool),
+	}
+
+	// Act & Assert
+	_, err = planner.Plan(reg, reflect.TypeFor[User](), opts)
+	if !errors.Is(err, errx.ErrInvalidOption) {
+		t.Fatalf("got %v, want %v", err, errx.ErrInvalidOption)
+	}
+}
+
+func TestPlan_OmitAndUseConflict(t *testing.T) {
+	// Arrange
+	reg := newMockRegistry()
+	userBP, err := reg.LookupByName("user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	userBP.Relations[0].Required = false
+
+	opts := newEmptyOptionSet()
+	opts.Omits["company"] = true
+	opts.Uses["company"] = Company{ID: 99, Name: "existing-company"}
+
+	// Act & Assert
+	_, err = planner.Plan(reg, reflect.TypeFor[User](), opts)
+	if !errors.Is(err, errx.ErrInvalidOption) {
+		t.Fatalf("got %v, want %v", err, errx.ErrInvalidOption)
+	}
+}
+
 func TestPlan_HasManyAutoExpand(t *testing.T) {
 	// Arrange
 	reg := newMockRegistry()

@@ -34,30 +34,6 @@ func newGraphNode(bp *BlueprintDef, nodeID string, value any, isProvided bool) *
 	}
 }
 
-func validateUseValueType(relation string, expectedType reflect.Type, useVal any) error {
-	useType := reflect.TypeOf(useVal)
-	if useType == expectedType {
-		return nil
-	}
-	if useType != nil && useType.Kind() == reflect.Pointer && useType.Elem() == expectedType {
-		return nil
-	}
-	if expectedType != nil && expectedType.Kind() == reflect.Pointer && expectedType.Elem() == useType {
-		return nil
-	}
-
-	gotName := "<nil>"
-	if useType != nil {
-		gotName = useType.String()
-	}
-	expectedName := "<nil>"
-	if expectedType != nil {
-		expectedName = expectedType.String()
-	}
-
-	return fmt.Errorf("validate use %q: %w", relation, errx.UseTypeMismatch(relation, expectedName, gotName))
-}
-
 func (e *expander) providedBelongsToNode(rel RelationDef, nodeID string, opts *OptionSet) (*graph.Node, bool, error) {
 	useVal, ok := usedRelationValue(opts, rel.Name)
 	if !ok {
@@ -70,9 +46,6 @@ func (e *expander) providedBelongsToNode(rel RelationDef, nodeID string, opts *O
 	parentBP, err := e.reg.LookupByName(rel.RefBlueprint)
 	if err != nil {
 		return nil, false, fmt.Errorf("lookup blueprint %q for use %q: %w", rel.RefBlueprint, rel.Name, err)
-	}
-	if err := validateUseValueType(rel.Name, parentBP.ModelType, useVal); err != nil {
-		return nil, false, err
 	}
 
 	// Normalize pointer to value type when blueprint expects a value type.
