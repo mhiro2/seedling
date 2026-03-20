@@ -208,6 +208,11 @@ seedling-gen atlas --pkg blueprints schema.hcl
 
 All subcommands support `--pkg` (generated package name) and `--out` (output file path). The `sql` and `sqlc` subcommands also support `--dialect` (`auto`, `postgres`, `mysql`, `sqlite`) as a validation hint. The SQL parser itself uses the same logic for all dialects, so `--dialect` does not change parsing behavior.
 
+All subcommands also support diagnostic output modes:
+
+- `--explain`: print the parsed schema/model metadata plus the inferred blueprint relations instead of generated Go code
+- `--json`: print the same diagnostic report as JSON, which is useful for tooling or CI checks
+
 The `sqlc` subcommand has two input modes:
 
 - `--config`: read `sqlc.yaml` and auto-resolve schema files, output directory, and Go import path

@@ -211,6 +211,10 @@
 //   - ent schemas: seedling-gen ent --dir ./ent/schema --import-path example/ent
 //   - Atlas HCL: seedling-gen atlas schema.hcl
 //
+// Use `seedling-gen --explain` to inspect parsed tables, foreign keys, and
+// inferred blueprint relations before generating code. Use `--json` for the
+// same report in machine-readable form.
+//
 // # Related APIs
 //
 // Frequently used APIs:

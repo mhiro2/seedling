@@ -36,9 +36,10 @@ Choose exactly one input source. Prefer the strongest source of truth already us
 1. Inspect the repository and find the primary schema source.
 2. Pick the output package and file path.
 3. Run `seedling-gen` with one subcommand.
-4. Review generated relation names, optional relations, and composite key handling.
-5. If requested, replace TODO callbacks with the project's real database code.
-6. Run formatting and tests in the target repository.
+4. If the schema mapping is uncertain, run the same command with `--explain` first to inspect parsed tables, keys, and inferred relations. Use `--json` when the output needs to be consumed by tooling.
+5. Review generated relation names, optional relations, and composite key handling.
+6. If requested, replace TODO callbacks with the project's real database code.
+7. Run formatting and tests in the target repository.
 
 Use `--out` when writing a file. The CLI writes atomically, so failures do not leave partial output behind.
 
@@ -90,6 +91,8 @@ seedling-gen atlas \
 
 - `--pkg` sets the generated Go package name.
 - `--out` writes atomically to the destination file.
+- `--explain` prints parsed schema/model metadata plus inferred blueprint relations instead of generated code.
+- `--json` prints the same diagnostic report as JSON.
 - `--dialect` is available on `sql` and `sqlc`. It is a validation hint and defaults to `auto` when omitted. Supported values are `auto`, `postgres`, `mysql`, and `sqlite`.
 - `--import-path` must be a full Go import path.
 - The generated file is a starting point. Agents should expect follow-up edits for callback wiring and naming cleanup.
