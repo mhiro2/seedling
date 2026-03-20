@@ -179,6 +179,8 @@ flowchart LR
 
 SQL DDL, sqlc config, manual sqlc mode, and Atlas HCL still share the common `[]Table` parser output. GORM and ent continue to parse into adapter-specific types (`[]GormModel`, `[]EntSchema`). Before code generation, each adapter is normalized into the same `[]normalizedModel` IR, including PK metadata, belongs-to relations, and Insert/Delete hook bodies. The final renderer is shared, so adapter-specific logic is isolated to parsing and normalization rather than duplicated template code.
 
+The same normalization path also powers `seedling-gen --explain` and `--json`. Diagnostic mode emits both the parser output and the inferred blueprint summary, so relation naming, PK detection, and sqlc query matching can be inspected without reading generated code.
+
 All parsers treat malformed input (unclosed parentheses, mismatched braces) as a hard error rather than returning partial results. When `-out` is specified, the output is written atomically via a temporary file so that a failure never leaves a partial file on disk.
 
 ## See Also
