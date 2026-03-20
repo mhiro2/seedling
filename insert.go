@@ -111,32 +111,7 @@ func (s Session[T]) InsertManyE(ctx context.Context, db DBTX, n int, opts ...Opt
 		return zero, fmt.Errorf("build plan: %w", err)
 	}
 
-	// Extract logFn from the first collected optionSet (all share the same logFn).
-	var execLogFn func(executor.LogEntry)
-	if collected[0].logFn != nil {
-		logFn := collected[0].logFn
-		execLogFn = func(entry executor.LogEntry) {
-			bindings := make([]FKBinding, len(entry.FKBindings))
-			for i, b := range entry.FKBindings {
-				bindings[i] = FKBinding{
-					ChildField:      b.ChildField,
-					ParentBlueprint: b.ParentBlueprint,
-					ParentTable:     b.ParentTable,
-					ParentField:     b.ParentField,
-					Value:           b.Value,
-				}
-			}
-			logFn(InsertLog{
-				Step:       entry.Step,
-				Blueprint:  entry.Blueprint,
-				Table:      entry.Table,
-				Provided:   entry.Provided,
-				FKBindings: bindings,
-			})
-		}
-	}
-
-	execResult, err := executor.Execute(ctx, s.resolveDB(db), plan.Graph, adapter, execLogFn)
+	execResult, err := executor.Execute(ctx, s.resolveDB(db), plan.Graph, adapter, toExecutorLogFn(collected[0].logFn))
 	if err != nil {
 		return zero, fmt.Errorf("execute plan: %w", err)
 	}

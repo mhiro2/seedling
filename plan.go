@@ -147,28 +147,7 @@ func (p *Plan[T]) DryRunString() string {
 }
 
 func (p *Plan[T]) toExecutorLogFn() func(executor.LogEntry) {
-	if p.logFn == nil {
-		return nil
-	}
-	return func(entry executor.LogEntry) {
-		bindings := make([]FKBinding, len(entry.FKBindings))
-		for i, b := range entry.FKBindings {
-			bindings[i] = FKBinding{
-				ChildField:      b.ChildField,
-				ParentBlueprint: b.ParentBlueprint,
-				ParentTable:     b.ParentTable,
-				ParentField:     b.ParentField,
-				Value:           b.Value,
-			}
-		}
-		p.logFn(InsertLog{
-			Step:       entry.Step,
-			Blueprint:  entry.Blueprint,
-			Table:      entry.Table,
-			Provided:   entry.Provided,
-			FKBindings: bindings,
-		})
-	}
+	return toExecutorLogFn(p.logFn)
 }
 
 func prepareRootOptions(reg *Registry, rootType reflect.Type, opts []Option) (*optionSet, error) {
