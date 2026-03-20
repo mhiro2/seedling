@@ -18,15 +18,11 @@ func (e *expander) expandRelation(
 	opts *OptionSet,
 	bindings map[string]*graph.Node,
 ) error {
-	if relationOmitted(opts, rel.Name) {
-		return nil
-	}
-
-	expand, err := relationWhen(node.Value, rel, opts)
+	decision, err := relationExpansion(node.Value, rel, opts)
 	if err != nil {
 		return err
 	}
-	if !expand {
+	if !decision.shouldBind {
 		return nil
 	}
 
@@ -34,7 +30,7 @@ func (e *expander) expandRelation(
 	if err != nil || bound {
 		return err
 	}
-	if !relationEnabled(rel, opts) {
+	if !decision.shouldExpand {
 		return nil
 	}
 
@@ -48,6 +44,30 @@ func (e *expander) expandRelation(
 	default:
 		return fmt.Errorf("%w: unsupported relation kind %q on blueprint %q", errx.ErrInvalidOption, rel.Kind, bp.Name)
 	}
+}
+
+type relationExpansionDecision struct {
+	shouldBind   bool
+	shouldExpand bool
+}
+
+func relationExpansion(value any, rel RelationDef, opts *OptionSet) (relationExpansionDecision, error) {
+	if relationOmitted(opts, rel.Name) {
+		return relationExpansionDecision{}, nil
+	}
+
+	shouldBind, err := relationWhen(value, rel, opts)
+	if err != nil {
+		return relationExpansionDecision{}, err
+	}
+	if !shouldBind {
+		return relationExpansionDecision{}, nil
+	}
+
+	return relationExpansionDecision{
+		shouldBind:   true,
+		shouldExpand: relationEnabled(rel, opts),
+	}, nil
 }
 
 func (e *expander) bindRelationNode(

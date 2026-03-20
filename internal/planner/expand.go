@@ -31,10 +31,6 @@ type expander struct {
 }
 
 func (e *expander) expandBlueprint(bp *BlueprintDef, nodeID string, opts *OptionSet, bindings map[string]*graph.Node, relationPath string) (*graph.Node, error) {
-	if err := validate(bp, opts); err != nil {
-		return nil, err
-	}
-
 	if existing, ok := e.visited[nodeID]; ok {
 		return existing, nil
 	}

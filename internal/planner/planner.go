@@ -13,6 +13,9 @@ func Plan(reg Registry, rootType reflect.Type, opts *OptionSet) (*PlanResult, er
 	if err != nil {
 		return nil, fmt.Errorf("lookup root blueprint %s: %w", rootType, err)
 	}
+	if err := validatePlan(reg, bp, opts); err != nil {
+		return nil, err
+	}
 
 	g := graph.New()
 	visited := make(map[string]*graph.Node)
@@ -41,6 +44,12 @@ func PlanMany(reg Registry, rootType reflect.Type, opts []*OptionSet) (*PlanMany
 	visited := make(map[string]*graph.Node)
 	shared := newBatchShareState()
 	rootIDs := make([]string, 0, len(opts))
+
+	for i, opt := range opts {
+		if err := validatePlan(reg, bp, opt); err != nil {
+			return nil, fmt.Errorf("validate root[%d]: %w", i, err)
+		}
+	}
 
 	for i, opt := range opts {
 		rootID := fmt.Sprintf("root[%d]", i)
