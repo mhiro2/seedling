@@ -15,7 +15,8 @@ builds:
       - arm64
 
 archives:
-  - format: tar.gz
+  - formats:
+      - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:
@@ -26,6 +27,29 @@ sboms:
 
 changelog:
   sort: asc
+
+homebrew_casks:
+  - name: seedling-gen
+    binaries:
+      - seedling-gen
+    description: Dependency-aware test data builder CLI for Go and SQL databases
+    homepage: https://github.com/mhiro2/seedling
+    url:
+      verified: github.com/mhiro2/seedling/
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/seedling-gen"]
+          end
+    repository:
+      owner: mhiro2
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
 
 release:
   github:
