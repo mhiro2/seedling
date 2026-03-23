@@ -148,7 +148,7 @@ That split also enables `DebugString()`, `DryRunString()`, `Validate()`, graph c
 
 ## seedling-gen code generation pipeline
 
-`seedling-gen` generates blueprint registration code from various schema sources. Adapters parse their inputs independently, then normalize the results into a shared intermediate representation before rendering.
+`seedling-gen` generates blueprint registration code from various schema sources. Install it with Homebrew (`brew install --cask mhiro2/tap/seedling-gen`) or `go install github.com/mhiro2/seedling/cmd/seedling-gen@latest` (see [README Installation](./README.md#-installation)). Adapters parse their inputs independently, then normalize the results into a shared intermediate representation before rendering.
 
 ```mermaid
 flowchart LR

@@ -203,6 +203,9 @@
 //
 // seedling does not generate SQL at runtime. Your blueprint owns the Insert
 // and optional Delete callbacks, so the library works with any DB abstraction.
+// Install seedling-gen with Homebrew (brew install --cask mhiro2/tap/seedling-gen)
+// or go install github.com/mhiro2/seedling/cmd/seedling-gen@latest.
+//
 // The seedling-gen CLI can generate blueprint skeletons from multiple sources:
 //
 //   - SQL DDL: seedling-gen sql schema.sql

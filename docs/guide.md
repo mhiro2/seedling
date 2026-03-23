@@ -1,6 +1,6 @@
 # seedling Guide
 
-Practical workflows and API patterns for using seedling in your tests. Start with the [README Quick Start](../README.md#-quick-start) if you haven't set up seedling yet.
+Practical workflows and API patterns for using seedling in your tests. Start with [README Installation](../README.md#-installation) and [Quick Start](../README.md#-quick-start) if you haven't set up seedling yet.
 
 ## Core Workflows
 
@@ -184,7 +184,21 @@ When you use `database/sql`, [`WithTx`](https://pkg.go.dev/github.com/mhiro2/see
 
 ## CLI
 
-[`seedling-gen`](../cmd/seedling-gen) generates model and blueprint skeletons from multiple input sources:
+[`seedling-gen`](../cmd/seedling-gen) generates model and blueprint skeletons from multiple input sources.
+
+Install the CLI:
+
+```bash
+# Homebrew (macOS / Linux)
+brew install --cask mhiro2/tap/seedling-gen
+```
+
+```bash
+# Go toolchain
+go install github.com/mhiro2/seedling/cmd/seedling-gen@latest
+```
+
+Examples:
 
 ```bash
 # SQL DDL
