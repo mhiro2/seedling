@@ -16,6 +16,11 @@ Use this skill when a Go project wants seedling blueprint scaffolding.
 
 It does not infer application-specific database calls. If the user wants a working integration, generate first, then replace the TODO callbacks with the project's actual insert and delete logic.
 
+## Installation
+
+- Homebrew (macOS / Linux): `brew install --cask mhiro2/tap/seedling-gen`
+- Go toolchain: `go install github.com/mhiro2/seedling/cmd/seedling-gen@latest`
+
 ## Input selection
 
 Choose exactly one input source. Prefer the strongest source of truth already used by the target project.
