@@ -1,12 +1,25 @@
-# 🌱 seedling
+<p align="center">
+  <img src="docs/images/logo.png" width="256" height="256" alt="seedling logo">
+</p>
 
-Dependency-aware test data builder for Go and SQL databases.
+<h1 align="center">seedling</h1>
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/mhiro2/seedling.svg)](https://pkg.go.dev/github.com/mhiro2/seedling)
-[![CI](https://github.com/mhiro2/seedling/actions/workflows/ci.yaml/badge.svg)](https://github.com/mhiro2/seedling/actions/workflows/ci.yaml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+<p align="center">
+  <strong>Dependency-aware test data builder for Go and SQL databases.</strong><br>
+  seedling lets tests create only the rows they need while automatically resolving foreign-key dependencies in the correct order. You provide the insert logic. seedling handles planning, FK assignment, and execution order.
+</p>
 
-seedling lets tests create only the rows they need while automatically resolving foreign-key dependencies in the correct order. You provide the insert logic. seedling handles planning, FK assignment, and execution order.
+<p align="center">
+  <a href="https://pkg.go.dev/github.com/mhiro2/seedling">
+    <img src="https://pkg.go.dev/badge/github.com/mhiro2/seedling.svg" alt="Go Reference">
+  </a>
+  <a href="https://github.com/mhiro2/seedling/actions/workflows/ci.yaml">
+    <img src="https://github.com/mhiro2/seedling/actions/workflows/ci.yaml/badge.svg" alt="CI">
+  </a>
+  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT License">
+</p>
+
+---
 
 ## ✨ Why seedling?
 
