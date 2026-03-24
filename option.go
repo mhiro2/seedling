@@ -91,6 +91,10 @@ func (u useOption) applyOption(o *optionSet) {
 // Ref applies nested options to a specific relation's blueprint.
 // It also enables expansion for optional relations.
 //
+// Options that only apply to the root record — [WithContext], [AfterInsert],
+// [AfterInsertE], and [WithInsertLog] — cannot appear under Ref (including
+// inside traits resolved for that relation) and return [ErrInvalidOption].
+//
 //	seedling.Ref("project", seedling.Set("Name", "renewal"))
 func Ref(name string, opts ...Option) Option {
 	return refOption{name: name, opts: opts}

@@ -282,6 +282,31 @@ func TestRegister_PointerTypeRejected(t *testing.T) {
 	}
 }
 
+func TestRegister_InterfaceTypeRejected(t *testing.T) {
+	// Arrange
+	reg := seedling.NewRegistry()
+
+	// Act
+	err := seedling.RegisterTo(reg, seedling.Blueprint[any]{
+		Name:    "iface-row",
+		Table:   "rows",
+		PKField: "ID",
+		Insert: func(ctx context.Context, db seedling.DBTX, v any) (any, error) {
+			_ = ctx
+			_ = db
+			return v, nil
+		},
+	})
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected error for interface type blueprint")
+	}
+	if !errors.Is(err, seedling.ErrInvalidOption) {
+		t.Fatalf("got %v, want %v", err, seedling.ErrInvalidOption)
+	}
+}
+
 // concurrencyItem is a dedicated type for the concurrency test to avoid
 // collisions with other test types.
 type concurrencyItem struct {

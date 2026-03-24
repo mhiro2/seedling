@@ -161,7 +161,7 @@ func prepareRootOptions(reg *Registry, rootType reflect.Type, opts []Option) (*o
 	if err := resolveAllTraits(collected, def, r); err != nil {
 		return nil, fmt.Errorf("build plan: %w", err)
 	}
-	if err := validateResolvedOptions(collected); err != nil {
+	if err := validateResolvedOptions(collected, true); err != nil {
 		return nil, fmt.Errorf("build plan: %w", err)
 	}
 	return collected, nil
@@ -318,16 +318,27 @@ func toOptionSet(os *optionSet) *planner.OptionSet {
 	}
 }
 
-func validateResolvedOptions(os *optionSet) error {
+func validateResolvedOptions(os *optionSet, root bool) error {
 	if os == nil {
 		return nil
+	}
+	if !root {
+		if os.ctx != nil {
+			return fmt.Errorf("%w: with-context applies only to the root blueprint", ErrInvalidOption)
+		}
+		if len(os.afterInserts) > 0 {
+			return fmt.Errorf("%w: after-insert applies only to the root blueprint", ErrInvalidOption)
+		}
+		if os.logFn != nil {
+			return fmt.Errorf("%w: insert log applies only to the root blueprint", ErrInvalidOption)
+		}
 	}
 	if len(os.seqs) > 0 || len(os.seqRefs) > 0 || len(os.seqUses) > 0 {
 		return fmt.Errorf("%w: Seq, SeqRef, and SeqUse are only supported by InsertMany", ErrInvalidOption)
 	}
 	for name, refOpts := range os.refs {
-		if err := validateResolvedOptions(collectOptions(refOpts)); err != nil {
-			return fmt.Errorf("%w: ref %q", err, name)
+		if err := validateResolvedOptions(collectOptions(refOpts), false); err != nil {
+			return fmt.Errorf("validate options for ref %q: %w", name, err)
 		}
 	}
 	return nil
