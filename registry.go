@@ -106,9 +106,11 @@ func registerTyped[T any](r *registry, bp Blueprint[T]) error {
 		return fmt.Errorf("%w: blueprint %q must have an Insert function", errx.ErrInvalidOption, bp.Name)
 	}
 
-	var zero T
-	modelType := reflect.TypeOf(zero)
-	if modelType != nil && modelType.Kind() == reflect.Pointer {
+	modelType := reflect.TypeFor[T]()
+	if modelType.Kind() == reflect.Interface {
+		return fmt.Errorf("%w: blueprint %q uses interface type %s; register a concrete struct type", errx.ErrInvalidOption, bp.Name, modelType)
+	}
+	if modelType.Kind() == reflect.Pointer {
 		return fmt.Errorf("%w: blueprint %q uses pointer type %s; use the struct type directly (e.g. Blueprint[User] instead of Blueprint[*User])", errx.ErrInvalidOption, bp.Name, modelType)
 	}
 

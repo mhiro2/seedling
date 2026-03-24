@@ -98,6 +98,58 @@ func TestUseAndRefConflict(t *testing.T) {
 	}
 }
 
+func TestRef_RejectsRootOnlyOptions(t *testing.T) {
+	// Arrange
+	ctx := context.Background()
+
+	tests := []struct {
+		name string
+		opt  seedling.Option
+	}{
+		{
+			name: "with_context",
+			opt:  seedling.WithContext(ctx),
+		},
+		{
+			name: "after_insert",
+			opt: seedling.AfterInsert(func(u User, _ seedling.DBTX) {
+				_ = u
+			}),
+		},
+		{
+			name: "after_insert_e",
+			opt: seedling.AfterInsertE(func(u User, _ seedling.DBTX) error {
+				_ = u
+				return nil
+			}),
+		},
+		{
+			name: "insert_log",
+			opt:  seedling.WithInsertLog(func(seedling.InsertLog) {}),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			setupBlueprints(t)
+
+			// Act
+			_, err := buildE[Task](t,
+				seedling.Ref("project", tt.opt, seedling.Set("Name", "nested")),
+			)
+
+			// Assert
+			if err == nil {
+				t.Fatal("expected error for root-only option under Ref")
+			}
+			if !errors.Is(err, seedling.ErrInvalidOption) {
+				t.Fatalf("got %v, want %v", err, seedling.ErrInvalidOption)
+			}
+		})
+	}
+}
+
 func TestOmitRequiredRelation(t *testing.T) {
 	// Arrange
 	setupBlueprints(t)
@@ -381,6 +433,24 @@ func TestUse_Nil(t *testing.T) {
 	// Assert
 	if err == nil {
 		t.Fatal("expected error when Use() receives nil")
+	}
+	if !errors.Is(err, seedling.ErrInvalidOption) {
+		t.Fatalf("got %v, want %v", err, seedling.ErrInvalidOption)
+	}
+}
+
+func TestUse_TypedNilPointer(t *testing.T) {
+	// Arrange
+	setupBlueprints(t)
+
+	// Act
+	_, err := buildE[User](t,
+		seedling.Use("company", (*Company)(nil)),
+	)
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected error when Use() receives typed nil pointer")
 	}
 	if !errors.Is(err, seedling.ErrInvalidOption) {
 		t.Fatalf("got %v, want %v", err, seedling.ErrInvalidOption)

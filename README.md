@@ -106,7 +106,7 @@ go install github.com/mhiro2/seedling/cmd/seedling-gen@latest
    seedling-gen ent --dir ./ent/schema --import-path github.com/you/app/ent --pkg testutil
    seedling-gen atlas --pkg testutil schema.hcl
    seedling-gen sql --explain schema.sql
-```
+   ```
 
    This generates struct types, `RegisterBlueprints()`, relations, and Insert stubs. Fill in the `// TODO` callbacks with your DB logic:
 

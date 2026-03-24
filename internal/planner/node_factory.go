@@ -42,6 +42,10 @@ func (e *expander) providedBelongsToNode(rel RelationDef, nodeID string, opts *O
 	if useVal == nil {
 		return nil, false, fmt.Errorf("%w: Use(%q) value must not be nil", errx.ErrInvalidOption, rel.Name)
 	}
+	rvUse := reflect.ValueOf(useVal)
+	if rvUse.Kind() == reflect.Pointer && rvUse.IsNil() {
+		return nil, false, fmt.Errorf("%w: Use(%q) value must not be nil", errx.ErrInvalidOption, rel.Name)
+	}
 
 	parentBP, err := e.reg.LookupByName(rel.RefBlueprint)
 	if err != nil {
