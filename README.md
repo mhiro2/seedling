@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/logo.png" width="256" height="256" alt="seedling logo">
+  <img src="assets/logo.png" width="256" height="256" alt="seedling logo">
 </p>
 
 <h1 align="center">seedling</h1>
