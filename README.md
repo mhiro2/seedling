@@ -166,7 +166,8 @@ go install github.com/mhiro2/seedling/cmd/seedling-gen@latest
 
 | Tool | Main model | Strong at | Not designed for |
 | --- | --- | --- | --- |
-| seedling | Dependency-aware builders with DB callbacks | Per-test graph generation, FK resolution, type-safe overrides, graph inspection | Bulk loading large static fixture files |
+| seedling | Dependency-aware builders with DB callbacks | Per-test graph generation, automatic FK resolution, type-safe overrides, graph inspection, codegen | Bulk loading large static fixture files |
+| [eyo-chen/gofacto](https://github.com/eyo-chen/gofacto) | Generic factory with explicit FK associations | Ergonomic zero-config field filling, `WithOne`/`WithMany` associations, multi-DB support | Automatic graph resolution, minimal graph expansion |
 | [go-testfixtures/testfixtures](https://github.com/go-testfixtures/testfixtures) | Fixture files loaded into DB | Stable predefined datasets for integration tests | Relation-aware per-test graph construction |
 | [bluele/factory-go](https://github.com/bluele/factory-go) | In-memory object factories | Flexible object construction and traits-like composition | Planning SQL insert order across FK graphs |
 | [brianvoe/gofakeit](https://github.com/brianvoe/gofakeit) | Fake data generator | Realistic random values | Database insertion orchestration or relation expansion |
