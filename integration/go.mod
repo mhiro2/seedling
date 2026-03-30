@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/go-sql-driver/mysql v1.9.3
-	github.com/jackc/pgx/v5 v5.8.0
+	github.com/jackc/pgx/v5 v5.9.1
 	github.com/mhiro2/seedling v0.0.0
 	github.com/testcontainers/testcontainers-go/modules/mysql v0.41.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.41.0
