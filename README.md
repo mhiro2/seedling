@@ -116,13 +116,17 @@ go install github.com/mhiro2/seedling/cmd/seedling-gen@latest
    },
    ```
 
+   The snippets below assume the generated package is named `testutil`.
+   For a runnable minimal version of this flow, see [examples/quickstart](./examples/quickstart).
+
 2. **Use it in tests**
 
    ```go
    func TestUser(t *testing.T) {
-       tx := seedling.WithTx(t, db) // auto-rollback at cleanup
+       seedling.ResetRegistry()
+       testutil.RegisterBlueprints()
 
-       result := seedling.InsertOne[User](t, tx)
+       result := seedling.InsertOne[testutil.User](t, db)
        user := result.Root()
 
        if user.ID == 0 {
@@ -138,10 +142,12 @@ go install github.com/mhiro2/seedling/cmd/seedling-gen@latest
 
    ```go
    func TestNamedUser(t *testing.T) {
-       tx := seedling.WithTx(t, db)
-       company := seedling.InsertOne[Company](t, tx).Root()
+       seedling.ResetRegistry()
+       testutil.RegisterBlueprints()
 
-       result := seedling.InsertOne[User](t, tx,
+       company := seedling.InsertOne[testutil.Company](t, db).Root()
+
+       result := seedling.InsertOne[testutil.User](t, db,
            seedling.Set("Name", "alice"),
            seedling.Use("company", company),
        )
@@ -151,16 +157,22 @@ go install github.com/mhiro2/seedling/cmd/seedling-gen@latest
    }
 
    func TestTaskProject(t *testing.T) {
-       tx := seedling.WithTx(t, db)
+       seedling.ResetRegistry()
+       testutil.RegisterBlueprints()
 
        // Only("project") inserts task + project subtree only,
        // skipping the assignee relation entirely.
-       result := seedling.InsertOne[Task](t, tx,
+       result := seedling.InsertOne[testutil.Task](t, db,
            seedling.Only("project"),
        )
        _ = result
    }
    ```
+
+   When you want automatic rollback with `database/sql`, use `seedling.WithTx(t, db)`.
+   For a runnable transaction-focused example, see [examples/with-tx](./examples/with-tx).
+
+   For a runnable batch-oriented example, see [examples/batch-insert](./examples/batch-insert).
 
 ## ⚖️ Comparison
 
@@ -175,9 +187,12 @@ go install github.com/mhiro2/seedling/cmd/seedling-gen@latest
 ## 📂 Examples
 
 - [basic](./examples/basic): register blueprints and insert rows with automatic parent creation
-- [sqlc](./examples/sqlc): wire blueprints to sqlc-generated query code
-- [reuse-parent](./examples/reuse-parent): reuse existing rows with `Use`
+- [quickstart](./examples/quickstart): generated-style `RegisterBlueprints()` flow that matches the README Quick Start
 - [custom-defaults](./examples/custom-defaults): customize values with `Set`, `With`, and `Generate`
+- [reuse-parent](./examples/reuse-parent): reuse existing rows with `Use`
+- [batch-insert](./examples/batch-insert): batch inserts with shared `Ref` dependencies and per-row `SeqRef` overrides
+- [with-tx](./examples/with-tx): `database/sql` transaction helper with `seedling.WithTx`
+- [sqlc](./examples/sqlc): wire blueprints to sqlc-generated query code
 - pgx transactions: use `github.com/mhiro2/seedling/seedlingpgx` with `pgxpool.Pool` or `*pgx.Conn`
 - GORM / ent / Atlas: use `seedling-gen` with `-gorm`, `-ent`, or `-atlas` flags to generate blueprints from your existing schema definitions
 

@@ -254,9 +254,12 @@ Supported locales: `en` (default), `ja`, `zh`, `ko`, `de`, `fr`.
 ## Examples
 
 - [basic](../examples/basic) -- register blueprints and insert rows with automatic parent creation
-- [sqlc](../examples/sqlc) -- wire blueprints to sqlc-generated query code
-- [reuse-parent](../examples/reuse-parent) -- reuse existing rows with `Use`
+- [quickstart](../examples/quickstart) -- generated-style `RegisterBlueprints()` flow that matches the README Quick Start
 - [custom-defaults](../examples/custom-defaults) -- customize values with `Set`, `With`, and `Generate`
+- [reuse-parent](../examples/reuse-parent) -- reuse existing rows with `Use`
+- [batch-insert](../examples/batch-insert) -- batch inserts with shared `Ref` dependencies and per-row `SeqRef` overrides
+- [with-tx](../examples/with-tx) -- use `seedling.WithTx` for automatic rollback with `database/sql`
+- [sqlc](../examples/sqlc) -- wire blueprints to sqlc-generated query code
 
 ## More References
 
