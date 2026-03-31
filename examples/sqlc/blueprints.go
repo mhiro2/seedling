@@ -14,7 +14,7 @@ func nextID() int64 {
 	return idSeq.Add(1)
 }
 
-// SetupBlueprints registers Organization and Member blueprints.
+// RegisterBlueprints registers Organization and Member blueprints.
 //
 // In a real project, the Insert functions would call sqlc-generated query methods:
 //
@@ -23,7 +23,7 @@ func nextID() int64 {
 //	}
 //
 // Here we use mock inserts that assign incrementing IDs.
-func SetupBlueprints() {
+func RegisterBlueprints() {
 	seedling.MustRegister(seedling.Blueprint[Organization]{
 		Name:    "organization",
 		Table:   "organizations",

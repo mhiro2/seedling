@@ -1,4 +1,4 @@
-package reuseparent
+package batchinsert
 
 import (
 	"context"
@@ -36,12 +36,7 @@ func RegisterBlueprints() {
 			return Project{Name: "test-project"}
 		},
 		Relations: []seedling.Relation{
-			{
-				Name:         "company",
-				Kind:         seedling.BelongsTo,
-				LocalField:   "CompanyID",
-				RefBlueprint: "company",
-			},
+			{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v Project) (Project, error) {
 			v.ID = nextID()
@@ -57,16 +52,16 @@ func RegisterBlueprints() {
 			return Task{Title: "test-task"}
 		},
 		Relations: []seedling.Relation{
-			{
-				Name:         "project",
-				Kind:         seedling.BelongsTo,
-				LocalField:   "ProjectID",
-				RefBlueprint: "project",
-			},
+			{Name: "project", Kind: seedling.BelongsTo, LocalField: "ProjectID", RefBlueprint: "project"},
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v Task) (Task, error) {
 			v.ID = nextID()
 			return v, nil
 		},
 	})
+}
+
+// ResetIDs resets the in-memory ID sequence used by this example package.
+func ResetIDs() {
+	idSeq.Store(0)
 }
