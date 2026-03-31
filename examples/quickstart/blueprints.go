@@ -1,4 +1,4 @@
-package basic
+package quickstart
 
 import (
 	"context"
@@ -13,8 +13,7 @@ func nextID() int {
 	return int(idSeq.Add(1))
 }
 
-// RegisterBlueprints registers the Company and User blueprints.
-// Call seedling.ResetRegistry() before this in tests to start fresh.
+// RegisterBlueprints registers the generated-style Company and User blueprints.
 func RegisterBlueprints() {
 	seedling.MustRegister(seedling.Blueprint[Company]{
 		Name:    "company",
@@ -37,16 +36,16 @@ func RegisterBlueprints() {
 			return User{Name: "test-user", Email: "test@example.com"}
 		},
 		Relations: []seedling.Relation{
-			{
-				Name:         "company",
-				Kind:         seedling.BelongsTo,
-				LocalField:   "CompanyID",
-				RefBlueprint: "company",
-			},
+			{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v User) (User, error) {
 			v.ID = nextID()
 			return v, nil
 		},
 	})
+}
+
+// ResetIDs resets the in-memory ID sequence used by this example package.
+func ResetIDs() {
+	idSeq.Store(0)
 }

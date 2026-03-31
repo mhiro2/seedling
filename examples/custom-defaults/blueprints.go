@@ -13,8 +13,8 @@ func nextID() int {
 	return int(idSeq.Add(1))
 }
 
-// SetupBlueprints registers the User blueprint with sensible defaults.
-func SetupBlueprints() {
+// RegisterBlueprints registers the User blueprint with sensible defaults.
+func RegisterBlueprints() {
 	seedling.MustRegister(seedling.Blueprint[User]{
 		Name:    "user",
 		Table:   "users",

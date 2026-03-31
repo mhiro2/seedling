@@ -10,7 +10,7 @@ import (
 func setup(t *testing.T) {
 	t.Helper()
 	seedling.ResetRegistry()
-	customdefaults.SetupBlueprints()
+	customdefaults.RegisterBlueprints()
 }
 
 func TestDefaultUser(t *testing.T) {

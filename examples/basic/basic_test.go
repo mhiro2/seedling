@@ -10,7 +10,7 @@ import (
 func setup(t *testing.T) {
 	t.Helper()
 	seedling.ResetRegistry()
-	basic.SetupBlueprints()
+	basic.RegisterBlueprints()
 }
 
 func TestInsertOne_Company(t *testing.T) {

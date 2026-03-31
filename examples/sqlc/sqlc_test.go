@@ -11,7 +11,7 @@ import (
 func setup(t *testing.T) {
 	t.Helper()
 	seedling.ResetRegistry()
-	example.SetupBlueprints()
+	example.RegisterBlueprints()
 }
 
 func TestInsertOne_Member(t *testing.T) {

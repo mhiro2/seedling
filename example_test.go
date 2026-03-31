@@ -21,8 +21,28 @@ type ExUser struct {
 	Name      string
 }
 
+type ExProject struct {
+	ID        int
+	CompanyID int
+	Name      string
+}
+
+type ExTask struct {
+	ID             int
+	ProjectID      int
+	AssigneeUserID int
+	Title          string
+	Status         string
+}
+
 func setupExampleBlueprints() {
 	seedling.ResetRegistry()
+
+	nextID := 0
+	next := func() int {
+		nextID++
+		return nextID
+	}
 
 	seedling.MustRegister(seedling.Blueprint[ExCompany]{
 		Name:    "company",
@@ -32,7 +52,7 @@ func setupExampleBlueprints() {
 			return ExCompany{Name: "test-company"}
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v ExCompany) (ExCompany, error) {
-			v.ID = 1
+			v.ID = next()
 			return v, nil
 		},
 	})
@@ -51,7 +71,48 @@ func setupExampleBlueprints() {
 			"named": {seedling.Set("Name", "trait-user")},
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v ExUser) (ExUser, error) {
-			v.ID = 2
+			v.ID = next()
+			return v, nil
+		},
+	})
+
+	seedling.MustRegister(seedling.Blueprint[ExProject]{
+		Name:    "project",
+		Table:   "projects",
+		PKField: "ID",
+		Defaults: func() ExProject {
+			return ExProject{Name: "test-project"}
+		},
+		Relations: []seedling.Relation{
+			{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
+		},
+		Insert: func(ctx context.Context, db seedling.DBTX, v ExProject) (ExProject, error) {
+			v.ID = next()
+			return v, nil
+		},
+	})
+
+	seedling.MustRegister(seedling.Blueprint[ExTask]{
+		Name:    "task",
+		Table:   "tasks",
+		PKField: "ID",
+		Defaults: func() ExTask {
+			return ExTask{Title: "test-task", Status: "open"}
+		},
+		Relations: []seedling.Relation{
+			{Name: "project", Kind: seedling.BelongsTo, LocalField: "ProjectID", RefBlueprint: "project"},
+			{
+				Name:         "assignee",
+				Kind:         seedling.BelongsTo,
+				LocalField:   "AssigneeUserID",
+				RefBlueprint: "user",
+				When: seedling.WhenFunc(func(t ExTask) bool {
+					return t.Status == "assigned"
+				}),
+			},
+		},
+		Insert: func(ctx context.Context, db seedling.DBTX, v ExTask) (ExTask, error) {
+			v.ID = next()
 			return v, nil
 		},
 	})
@@ -61,9 +122,23 @@ func ExampleInsertOne() {
 	setupExampleBlueprints()
 
 	t := &testing.T{}
-	user := seedling.InsertOne[ExUser](t, nil).Root()
-	fmt.Printf("User: %s, CompanyID: %d\n", user.Name, user.CompanyID)
-	// Output: User: test-user, CompanyID: 1
+	task := seedling.InsertOne[ExTask](t, nil).Root()
+	fmt.Printf("%s %d\n", task.Title, task.ProjectID)
+	// Output: test-task 2
+}
+
+func ExampleInsertOneE() {
+	setupExampleBlueprints()
+
+	result, err := seedling.InsertOneE[ExTask](context.Background(), nil,
+		seedling.Set("Status", "assigned"),
+	)
+	if err != nil {
+		return
+	}
+
+	fmt.Println(result.Root().AssigneeUserID > 0)
+	// Output: true
 }
 
 func ExampleInsertMany() {
@@ -82,67 +157,213 @@ func ExampleInsertMany() {
 func ExampleInsertManyE() {
 	setupExampleBlueprints()
 
-	result, err := seedling.InsertManyE[ExCompany](context.Background(), nil, 2,
-		seedling.Seq("Name", func(i int) string {
-			return fmt.Sprintf("company-%d", i)
-		}),
+	result, err := seedling.InsertManyE[ExTask](context.Background(), nil, 2,
+		seedling.Ref("project", seedling.Set("Name", "shared-project")),
 	)
 	if err != nil {
 		return
 	}
 
-	companies := result.Roots()
-	fmt.Printf("%d: %s, %s\n", result.Len(), companies[0].Name, companies[1].Name)
-	// Output: 2: company-0, company-1
+	node0, ok0 := result.NodeAt(0, "project")
+	if !ok0 {
+		return
+	}
+	project0, ok := node0.Value().(ExProject)
+	if !ok {
+		return
+	}
+
+	node1, ok1 := result.NodeAt(1, "project")
+	if !ok1 {
+		return
+	}
+	project1, ok := node1.Value().(ExProject)
+	if !ok {
+		return
+	}
+
+	fmt.Printf("%s %t\n", project0.Name, project0.ID == project1.ID)
+	// Output: shared-project true
 }
 
 func ExampleBuild() {
 	setupExampleBlueprints()
 
 	t := &testing.T{}
-	plan := seedling.Build[ExUser](t)
+	plan := seedling.Build[ExTask](t)
 	fmt.Println(plan.DebugString())
 	// Output:
-	// user
-	// └─ company
+	// task
+	// └─ project
+	//    └─ company
+}
+
+func ExampleBuildE() {
+	setupExampleBlueprints()
+
+	plan, err := seedling.BuildE[ExTask](seedling.Set("Status", "assigned"))
+	if err != nil {
+		return
+	}
+
+	fmt.Println(plan.DebugString())
+	// Output:
+	// task (Set: Status)
+	// ├─ user
+	// │  └─ company
+	// └─ project
+	//    └─ company
+}
+
+func ExamplePlan_DryRunString() {
+	setupExampleBlueprints()
+
+	t := &testing.T{}
+	plan := seedling.Build[ExTask](t,
+		seedling.Use("project", ExProject{ID: 42, CompanyID: 7, Name: "existing-project"}),
+	)
+	fmt.Println(plan.DryRunString())
+	// Output:
+	// Step 1: SKIP projects (provided) (blueprint: project)
+	// Step 2: INSERT INTO tasks (blueprint: task)
+	//         SET ProjectID ← projects.ID
+}
+
+func ExampleResult_Node() {
+	setupExampleBlueprints()
+
+	t := &testing.T{}
+	result := seedling.InsertOne[ExTask](t, nil)
+	node, ok := result.Node("project")
+	if !ok {
+		return
+	}
+
+	project, ok := node.Value().(ExProject)
+	if !ok {
+		return
+	}
+	fmt.Printf("%s %s\n", node.Name(), project.Name)
+	// Output: project test-project
+}
+
+func ExampleBatchResult_NodeAt() {
+	setupExampleBlueprints()
+
+	result, err := seedling.InsertManyE[ExTask](context.Background(), nil, 2,
+		seedling.SeqRef("project", func(i int) []seedling.Option {
+			return []seedling.Option{seedling.Set("Name", fmt.Sprintf("project-%d", i))}
+		}),
+	)
+	if err != nil {
+		return
+	}
+
+	node, ok := result.NodeAt(1, "project")
+	if !ok {
+		return
+	}
+
+	project, ok := node.Value().(ExProject)
+	if !ok {
+		return
+	}
+	fmt.Println(project.Name)
+	// Output: project-1
 }
 
 func ExampleSet() {
 	setupExampleBlueprints()
 
 	t := &testing.T{}
-	user := seedling.InsertOne[ExUser](t, nil,
-		seedling.Set("Name", "custom-name"),
+	project := seedling.InsertOne[ExProject](t, nil,
+		seedling.Set("Name", "custom-project"),
 	).Root()
-	fmt.Println(user.Name)
-	// Output: custom-name
+	fmt.Println(project.Name)
+	// Output: custom-project
 }
 
 func ExampleRef() {
 	setupExampleBlueprints()
 
 	t := &testing.T{}
-	plan := seedling.Build[ExUser](t,
-		seedling.Ref("company", seedling.Set("Name", "custom-company")),
+	plan := seedling.Build[ExTask](t,
+		seedling.Ref("project", seedling.Set("Name", "custom-project")),
 	)
 	result := plan.Insert(t, nil)
-	company, ok, err := seedling.NodeAs[ExCompany](result, "company")
+	project, ok, err := seedling.NodeAs[ExProject](result, "project")
 	if err != nil || !ok {
 		return
 	}
-	fmt.Println(company.Name)
-	// Output: custom-company
+	fmt.Println(project.Name)
+	// Output: custom-project
 }
 
 func ExampleUse() {
 	setupExampleBlueprints()
 
 	t := &testing.T{}
-	user := seedling.InsertOne[ExUser](t, nil,
-		seedling.Use("company", ExCompany{ID: 42, Name: "existing-company"}),
+	project := seedling.InsertOne[ExProject](t, nil,
+		seedling.Set("Name", "existing-project"),
 	).Root()
-	fmt.Println(user.CompanyID)
-	// Output: 42
+
+	task := seedling.InsertOne[ExTask](t, nil,
+		seedling.Use("project", project),
+	).Root()
+	fmt.Println(task.ProjectID)
+	// Output: 2
+}
+
+func ExampleSeqRef() {
+	setupExampleBlueprints()
+
+	result, err := seedling.InsertManyE[ExTask](context.Background(), nil, 2,
+		seedling.SeqRef("project", func(i int) []seedling.Option {
+			return []seedling.Option{seedling.Set("Name", fmt.Sprintf("project-%d", i))}
+		}),
+	)
+	if err != nil {
+		return
+	}
+
+	node0, ok0 := result.NodeAt(0, "project")
+	if !ok0 {
+		return
+	}
+	project0, ok := node0.Value().(ExProject)
+	if !ok {
+		return
+	}
+
+	node1, ok1 := result.NodeAt(1, "project")
+	if !ok1 {
+		return
+	}
+	project1, ok := node1.Value().(ExProject)
+	if !ok {
+		return
+	}
+	fmt.Printf("%s, %s\n", project0.Name, project1.Name)
+	// Output: project-0, project-1
+}
+
+func ExampleSeqUse() {
+	setupExampleBlueprints()
+
+	t := &testing.T{}
+	companies := seedling.InsertMany[ExCompany](t, nil, 2,
+		seedling.Seq("Name", func(i int) string {
+			return fmt.Sprintf("company-%d", i)
+		}),
+	)
+
+	users := seedling.InsertMany[ExUser](t, nil, 2,
+		seedling.SeqUse("company", func(i int) ExCompany {
+			return companies[i]
+		}),
+	)
+	fmt.Printf("%d, %d\n", users[0].CompanyID, users[1].CompanyID)
+	// Output: 1, 2
 }
 
 func ExampleWith() {
@@ -167,40 +388,98 @@ func ExampleBlueprintTrait() {
 	// Output: trait-user
 }
 
+func ExampleInlineTrait() {
+	setupExampleBlueprints()
+
+	t := &testing.T{}
+	user := seedling.InsertOne[ExUser](t, nil,
+		seedling.InlineTrait(seedling.Set("Name", "inline-user")),
+	).Root()
+	fmt.Println(user.Name)
+	// Output: inline-user
+}
+
 func ExampleFor() {
 	setupExampleBlueprints()
 
 	t := &testing.T{}
-	user := seedling.For[ExUser]().
-		Set("Name", "builder-user").
-		Insert(t, nil).Root()
-	fmt.Println(user.Name)
-	// Output: builder-user
+	result := seedling.For[ExTask]().
+		Set("Title", "builder-task").
+		Ref("project", seedling.Set("Name", "builder-project")).
+		Insert(t, nil)
+
+	project, ok, err := seedling.NodeAs[ExProject](result, "project")
+	if err != nil || !ok {
+		return
+	}
+	fmt.Printf("%s %s\n", result.Root().Title, project.Name)
+	// Output: builder-task builder-project
 }
 
 func ExampleOnly() {
 	setupExampleBlueprints()
 
 	t := &testing.T{}
-	// Only("company") inserts the root user and its company relation,
-	// skipping any other relations that might exist.
-	user := seedling.InsertOne[ExUser](t, nil,
-		seedling.Only("company"),
-	).Root()
-	fmt.Printf("User: %s, CompanyID: %d\n", user.Name, user.CompanyID)
-	// Output: User: test-user, CompanyID: 1
+	plan := seedling.Build[ExTask](t,
+		seedling.Set("Status", "assigned"),
+		seedling.Only("project"),
+	)
+	fmt.Println(plan.DebugString())
+	// Output:
+	// task (Set: Status)
+	// └─ project
+	//    └─ company
 }
 
 func ExampleOnly_rootOnly() {
 	setupExampleBlueprints()
 
 	t := &testing.T{}
-	// Only() with no arguments builds only the root node.
-	plan := seedling.Build[ExUser](t, seedling.Only())
-	// The plan shows only the lazily built subgraph:
+	plan := seedling.Build[ExTask](t, seedling.Only())
 	fmt.Println(plan.DebugString())
 	// Output:
-	// user
+	// task
+}
+
+func ExampleWhen() {
+	setupExampleBlueprints()
+
+	t := &testing.T{}
+	task := seedling.InsertOne[ExTask](t, nil,
+		seedling.Set("Status", "assigned"),
+	).Root()
+	fmt.Println(task.AssigneeUserID > 0)
+	// Output: true
+}
+
+func ExampleWithInsertLog() {
+	setupExampleBlueprints()
+
+	t := &testing.T{}
+	var logs []seedling.InsertLog
+	seedling.InsertOne[ExTask](t, nil,
+		seedling.WithInsertLog(func(log seedling.InsertLog) {
+			logs = append(logs, log)
+		}),
+	)
+
+	last := logs[len(logs)-1]
+	fmt.Printf("%d %s %s\n", len(logs), last.Blueprint, last.FKBindings[0].ChildField)
+	// Output: 3 task ProjectID
+}
+
+func ExampleAfterInsert() {
+	setupExampleBlueprints()
+
+	t := &testing.T{}
+	var names []string
+	seedling.InsertOne[ExCompany](t, nil,
+		seedling.AfterInsert(func(c ExCompany, db seedling.DBTX) {
+			names = append(names, c.Name)
+		}),
+	)
+	fmt.Println(names[0])
+	// Output: test-company
 }
 
 func ExampleGenerate() {

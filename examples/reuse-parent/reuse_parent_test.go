@@ -10,7 +10,7 @@ import (
 func setup(t *testing.T) {
 	t.Helper()
 	seedling.ResetRegistry()
-	reuseparent.SetupBlueprints()
+	reuseparent.RegisterBlueprints()
 }
 
 func TestUse_ShareParentCompany(t *testing.T) {
