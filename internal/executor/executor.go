@@ -63,6 +63,10 @@ func Execute(ctx context.Context, db any, g *graph.Graph, lookup BlueprintLookup
 	}
 
 	for i, node := range order {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("execute graph: %w", err)
+		}
+
 		// Collect FK bindings for logging before assignment.
 		var bindings []FKBinding
 		if logFn != nil {
