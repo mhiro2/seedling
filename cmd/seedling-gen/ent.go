@@ -373,9 +373,14 @@ func entTypeToGoType(entType string) string {
 
 // GenerateEnt generates Blueprint registration code for ent schemas.
 func GenerateEnt(w io.Writer, pkg, entImportPath string, schemas []EntSchema) error {
-	return generateNormalizedCode(w, "ent", pkg, []string{
+	models := normalizeEntModels(schemas)
+	imports := []string{
 		`"context"`,
 		`"github.com/mhiro2/seedling"`,
 		`ent "` + entImportPath + `"`,
-	}, normalizeEntModels(schemas), false)
+	}
+	if normalizedModelsNeedTimeImport(models) {
+		imports = append(imports, `"time"`)
+	}
+	return generateNormalizedCode(w, "ent", pkg, imports, models, false)
 }

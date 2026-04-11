@@ -303,10 +303,15 @@ func toSnakeCase(s string) string {
 // GenerateGorm generates Blueprint registration code for GORM models.
 func GenerateGorm(w io.Writer, pkg, modelImportPath string, models []GormModel) error {
 	alias := filepath.Base(modelImportPath)
-	return generateNormalizedCode(w, "gorm", pkg, []string{
+	normalized := normalizeGormModels(models, alias)
+	imports := []string{
 		`"context"`,
 		`"github.com/mhiro2/seedling"`,
 		`"gorm.io/gorm"`,
 		alias + ` "` + modelImportPath + `"`,
-	}, normalizeGormModels(models, alias), false)
+	}
+	if normalizedModelsNeedTimeImport(normalized) {
+		imports = append(imports, `"time"`)
+	}
+	return generateNormalizedCode(w, "gorm", pkg, imports, normalized, false)
 }
