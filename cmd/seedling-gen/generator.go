@@ -6,33 +6,31 @@ import (
 )
 
 func Generate(w io.Writer, pkg string, tables []Table) error {
-	needsTime := false
-	for _, table := range tables {
-		for _, column := range table.Columns {
-			if column.GoType == "time.Time" {
-				needsTime = true
-			}
-		}
-	}
+	models := normalizeTableModels(tables)
 
 	imports := []string{
 		`"context"`,
 		`"github.com/mhiro2/seedling"`,
 	}
-	if needsTime {
+	if normalizedModelsNeedTimeImport(models) {
 		imports = append(imports, `"time"`)
 	}
 
-	return generateNormalizedCode(w, "sql", pkg, imports, normalizeTableModels(tables), true)
+	return generateNormalizedCode(w, "sql", pkg, imports, models, true)
 }
 
 // GenerateSqlc generates blueprint code that imports and uses sqlc-generated types.
 func GenerateSqlc(w io.Writer, pkg, sqlcImportPath string, tables []Table, sqlcInfo *SqlcInfo) error {
-	return generateNormalizedCode(w, "sqlc", pkg, []string{
+	models := normalizeSqlcModels(tables, sqlcInfo)
+	imports := []string{
 		`"context"`,
 		`"github.com/mhiro2/seedling"`,
 		sqlcInfo.Package + ` "` + sqlcImportPath + `"`,
-	}, normalizeSqlcModels(tables, sqlcInfo), false)
+	}
+	if normalizedModelsNeedTimeImport(models) {
+		imports = append(imports, `"time"`)
+	}
+	return generateNormalizedCode(w, "sqlc", pkg, imports, models, false)
 }
 
 // pkFieldForDeleteArg maps a delete function's arg name (e.g., "id") to the model's PK field name (e.g., "ID").

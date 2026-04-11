@@ -224,3 +224,57 @@ func TestRun_EntRequiresImportPath(t *testing.T) {
 		t.Fatalf("expected import-path required error, got: %s", stderr.String())
 	}
 }
+
+func TestGenerateEnt_DefaultsAutofillSupportedFields(t *testing.T) {
+	// Arrange
+	schemas := []EntSchema{
+		{
+			Name: "Company",
+			Fields: []EntField{
+				{Name: "name", Type: "String", GoType: "string"},
+			},
+		},
+		{
+			Name: "User",
+			Fields: []EntField{
+				{Name: "name", Type: "String", GoType: "string"},
+				{Name: "created_at", Type: "Time", GoType: "time.Time"},
+				{Name: "token", Type: "UUID", GoType: "uuid.UUID"},
+			},
+			Edges: []EntEdge{
+				{Name: "company", Type: "Company", Direction: "From", Ref: "users", Unique: true, Required: true},
+			},
+		},
+	}
+
+	// Act
+	var buf bytes.Buffer
+	if err := GenerateEnt(&buf, "testutil", "github.com/myapp/ent", schemas); err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	output := buf.String()
+	tests := []struct {
+		name    string
+		substr  string
+		missing bool
+	}{
+		{name: "time import", substr: `"time"`},
+		{name: "string default", substr: `Name: "user-name"`},
+		{name: "time default", substr: `CreatedAt: time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)`},
+		{name: "unsupported uuid skipped", substr: `Token:`, missing: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			contains := strings.Contains(output, tt.substr)
+			if tt.missing && contains {
+				t.Fatalf("expected output not to contain %q\n\nGot:\n%s", tt.substr, output)
+			}
+			if !tt.missing && !contains {
+				t.Fatalf("expected output to contain %q\n\nGot:\n%s", tt.substr, output)
+			}
+		})
+	}
+}

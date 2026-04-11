@@ -4,13 +4,17 @@ import (
 	"fmt"
 	"go/format"
 	"io"
+	"strconv"
 	"strings"
 	"text/template"
 )
 
 type normalizedField struct {
-	GoName string
-	GoType string
+	GoName       string
+	GoType       string
+	IsPK         bool
+	IsRelationFK bool
+	IsOptional   bool
 }
 
 type normalizedRelation struct {
@@ -62,7 +66,7 @@ func RegisterBlueprints() {
 		PKField: "{{pkField $model}}",
 {{- end}}
 		Defaults: func() {{$model.TypeExpr}} {
-			return {{$model.ZeroValueExpr}}
+			return {{ defaultLiteral $model }}
 		},
 {{- if $model.Relations}}
 		Relations: []seedling.Relation{
@@ -114,7 +118,8 @@ func generateNormalizedCode(w io.Writer, kind, pkg string, imports []string, mod
 		"isCompositeRelation": func(rel normalizedRelation) bool {
 			return len(rel.LocalFields) > 1
 		},
-		"indent": indentBlock,
+		"defaultLiteral": buildDefaultLiteral,
+		"indent":         indentBlock,
 	})
 	if err != nil {
 		return fmt.Errorf("render %s blueprints: %w", kind, err)
@@ -195,8 +200,11 @@ func normalizeTableModels(tables []Table) []normalizedModel {
 		fields := make([]normalizedField, 0, len(table.Columns))
 		for _, column := range table.Columns {
 			fields = append(fields, normalizedField{
-				GoName: column.GoName,
-				GoType: column.GoType,
+				GoName:       column.GoName,
+				GoType:       column.GoType,
+				IsPK:         column.IsPK,
+				IsRelationFK: column.IsFK,
+				IsOptional:   !column.NotNull,
 			})
 		}
 
@@ -226,6 +234,7 @@ func normalizeSqlcModels(tables []Table, sqlcInfo *SqlcInfo) []normalizedModel {
 			BlueprintID:   table.BlueprintID,
 			TableName:     table.Name,
 			PKFields:      normalizedPKFields(table.Columns),
+			Fields:        normalizedTableFields(table),
 			Relations:     normalizeTableRelations(table),
 		}
 
@@ -264,6 +273,7 @@ func normalizeGormModels(models []GormModel, alias string) []normalizedModel {
 		}
 
 		relations := make([]normalizedRelation, 0, len(model.Fields))
+		relationLocalFields := make(map[string]struct{})
 		for _, field := range model.Fields {
 			if field.Relation == nil || field.Relation.Kind != "BelongsTo" {
 				continue
@@ -281,6 +291,19 @@ func normalizeGormModels(models []GormModel, alias string) []normalizedModel {
 				RefBlueprint: singularize(strings.ToLower(field.Relation.RefModel)),
 				Optional:     !field.NotNull,
 			})
+			relationLocalFields[localField] = struct{}{}
+		}
+
+		fields := make([]normalizedField, 0, len(model.Fields))
+		for _, field := range model.Fields {
+			_, isRelationFK := relationLocalFields[field.Name]
+			fields = append(fields, normalizedField{
+				GoName:       field.Name,
+				GoType:       field.Type,
+				IsPK:         field.IsPK,
+				IsRelationFK: isRelationFK,
+				IsOptional:   !field.NotNull,
+			})
 		}
 
 		normalized = append(normalized, normalizedModel{
@@ -289,6 +312,7 @@ func normalizeGormModels(models []GormModel, alias string) []normalizedModel {
 			BlueprintID:   singularize(strings.ToLower(model.Name)),
 			TableName:     model.Table,
 			PKFields:      pkFields,
+			Fields:        fields,
 			Relations:     relations,
 			InsertHook: &normalizedMutationHook{
 				Body: "if err := dbtx.(*gorm.DB).WithContext(ctx).Create(&v).Error; err != nil {\n\treturn v, err\n}\nreturn v, nil",
@@ -310,6 +334,7 @@ func normalizeEntModels(schemas []EntSchema) []normalizedModel {
 			BlueprintID:   singularize(strings.ToLower(schema.Name)),
 			TableName:     singularize(strings.ToLower(schema.Name)) + "s",
 			PKFields:      []string{"ID"},
+			Fields:        normalizeEntFields(schema.Fields),
 		}
 
 		for _, edge := range schema.Edges {
@@ -359,6 +384,32 @@ func normalizedPKField(fields []string) string {
 	return fields[0]
 }
 
+func normalizedTableFields(table Table) []normalizedField {
+	fields := make([]normalizedField, 0, len(table.Columns))
+	for _, column := range table.Columns {
+		fields = append(fields, normalizedField{
+			GoName:       column.GoName,
+			GoType:       column.GoType,
+			IsPK:         column.IsPK,
+			IsRelationFK: column.IsFK,
+			IsOptional:   !column.NotNull,
+		})
+	}
+	return fields
+}
+
+func normalizeEntFields(fields []EntField) []normalizedField {
+	normalized := make([]normalizedField, 0, len(fields))
+	for _, field := range fields {
+		normalized = append(normalized, normalizedField{
+			GoName:     toGoFieldName(field.Name),
+			GoType:     field.GoType,
+			IsOptional: field.Optional,
+		})
+	}
+	return normalized
+}
+
 func normalizeTableRelations(table Table) []normalizedRelation {
 	relations := make([]normalizedRelation, 0, len(table.ForeignKeys))
 	for _, foreignKey := range table.ForeignKeys {
@@ -398,6 +449,61 @@ func normalizeTableRelations(table Table) []normalizedRelation {
 		relations = append(relations, relation)
 	}
 	return relations
+}
+
+func buildDefaultLiteral(model normalizedModel) string {
+	assignments := make([]string, 0, len(model.Fields))
+	for _, field := range model.Fields {
+		expr := defaultFieldExpr(model.BlueprintID, field)
+		if expr == "" {
+			continue
+		}
+		assignments = append(assignments, field.GoName+": "+expr)
+	}
+	if len(assignments) == 0 {
+		return model.ZeroValueExpr
+	}
+	prefix, ok := strings.CutSuffix(model.ZeroValueExpr, "{}")
+	if !ok {
+		return model.ZeroValueExpr
+	}
+	return prefix + "{" + strings.Join(assignments, ", ") + "}"
+}
+
+func defaultFieldExpr(blueprintID string, field normalizedField) string {
+	if field.IsPK || field.IsRelationFK {
+		return ""
+	}
+
+	label := blueprintID + "-" + toSnakeCase(field.GoName)
+
+	switch field.GoType {
+	case "string":
+		return strconv.Quote(label)
+	case "bool":
+		return "true"
+	case "int", "int8", "int16", "int32", "int64",
+		"uint", "uint8", "uint16", "uint32", "uint64",
+		"float32", "float64":
+		return "1"
+	case "[]byte":
+		return "[]byte(" + strconv.Quote(label) + ")"
+	case "time.Time":
+		return "time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)"
+	default:
+		return ""
+	}
+}
+
+func normalizedModelsNeedTimeImport(models []normalizedModel) bool {
+	for _, model := range models {
+		for _, field := range model.Fields {
+			if field.GoType == "time.Time" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func buildSqlcInsertHook(alias string, query SqlcQuery) string {

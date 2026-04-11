@@ -110,13 +110,15 @@ go install github.com/mhiro2/seedling/cmd/seedling-gen@latest
    seedling-gen sql --explain schema.sql
    ```
 
-   This generates struct types, `RegisterBlueprints()`, relations, and Insert stubs. Fill in the `// TODO` callbacks with your DB logic:
+   This generates struct types, `RegisterBlueprints()`, deterministic `Defaults` for common scalar fields, relations, and Insert stubs. Fill in the `// TODO` callbacks with your DB logic:
 
    ```go
    Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
        return insertCompany(ctx, db, v) // your DB call
    },
    ```
+
+   Generated `Defaults` intentionally skip primary keys, relation FK fields, and unsupported custom types. They are meant to make the first insert usable with zero setup, not to satisfy every unique or business constraint automatically.
 
    The snippets below assume the generated package is named `testutil`.
    For a runnable minimal version of this flow, see [examples/quickstart](./examples/quickstart).

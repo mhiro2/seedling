@@ -10,6 +10,7 @@ Use this skill when a Go project wants seedling blueprint scaffolding.
 `seedling-gen` generates:
 
 - Go model structs for tables or entities
+- deterministic `Defaults` for common scalar fields
 - `RegisterBlueprints()` scaffolding
 - relation definitions such as `seedling.BelongsTo`
 - project-specific `Insert` stubs with `// TODO: implement` markers
@@ -43,8 +44,9 @@ Choose exactly one input source. Prefer the strongest source of truth already us
 3. Run `seedling-gen` with one subcommand.
 4. If the schema mapping is uncertain, run the same command with `--explain` first to inspect parsed tables, keys, and inferred relations. Use `--json` when the output needs to be consumed by tooling.
 5. Review generated relation names, optional relations, and composite key handling.
-6. If requested, replace TODO callbacks with the project's real database code.
-7. Run formatting and tests in the target repository.
+6. Review generated `Defaults` values and confirm they do not conflict with unique or business constraints.
+7. If requested, replace TODO callbacks with the project's real database code.
+8. Run formatting and tests in the target repository.
 
 Use `--out` when writing a file. The CLI writes atomically, so failures do not leave partial output behind.
 
@@ -100,13 +102,15 @@ seedling-gen atlas \
 - `--json` prints the same diagnostic report as JSON.
 - `--dialect` is available on `sql` and `sqlc`. It is a validation hint and defaults to `auto` when omitted. Supported values are `auto`, `postgres`, `mysql`, and `sqlite`.
 - `--import-path` must be a full Go import path.
-- The generated file is a starting point. Agents should expect follow-up edits for callback wiring and naming cleanup.
+- Generated `Defaults` fill common scalar fields deterministically, but skip primary keys, relation foreign keys, and unsupported custom types.
+- The generated file is a starting point. Agents should expect follow-up edits for callback wiring, naming cleanup, and any domain-specific default overrides.
 
 ## Troubleshooting
 
 - **GORM model parse failure** — Ensure `--import-path` points to the full Go import path of the models package. If unexported fields or custom types cause issues, check that the package compiles independently with `go build`.
 - **FK or relation not detected** — `seedling-gen` infers relations from foreign key constraints. If the schema lacks explicit FK definitions (common in MySQL or older DDL), add the missing `Relation` entries manually in the generated file.
 - **Composite key mismatch** — Verify that `LocalFields` and `RemoteFields` in the generated `Relation` list the columns in the same order as the schema's composite key.
+- **Generated defaults violate constraints** — Override generated `Defaults` when the schema expects unique values, enumerated business values, or non-scalar custom types that the generator intentionally leaves untouched.
 - **ent edge not mapped** — Only edges backed by a foreign key column are mapped. M2M edges via join tables require manual `ManyToManyRelation` definitions.
 
 ## Verification checklist
@@ -115,4 +119,5 @@ seedling-gen atlas \
 - The generated package path and import path are correct.
 - Required relations are present and optional relations were not forced accidentally.
 - Composite keys and foreign keys map to the expected local and remote fields.
+- Generated `Defaults` are acceptable for the target schema, or have been replaced where uniqueness and domain rules require it.
 - Remaining TODO callbacks are either intentionally left for the user or fully implemented.

@@ -1,6 +1,9 @@
 package testent
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type Client struct {
 	Company *CompanyClient
@@ -18,12 +21,22 @@ func (CompanyClient) DeleteOneID(int64) *CompanyDelete {
 
 type CompanyCreate struct{}
 
+func (c *CompanyCreate) SetName(string) *CompanyCreate {
+	return c
+}
+
+func (c *CompanyCreate) SetCreatedAt(time.Time) *CompanyCreate {
+	return c
+}
+
 func (CompanyCreate) Save(context.Context) (*Company, error) {
 	return &Company{}, nil
 }
 
 type Company struct {
-	ID int64
+	ID        int64
+	Name      string
+	CreatedAt time.Time
 }
 
 type CompanyDelete struct{}

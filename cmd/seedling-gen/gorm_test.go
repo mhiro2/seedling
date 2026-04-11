@@ -262,6 +262,64 @@ func TestGenerateGorm_CompositePK(t *testing.T) {
 	}
 }
 
+func TestGenerateGorm_DefaultsAutofillSupportedFields(t *testing.T) {
+	// Arrange
+	models := []GormModel{
+		{
+			Name:  "Company",
+			Table: "companies",
+			Fields: []GormField{
+				{Name: "ID", Type: "uint", IsPK: true},
+				{Name: "Name", Type: "string"},
+			},
+		},
+		{
+			Name:  "User",
+			Table: "users",
+			Fields: []GormField{
+				{Name: "ID", Type: "uint", IsPK: true},
+				{Name: "Name", Type: "string"},
+				{Name: "CreatedAt", Type: "time.Time"},
+				{Name: "CompanyID", Type: "uint"},
+				{Name: "Company", Type: "Company", Relation: &GormRelation{
+					Kind: "BelongsTo", ForeignKey: "CompanyID", RefModel: "Company",
+				}},
+			},
+		},
+	}
+
+	// Act
+	var buf bytes.Buffer
+	if err := GenerateGorm(&buf, "testutil", "github.com/myapp/models", models); err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	output := buf.String()
+	tests := []struct {
+		name    string
+		substr  string
+		missing bool
+	}{
+		{name: "time import", substr: `"time"`},
+		{name: "string default", substr: `Name: "user-name"`},
+		{name: "time default", substr: `CreatedAt: time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)`},
+		{name: "relation key skipped", substr: `CompanyID: 1`, missing: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			contains := strings.Contains(output, tt.substr)
+			if tt.missing && contains {
+				t.Fatalf("expected output not to contain %q\n\nGot:\n%s", tt.substr, output)
+			}
+			if !tt.missing && !contains {
+				t.Fatalf("expected output to contain %q\n\nGot:\n%s", tt.substr, output)
+			}
+		})
+	}
+}
+
 func TestToSnakeCase(t *testing.T) {
 	tests := []struct {
 		input, want string

@@ -77,6 +77,7 @@ func TestGeneratorOutputsCompile(t *testing.T) {
 				Columns: []Column{
 					{Name: "id", GoName: "ID", GoType: "int64", IsPK: true, NotNull: true},
 					{Name: "name", GoName: "Name", GoType: "string", NotNull: true},
+					{Name: "created_at", GoName: "CreatedAt", GoType: "time.Time", NotNull: true},
 					{Name: "company_id", GoName: "CompanyID", GoType: "int64", NotNull: true, IsFK: true},
 				},
 				ForeignKeys: []ForeignKey{
@@ -91,6 +92,7 @@ func TestGeneratorOutputsCompile(t *testing.T) {
 				{Name: "User", Fields: []SqlcField{
 					{Name: "ID", Type: "int64"},
 					{Name: "Name", Type: "string"},
+					{Name: "CreatedAt", Type: "time.Time"},
 					{Name: "CompanyID", Type: "int64"},
 				}},
 			},
@@ -99,7 +101,7 @@ func TestGeneratorOutputsCompile(t *testing.T) {
 					Name:        "InsertUser",
 					ReturnType:  "User",
 					ParamType:   "InsertUserParams",
-					ParamFields: []SqlcField{{Name: "Name", Type: "string"}, {Name: "CompanyID", Type: "int64"}},
+					ParamFields: []SqlcField{{Name: "Name", Type: "string"}, {Name: "CreatedAt", Type: "time.Time"}, {Name: "CompanyID", Type: "int64"}},
 				},
 			},
 			DeleteQueries: []SqlcDeleteQuery{
@@ -122,6 +124,7 @@ func TestGeneratorOutputsCompile(t *testing.T) {
 				Fields: []GormField{
 					{Name: "ID", Type: "uint", IsPK: true},
 					{Name: "Name", Type: "string"},
+					{Name: "CreatedAt", Type: "time.Time"},
 				},
 			},
 			{
@@ -130,6 +133,7 @@ func TestGeneratorOutputsCompile(t *testing.T) {
 				Fields: []GormField{
 					{Name: "ID", Type: "uint", IsPK: true},
 					{Name: "Name", Type: "string"},
+					{Name: "CreatedAt", Type: "time.Time"},
 					{Name: "CompanyID", Type: "uint", NotNull: true, IsFK: true},
 					{Name: "Company", Type: "Company", Relation: &GormRelation{
 						Kind: "BelongsTo", ForeignKey: "CompanyID", RefModel: "Company",
@@ -170,7 +174,13 @@ func TestGeneratorOutputsCompile(t *testing.T) {
 
 	t.Run("ent", func(t *testing.T) {
 		schemas := []EntSchema{
-			{Name: "Company"},
+			{
+				Name: "Company",
+				Fields: []EntField{
+					{Name: "name", Type: "String", GoType: "string"},
+					{Name: "created_at", Type: "Time", GoType: "time.Time"},
+				},
+			},
 		}
 
 		var buf strings.Builder
