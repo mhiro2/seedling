@@ -239,6 +239,73 @@ func TestExecute_WithLogFn(t *testing.T) {
 	}
 }
 
+func TestExecute_ContextCanceled(t *testing.T) {
+	// Arrange
+	g := graph.New()
+	company := &graph.Node{ID: "company", BlueprintName: "company", Value: Company{Name: "acme"}, PKField: "ID"}
+	user := &graph.Node{ID: "user", BlueprintName: "user", Value: User{Name: "alice"}, PKField: "ID"}
+	g.AddNode(user)
+	g.AddNode(company)
+	g.AddEdge(company, user, "CompanyID")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	// Act
+	_, err := executor.Execute(ctx, nil, g, newTestLookup(), nil)
+
+	// Assert
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v, want context.Canceled", err)
+	}
+}
+
+func TestExecute_ContextCanceledDuringInsert(t *testing.T) {
+	// Arrange
+	g := graph.New()
+	company := &graph.Node{ID: "company", BlueprintName: "company", Value: Company{Name: "acme"}, PKField: "ID"}
+	user := &graph.Node{ID: "user", BlueprintName: "user", Value: User{Name: "alice"}, PKField: "ID"}
+	g.AddNode(user)
+	g.AddNode(company)
+	g.AddEdge(company, user, "CompanyID")
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	lookup := &mockLookup{
+		bps: map[string]*planner.BlueprintDef{
+			"company": {
+				Name:     "company",
+				PKFields: []string{"ID"},
+				Insert: func(ctx context.Context, db, v any) (any, error) {
+					cancel() // cancel after first insert
+					c := v.(Company)
+					c.ID = 1
+					return c, nil
+				},
+				ModelType: reflect.TypeFor[Company](),
+			},
+			"user": {
+				Name:     "user",
+				PKFields: []string{"ID"},
+				Insert: func(ctx context.Context, db, v any) (any, error) {
+					u := v.(User)
+					u.ID = 2
+					return u, nil
+				},
+				ModelType: reflect.TypeFor[User](),
+			},
+		},
+	}
+
+	// Act
+	_, err := executor.Execute(ctx, nil, g, lookup, nil)
+
+	// Assert
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v, want context.Canceled", err)
+	}
+}
+
 func TestExecute_InsertError(t *testing.T) {
 	// Arrange
 	g := graph.New()
