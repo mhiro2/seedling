@@ -1,6 +1,9 @@
 package testsqlc
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type DBTX any
 
@@ -13,11 +16,13 @@ func New(DBTX) *Queries {
 type User struct {
 	ID        int64
 	Name      string
+	CreatedAt time.Time
 	CompanyID int64
 }
 
 type InsertUserParams struct {
 	Name      string
+	CreatedAt time.Time
 	CompanyID int64
 }
 

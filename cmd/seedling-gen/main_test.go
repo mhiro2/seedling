@@ -684,6 +684,60 @@ CREATE TABLE users (
 	}
 }
 
+func TestGenerate_DefaultsAutofillSupportedFields(t *testing.T) {
+	// Arrange
+	schema := `
+CREATE TABLE companies (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    active BOOLEAN NOT NULL,
+    score DOUBLE NOT NULL,
+    avatar BYTEA NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    company_id INTEGER NOT NULL REFERENCES companies(id)
+);
+`
+	tables := mustParseSchema(t, schema)
+
+	// Act
+	var buf bytes.Buffer
+	if err := Generate(&buf, "blueprints", tables); err != nil {
+		t.Fatalf("Generate error: %v", err)
+	}
+
+	// Assert
+	output := buf.String()
+	tests := []struct {
+		name    string
+		substr  string
+		missing bool
+	}{
+		{name: "string default", substr: `Name: "user-name"`},
+		{name: "bool default", substr: `Active: true`},
+		{name: "numeric default", substr: `Score: 1`},
+		{name: "bytes default", substr: `Avatar: []byte("user-avatar")`},
+		{name: "time default", substr: `CreatedAt: time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)`},
+		{name: "relation key skipped", substr: `CompanyID: 1`, missing: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			contains := strings.Contains(output, tt.substr)
+			if tt.missing && contains {
+				t.Fatalf("expected output not to contain %q\n\nGot:\n%s", tt.substr, output)
+			}
+			if !tt.missing && !contains {
+				t.Fatalf("expected output to contain %q\n\nGot:\n%s", tt.substr, output)
+			}
+		})
+	}
+}
+
 func TestGenerateSqlc_DeleteWithCompositePK(t *testing.T) {
 	// Arrange
 	schema := `
