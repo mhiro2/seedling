@@ -55,3 +55,8 @@ release:
   github:
     owner: mhiro2
     name: seedling
+  draft: true
+  use_existing_draft: true
+  replace_existing_artifacts: true
+  replace_existing_draft: false
+  prerelease: auto
