@@ -186,6 +186,8 @@ When you use `database/sql`, [`WithTx`](https://pkg.go.dev/github.com/mhiro2/see
 
 [`seedling-gen`](../cmd/seedling-gen) generates model and blueprint skeletons from multiple input sources.
 
+Generated blueprints now include deterministic `Defaults` for common scalar fields such as strings, numbers, booleans, byte slices, and `time.Time`. Primary keys, relation FK fields, and unsupported custom types stay untouched so relation resolution and application-specific constraints remain explicit.
+
 Install the CLI:
 
 ```bash
@@ -233,6 +235,8 @@ The `sqlc` subcommand has two input modes:
 - `--dir` + `--import-path` + `<schema.sql>`: manually point at generated sqlc Go files and the schema DDL
 
 When `--out` is specified, the output is written atomically via a temporary file so that a generation failure never leaves a partial file on disk.
+
+Treat generated `Defaults` as ergonomic starters, not full fake-data generation. If a test needs unique values or domain-specific shapes, override them with `Set`, `With`, or `Generate`.
 
 ## Faker Locales
 
