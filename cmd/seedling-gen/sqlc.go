@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -101,12 +102,19 @@ func ParseSqlcDir(dir string) (*SqlcInfo, error) {
 	}
 
 	// Extract models: structs that are not Params, Queries, or DBTX.
-	for name, st := range structTypes {
+	// Iterate struct names in sorted order to keep generator output byte-stable.
+	names := make([]string, 0, len(structTypes))
+	for name := range structTypes {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+
+	for _, name := range names {
 		if strings.HasSuffix(name, "Params") || name == "Queries" {
 			continue
 		}
 		model := SqlcModel{Name: name}
-		for _, field := range st.Fields.List {
+		for _, field := range structTypes[name].Fields.List {
 			if len(field.Names) == 0 {
 				continue
 			}

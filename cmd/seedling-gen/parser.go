@@ -134,14 +134,29 @@ func findMatchingParen(s string, openIdx int) int {
 		switch s[i] {
 		case '\'':
 			if !inDouble && !inBack {
+				// Doubled '' inside a single-quoted string is an escape, not a terminator.
+				if inSingle && i+1 < len(s) && s[i+1] == '\'' {
+					i++
+					continue
+				}
 				inSingle = !inSingle
 			}
 		case '"':
 			if !inSingle && !inBack {
+				// Doubled "" inside a double-quoted identifier is an escape (ANSI SQL).
+				if inDouble && i+1 < len(s) && s[i+1] == '"' {
+					i++
+					continue
+				}
 				inDouble = !inDouble
 			}
 		case '`':
 			if !inSingle && !inDouble {
+				// Doubled `` inside a backtick-quoted identifier is an escape (MySQL).
+				if inBack && i+1 < len(s) && s[i+1] == '`' {
+					i++
+					continue
+				}
 				inBack = !inBack
 			}
 		case '(':
@@ -300,18 +315,41 @@ func splitSQLItems(body string) []string {
 		inBack   bool
 	)
 
-	for _, r := range body {
+	runes := []rune(body)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
 		switch r {
 		case '\'':
 			if !inDouble && !inBack {
+				// Doubled '' inside a single-quoted string is an escape.
+				if inSingle && i+1 < len(runes) && runes[i+1] == '\'' {
+					current.WriteRune(r)
+					current.WriteRune(runes[i+1])
+					i++
+					continue
+				}
 				inSingle = !inSingle
 			}
 		case '"':
 			if !inSingle && !inBack {
+				// Doubled "" inside a double-quoted identifier is an escape.
+				if inDouble && i+1 < len(runes) && runes[i+1] == '"' {
+					current.WriteRune(r)
+					current.WriteRune(runes[i+1])
+					i++
+					continue
+				}
 				inDouble = !inDouble
 			}
 		case '`':
 			if !inSingle && !inDouble {
+				// Doubled `` inside a backtick-quoted identifier is an escape.
+				if inBack && i+1 < len(runes) && runes[i+1] == '`' {
+					current.WriteRune(r)
+					current.WriteRune(runes[i+1])
+					i++
+					continue
+				}
 				inBack = !inBack
 			}
 		case '(':
@@ -347,19 +385,27 @@ func splitLeadingIdent(s string) (ident, rest string, ok bool) {
 	}
 
 	if s[0] == '"' || s[0] == '`' || s[0] == '[' {
+		open := s[0]
 		closing := byte('"')
-		switch s[0] {
+		switch open {
 		case '`':
 			closing = '`'
 		case '[':
 			closing = ']'
 		}
-		end := strings.IndexByte(s[1:], closing)
-		if end == -1 {
-			return "", "", false
+		// Walk past doubled "" / `` escapes inside ANSI / MySQL quoted identifiers.
+		// Brackets ([ ]) don't have a documented escape form so we don't try to.
+		for i := 1; i < len(s); i++ {
+			if s[i] != closing {
+				continue
+			}
+			if open != '[' && i+1 < len(s) && s[i+1] == closing {
+				i++
+				continue
+			}
+			return s[:i+1], strings.TrimSpace(s[i+1:]), true
 		}
-		end++
-		return s[:end+1], strings.TrimSpace(s[end+1:]), true
+		return "", "", false
 	}
 
 	parts := strings.Fields(s)
@@ -477,27 +523,75 @@ func singularize(s string) string {
 }
 
 // stripSQLComments removes SQL line comments (--) and block comments (/* ... */)
-// while preserving comment-like sequences inside single-quoted string literals.
+// while preserving comment-like sequences inside string literals and quoted
+// identifiers (single quotes, ANSI double quotes, MySQL backticks). Doubled
+// quote characters are treated as in-string escapes per SQL conventions.
 func stripSQLComments(sql string) string {
 	var b strings.Builder
 	b.Grow(len(sql))
 
 	i := 0
 	inSingle := false
+	inDouble := false
+	inBack := false
 	for i < len(sql) {
 		ch := sql[i]
 
 		if inSingle {
 			b.WriteByte(ch)
 			if ch == '\'' {
+				if i+1 < len(sql) && sql[i+1] == '\'' {
+					b.WriteByte(sql[i+1])
+					i += 2
+					continue
+				}
 				inSingle = false
 			}
 			i++
 			continue
 		}
 
-		if ch == '\'' {
+		if inDouble {
+			b.WriteByte(ch)
+			if ch == '"' {
+				if i+1 < len(sql) && sql[i+1] == '"' {
+					b.WriteByte(sql[i+1])
+					i += 2
+					continue
+				}
+				inDouble = false
+			}
+			i++
+			continue
+		}
+
+		if inBack {
+			b.WriteByte(ch)
+			if ch == '`' {
+				if i+1 < len(sql) && sql[i+1] == '`' {
+					b.WriteByte(sql[i+1])
+					i += 2
+					continue
+				}
+				inBack = false
+			}
+			i++
+			continue
+		}
+
+		switch ch {
+		case '\'':
 			inSingle = true
+			b.WriteByte(ch)
+			i++
+			continue
+		case '"':
+			inDouble = true
+			b.WriteByte(ch)
+			i++
+			continue
+		case '`':
+			inBack = true
 			b.WriteByte(ch)
 			i++
 			continue
@@ -539,17 +633,16 @@ func stripSQLComments(sql string) string {
 }
 
 func trimIdentifierQuotes(s string) string {
-	for len(s) >= 2 {
-		switch {
-		case s[0] == '"' && s[len(s)-1] == '"':
-			s = s[1 : len(s)-1]
-		case s[0] == '`' && s[len(s)-1] == '`':
-			s = s[1 : len(s)-1]
-		case s[0] == '[' && s[len(s)-1] == ']':
-			s = s[1 : len(s)-1]
-		default:
-			return s
-		}
+	if len(s) < 2 {
+		return s
+	}
+	switch {
+	case s[0] == '"' && s[len(s)-1] == '"':
+		return strings.ReplaceAll(s[1:len(s)-1], `""`, `"`)
+	case s[0] == '`' && s[len(s)-1] == '`':
+		return strings.ReplaceAll(s[1:len(s)-1], "``", "`")
+	case s[0] == '[' && s[len(s)-1] == ']':
+		return s[1 : len(s)-1]
 	}
 	return s
 }

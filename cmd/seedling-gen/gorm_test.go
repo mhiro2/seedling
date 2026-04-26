@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -385,6 +386,99 @@ func TestParseGormTag(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestParseGormDir_DeterministicOrdering(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "models.go", `package models
+
+type Apple struct {
+	ID uint `+"`"+`gorm:"primaryKey"`+"`"+`
+}
+
+type Zebra struct {
+	ID uint `+"`"+`gorm:"primaryKey"`+"`"+`
+}
+
+type Mango struct {
+	ID uint `+"`"+`gorm:"primaryKey"`+"`"+`
+}
+
+type Banana struct {
+	ID uint `+"`"+`gorm:"primaryKey"`+"`"+`
+}
+`)
+
+	// Act
+	var first []string
+	for i := range 8 {
+		models, err := ParseGormDir(dir)
+		if err != nil {
+			t.Fatalf("iteration %d: %v", i, err)
+		}
+		names := make([]string, len(models))
+		for j, m := range models {
+			names[j] = m.Name
+		}
+		if i == 0 {
+			first = names
+			continue
+		}
+		// Assert
+		if !slices.Equal(first, names) {
+			t.Fatalf("iteration %d: model order is not deterministic\nfirst: %v\ngot:   %v", i, first, names)
+		}
+	}
+
+	// Assert: explicit alphabetical order.
+	want := []string{"Apple", "Banana", "Mango", "Zebra"}
+	if !slices.Equal(first, want) {
+		t.Fatalf("expected sorted model order %v, got %v", want, first)
+	}
+}
+
+func TestGenerateGorm_DeterministicOutput(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "models.go", `package models
+
+type Apple struct {
+	ID   uint `+"`"+`gorm:"primaryKey"`+"`"+`
+	Name string
+}
+
+type Zebra struct {
+	ID   uint `+"`"+`gorm:"primaryKey"`+"`"+`
+	Name string
+}
+
+type Mango struct {
+	ID   uint `+"`"+`gorm:"primaryKey"`+"`"+`
+	Name string
+}
+`)
+
+	// Act
+	var first string
+	for i := range 8 {
+		models, err := ParseGormDir(dir)
+		if err != nil {
+			t.Fatalf("iteration %d: %v", i, err)
+		}
+		var buf bytes.Buffer
+		if err := GenerateGorm(&buf, "testutil", "example.com/models", models); err != nil {
+			t.Fatalf("iteration %d: %v", i, err)
+		}
+		if i == 0 {
+			first = buf.String()
+			continue
+		}
+		// Assert
+		if buf.String() != first {
+			t.Fatalf("iteration %d: generated output is not byte-identical", i)
+		}
 	}
 }
 

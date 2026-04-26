@@ -222,6 +222,65 @@ func TestParseSqlcDir_EmptyDir(t *testing.T) {
 	}
 }
 
+func TestParseSqlcDir_DeterministicModelOrdering(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeSqlcFiles(t, dir, map[string]string{
+		"models.go": `package db
+
+type Zebra struct {
+	ID int64
+}
+
+type Apple struct {
+	ID int64
+}
+
+type Mango struct {
+	ID int64
+}
+
+type Banana struct {
+	ID int64
+}
+`,
+	})
+
+	// Act
+	var first []string
+	for i := range 8 {
+		info, err := ParseSqlcDir(dir)
+		if err != nil {
+			t.Fatalf("iteration %d: %v", i, err)
+		}
+		names := make([]string, len(info.Models))
+		for j, m := range info.Models {
+			names[j] = m.Name
+		}
+		if i == 0 {
+			first = names
+			continue
+		}
+		// Assert
+		for j, name := range names {
+			if first[j] != name {
+				t.Fatalf("iteration %d: model order is not deterministic\nfirst: %v\ngot:   %v", i, first, names)
+			}
+		}
+	}
+
+	// Assert: explicit alphabetical order.
+	want := []string{"Apple", "Banana", "Mango", "Zebra"}
+	if len(first) != len(want) {
+		t.Fatalf("expected %d models, got %d", len(want), len(first))
+	}
+	for i, name := range want {
+		if first[i] != name {
+			t.Fatalf("expected sorted model order %v, got %v", want, first)
+		}
+	}
+}
+
 func TestFindQueryForTable(t *testing.T) {
 	info := &SqlcInfo{
 		Queries: []SqlcQuery{

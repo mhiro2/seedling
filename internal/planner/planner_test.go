@@ -2,6 +2,7 @@ package planner_test
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -743,6 +744,62 @@ func TestPlanMany_ShareableWithSets(t *testing.T) {
 	}
 	if companyCount != 1 {
 		t.Fatalf("expected 1 shared company node, got %d", companyCount)
+	}
+}
+
+func TestPlanMany_NonShareableSeqs(t *testing.T) {
+	// Arrange: company refs carry Seqs (per-index func generators); these are
+	// non-comparable function values, so options carrying Seqs must not participate
+	// in batch sharing.
+	reg := newMockRegistry()
+	companySeqs := map[string]any{
+		"Name": func(i int) any { return fmt.Sprintf("company-%d", i) },
+	}
+	opts := []*planner.OptionSet{
+		{
+			Sets: map[string]any{"Name": "user-1"},
+			Uses: make(map[string]any),
+			Refs: map[string]*planner.OptionSet{
+				"company": {
+					Sets:  make(map[string]any),
+					Uses:  make(map[string]any),
+					Refs:  make(map[string]*planner.OptionSet),
+					Omits: make(map[string]bool),
+					Seqs:  companySeqs,
+				},
+			},
+			Omits: make(map[string]bool),
+		},
+		{
+			Sets: map[string]any{"Name": "user-2"},
+			Uses: make(map[string]any),
+			Refs: map[string]*planner.OptionSet{
+				"company": {
+					Sets:  make(map[string]any),
+					Uses:  make(map[string]any),
+					Refs:  make(map[string]*planner.OptionSet),
+					Omits: make(map[string]bool),
+					Seqs:  companySeqs,
+				},
+			},
+			Omits: make(map[string]bool),
+		},
+	}
+
+	// Act
+	result, err := planner.PlanMany(reg, reflect.TypeFor[User](), opts)
+	// Assert
+	if err != nil {
+		t.Fatalf("PlanMany returned unexpected error: %v", err)
+	}
+	companyCount := 0
+	for _, n := range result.Graph.Nodes() {
+		if n.BlueprintName == "company" {
+			companyCount++
+		}
+	}
+	if companyCount < 2 {
+		t.Fatalf("expected each root to keep its own company node when Seqs are present, got %d", companyCount)
 	}
 }
 
