@@ -24,6 +24,11 @@ type Blueprint[T any] struct {
 	// This function is called once per record creation to avoid shared mutable state.
 	// Always return a fresh value — do not return a package-level variable.
 	//
+	// The returned value's dynamic type must equal T. Pointer-typed Defaults
+	// (e.g. returning *T from Blueprint[T]) are rejected at registration time
+	// because [When] / [Validate] type-assertions assume the value type matches
+	// the type parameter T exactly.
+	//
 	//	Defaults: func() User {
 	//	    return User{Name: "test-user", Role: "member"}
 	//	}

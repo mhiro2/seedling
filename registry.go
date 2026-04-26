@@ -84,12 +84,24 @@ func MustRegisterTo[T any](dst *Registry, bp Blueprint[T]) {
 	}
 }
 
-// ResetRegistry clears all blueprints from the package default registry. Intended for testing.
+// ResetRegistry clears all blueprints from the package default registry.
+//
+// Intended exclusively for test teardown. Reset must not be invoked while any
+// other goroutine is calling Insert, InsertMany, Plan, BuildE, Cleanup, or any
+// other registry-backed operation: replacing the underlying map mid-flight
+// produces stale blueprintDef references inside in-flight Plan / Result objects
+// and the contract of [Result.Cleanup] then becomes undefined.
 func ResetRegistry() {
 	defaultRegistry.Reset()
 }
 
 // Reset clears all blueprints from the registry.
+//
+// Intended exclusively for test teardown. Reset must not be invoked while any
+// other goroutine is calling Insert, InsertMany, Plan, BuildE, Cleanup, or any
+// other registry-backed operation: replacing the underlying map mid-flight
+// produces stale blueprintDef references inside in-flight Plan / Result objects
+// and the contract of [Result.Cleanup] then becomes undefined.
 func (r *Registry) Reset() {
 	reg := resolveRegistry(r).reg
 	reg.mu.Lock()
@@ -112,6 +124,18 @@ func registerTyped[T any](r *registry, bp Blueprint[T]) error {
 	}
 	if modelType.Kind() == reflect.Pointer {
 		return fmt.Errorf("%w: blueprint %q uses pointer type %s; use the struct type directly (e.g. Blueprint[User] instead of Blueprint[*User])", errx.ErrInvalidOption, bp.Name, modelType)
+	}
+
+	// Defaults must produce a value whose dynamic type equals T. When/Validate
+	// rely on direct type assertions to T (not *T), so a Defaults that returns
+	// a pointer or any other shape would silently turn typed predicates into
+	// (false, nil). Validate at registration time so the failure surfaces at
+	// the source instead of much later in expand_relations.
+	if bp.Defaults != nil {
+		got := reflect.TypeOf(bp.Defaults())
+		if got != modelType {
+			return fmt.Errorf("%w: blueprint %q Defaults returned %s but expected value type %s", errx.ErrInvalidOption, bp.Name, got, modelType)
+		}
 	}
 
 	r.mu.Lock()
