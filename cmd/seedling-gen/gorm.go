@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 )
 
@@ -99,9 +100,16 @@ func ParseGormDir(dir string) ([]GormModel, error) {
 		}
 	}
 
-	var models []GormModel
-	for name, st := range structTypes {
-		model := parseGormStruct(name, st, structTypes)
+	// Iterate struct names in sorted order to keep generator output byte-stable.
+	names := make([]string, 0, len(structTypes))
+	for name := range structTypes {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+
+	models := make([]GormModel, 0, len(names))
+	for _, name := range names {
+		model := parseGormStruct(name, structTypes[name], structTypes)
 		if table, ok := tableNames[name]; ok {
 			model.Table = table
 		}
