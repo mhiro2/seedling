@@ -7,19 +7,18 @@ import (
 	"github.com/mhiro2/seedling/examples/quickstart"
 )
 
-func setup(t *testing.T) {
+func setup(t *testing.T) *seedling.Registry {
 	t.Helper()
-	seedling.ResetRegistry()
 	quickstart.ResetIDs()
-	quickstart.RegisterBlueprints()
+	return quickstart.NewRegistry()
 }
 
 func TestQuickStart_InsertOneUser(t *testing.T) {
 	// Arrange
-	setup(t)
+	reg := setup(t)
 
 	// Act
-	user := seedling.InsertOne[quickstart.User](t, nil).Root()
+	user := seedling.NewSession[quickstart.User](reg).InsertOne(t, nil).Root()
 
 	// Assert
 	if user.ID == 0 {
@@ -35,13 +34,13 @@ func TestQuickStart_InsertOneUser(t *testing.T) {
 
 func TestQuickStart_ReuseCompanyWithUse(t *testing.T) {
 	// Arrange
-	setup(t)
-	company := seedling.InsertOne[quickstart.Company](t, nil,
+	reg := setup(t)
+	company := seedling.NewSession[quickstart.Company](reg).InsertOne(t, nil,
 		seedling.Set("Name", "shared-company"),
 	).Root()
 
 	// Act
-	user := seedling.InsertOne[quickstart.User](t, nil,
+	user := seedling.NewSession[quickstart.User](reg).InsertOne(t, nil,
 		seedling.Set("Name", "alice"),
 		seedling.Use("company", company),
 	).Root()

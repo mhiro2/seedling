@@ -52,32 +52,34 @@
 //
 // Register a [Blueprint] for each model that seedling should create:
 //
-//	seedling.MustRegister(seedling.Blueprint[Company]{
-//	    Name:    "company",
-//	    Table:   "companies",
-//	    PKField: "ID",
-//	    Defaults: func() Company {
-//	        return Company{Name: "test-company"}
-//	    },
-//	    Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
-//	        return insertCompany(ctx, db, v)
-//	    },
-//	})
+//	func registerBlueprints(reg *seedling.Registry) {
+//	    seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
+//	        Name:    "company",
+//	        Table:   "companies",
+//	        PKField: "ID",
+//	        Defaults: func() Company {
+//	            return Company{Name: "test-company"}
+//	        },
+//	        Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
+//	            return insertCompany(ctx, db, v)
+//	        },
+//	    })
 //
-//	seedling.MustRegister(seedling.Blueprint[User]{
-//	    Name:    "user",
-//	    Table:   "users",
-//	    PKField: "ID",
-//	    Defaults: func() User {
-//	        return User{Name: "test-user"}
-//	    },
-//	    Relations: []seedling.Relation{
-//	        {Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
-//	    },
-//	    Insert: func(ctx context.Context, db seedling.DBTX, v User) (User, error) {
-//	        return insertUser(ctx, db, v)
-//	    },
-//	})
+//	    seedling.MustRegisterTo(reg, seedling.Blueprint[User]{
+//	        Name:    "user",
+//	        Table:   "users",
+//	        PKField: "ID",
+//	        Defaults: func() User {
+//	            return User{Name: "test-user"}
+//	        },
+//	        Relations: []seedling.Relation{
+//	            {Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
+//	        },
+//	        Insert: func(ctx context.Context, db seedling.DBTX, v User) (User, error) {
+//	            return insertUser(ctx, db, v)
+//	        },
+//	    })
+//	}
 //
 // DBTX is intentionally opaque. Your insert callback and your call sites must
 // agree on the concrete handle type passed as db.
@@ -85,7 +87,10 @@
 // Then create rows directly in your tests:
 //
 //	func TestUser(t *testing.T) {
-//	    result := seedling.InsertOne[User](t, db)
+//	    reg := seedling.NewRegistry()
+//	    registerBlueprints(reg)
+//
+//	    result := seedling.NewSession[User](reg).InsertOne(t, db)
 //	    user := result.Root()
 //	    // user.ID and user.CompanyID are populated.
 //	}

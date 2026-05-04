@@ -7,26 +7,27 @@ import (
 	reuseparent "github.com/mhiro2/seedling/examples/reuse-parent"
 )
 
-func setup(t *testing.T) {
+func setup(t *testing.T) *seedling.Registry {
 	t.Helper()
-	seedling.ResetRegistry()
-	reuseparent.RegisterBlueprints()
+	reg := seedling.NewRegistry()
+	reuseparent.RegisterBlueprints(reg)
+	return reg
 }
 
 func TestUse_ShareParentCompany(t *testing.T) {
-	setup(t)
+	reg := setup(t)
 
 	// First, create a shared Company.
-	company := seedling.InsertOne[reuseparent.Company](t, nil,
+	company := seedling.NewSession[reuseparent.Company](reg).InsertOne(t, nil,
 		seedling.Set("Name", "Shared Corp"),
 	)
 
 	// Create two Projects under the same Company using Use().
-	projectA := seedling.InsertOne[reuseparent.Project](t, nil,
+	projectA := seedling.NewSession[reuseparent.Project](reg).InsertOne(t, nil,
 		seedling.Set("Name", "Project Alpha"),
 		seedling.Use("company", company.Root()),
 	)
-	projectB := seedling.InsertOne[reuseparent.Project](t, nil,
+	projectB := seedling.NewSession[reuseparent.Project](reg).InsertOne(t, nil,
 		seedling.Set("Name", "Project Beta"),
 		seedling.Use("company", company.Root()),
 	)
@@ -47,23 +48,23 @@ func TestUse_ShareParentCompany(t *testing.T) {
 }
 
 func TestUse_ShareParentProject(t *testing.T) {
-	setup(t)
+	reg := setup(t)
 
 	// Create a shared Project (which auto-creates a Company).
-	project := seedling.InsertOne[reuseparent.Project](t, nil,
+	project := seedling.NewSession[reuseparent.Project](reg).InsertOne(t, nil,
 		seedling.Set("Name", "Shared Project"),
 	)
 
 	// Create multiple Tasks under the same Project using Use().
-	task1 := seedling.InsertOne[reuseparent.Task](t, nil,
+	task1 := seedling.NewSession[reuseparent.Task](reg).InsertOne(t, nil,
 		seedling.Set("Title", "Task 1"),
 		seedling.Use("project", project.Root()),
 	)
-	task2 := seedling.InsertOne[reuseparent.Task](t, nil,
+	task2 := seedling.NewSession[reuseparent.Task](reg).InsertOne(t, nil,
 		seedling.Set("Title", "Task 2"),
 		seedling.Use("project", project.Root()),
 	)
-	task3 := seedling.InsertOne[reuseparent.Task](t, nil,
+	task3 := seedling.NewSession[reuseparent.Task](reg).InsertOne(t, nil,
 		seedling.Set("Title", "Task 3"),
 		seedling.Use("project", project.Root()),
 	)

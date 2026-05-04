@@ -198,6 +198,6 @@ result := plan.Insert(t, db) // execute the plan
 
 ## Notes
 
-- Always register blueprints before calling `InsertOne` / `InsertMany`. If using the global registry, call `seedling.ResetRegistry()` in test setup to avoid cross-test leaks.
+- Always register blueprints into a test-local registry before calling `InsertOne` / `InsertMany`; prefer `seedling.NewSession[T](reg)` over the global helpers.
 - `InsertOne` / `InsertMany` accept a `testing.TB` and fail the test on error. Use the `E` variants (`InsertOneE`, `InsertManyE`) in non-test contexts or when you need explicit error handling.
 - Prefer transaction rollback over `Cleanup` for test isolation — it is faster and guarantees no leftover data.

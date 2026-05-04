@@ -7,16 +7,17 @@ import (
 	customdefaults "github.com/mhiro2/seedling/examples/custom-defaults"
 )
 
-func setup(t *testing.T) {
+func setup(t *testing.T) *seedling.Registry {
 	t.Helper()
-	seedling.ResetRegistry()
-	customdefaults.RegisterBlueprints()
+	reg := seedling.NewRegistry()
+	customdefaults.RegisterBlueprints(reg)
+	return reg
 }
 
 func TestDefaultUser(t *testing.T) {
-	setup(t)
+	reg := setup(t)
 
-	user := seedling.InsertOne[customdefaults.User](t, nil)
+	user := seedling.NewSession[customdefaults.User](reg).InsertOne(t, nil)
 
 	if user.Root().Role != "member" {
 		t.Fatalf("expected Role = %q, got %q", "member", user.Root().Role)
@@ -27,10 +28,10 @@ func TestDefaultUser(t *testing.T) {
 }
 
 func TestAdminUser(t *testing.T) {
-	setup(t)
+	reg := setup(t)
 
 	// Use the AdminUser() helper for type-safe default customization.
-	admin := seedling.InsertOne[customdefaults.User](t, nil,
+	admin := seedling.NewSession[customdefaults.User](reg).InsertOne(t, nil,
 		customdefaults.AdminUser(),
 	)
 
@@ -47,9 +48,9 @@ func TestAdminUser(t *testing.T) {
 }
 
 func TestInactiveUser(t *testing.T) {
-	setup(t)
+	reg := setup(t)
 
-	user := seedling.InsertOne[customdefaults.User](t, nil,
+	user := seedling.NewSession[customdefaults.User](reg).InsertOne(t, nil,
 		customdefaults.InactiveUser(),
 	)
 
@@ -63,10 +64,10 @@ func TestInactiveUser(t *testing.T) {
 }
 
 func TestCombineWithOptions(t *testing.T) {
-	setup(t)
+	reg := setup(t)
 
 	// Multiple With options can be combined.
-	user := seedling.InsertOne[customdefaults.User](t, nil,
+	user := seedling.NewSession[customdefaults.User](reg).InsertOne(t, nil,
 		customdefaults.AdminUser(),
 		customdefaults.InactiveUser(),
 	)
@@ -80,10 +81,10 @@ func TestCombineWithOptions(t *testing.T) {
 }
 
 func TestWithInline(t *testing.T) {
-	setup(t)
+	reg := setup(t)
 
 	// With() can also be used inline for one-off customizations.
-	user := seedling.InsertOne[customdefaults.User](t, nil,
+	user := seedling.NewSession[customdefaults.User](reg).InsertOne(t, nil,
 		seedling.With(func(u *customdefaults.User) {
 			u.Name = "custom-name"
 			u.Role = "viewer"
