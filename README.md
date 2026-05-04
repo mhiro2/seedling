@@ -64,13 +64,14 @@ func TestCreateTask(t *testing.T) {
 seedling handles FK ordering, graph expansion, and cleanup so your tests stay focused on what matters:
 
 - 🪶 Zero runtime dependencies in the core module; optional DB helpers live in companion packages
-- 🔗 Automatic FK resolution with topological insert ordering
-- 🌿 Minimal graph expansion: only required ancestors are inserted
-- 🔧 Type-safe per-test overrides with `Set`, `Use`, `Ref`, `With`, `When`, and `Only`
-- ♻️ `WithTx` and companion helpers for auto-rollback transactions -- no manual cleanup
-- 🔌 Works with sqlc, `database/sql`, pgx, GORM, or any other DB handle you own
-- 📊 Supports `HasMany`, `ManyToMany`, composite keys, cleanup, dry runs, and insert logging
-- 🎲 Includes deterministic fake data via [`seedling/faker`](https://pkg.go.dev/github.com/mhiro2/seedling/faker) with multi-locale support (en, ja, zh, ko, de, fr)
+- 🔗 Automatic FK resolution with topological insert ordering and minimal graph expansion
+- 🌿 First-class relation kinds: `BelongsTo`, `HasMany`, `ManyToMany`, plus composite keys
+- 🔧 Per-test overrides via `Set`, `Use`, and `Ref`
+- ♻️ `WithTx` for auto-rollback transactions -- no manual cleanup
+- 🔌 Works with sqlc, `database/sql`, pgx, GORM, ent, or any other DB handle you own
+- 🎲 Deterministic fake data via [`seedling/faker`](https://pkg.go.dev/github.com/mhiro2/seedling/faker) with multi-locale support (en, ja, zh, ko, de, fr)
+
+For advanced features such as `InsertMany`, batch sharing, `Only`, `When`, and dry runs, see the [Guide](./docs/guide.md).
 
 ## 📦 Installation
 
@@ -96,19 +97,16 @@ go install github.com/mhiro2/seedling/cmd/seedling-gen@latest
 
 ## 🚀 Quick Start
 
+The shortest path is two steps: generate blueprints from your schema, then call `InsertOne` in a test.
+
 1. **Generate blueprints from your schema**
 
    ```bash
    # From SQL DDL
    seedling-gen sql --pkg testutil --out blueprints.go schema.sql
-
-   # Or from other sources:
-   seedling-gen sqlc --config sqlc.yaml --pkg testutil --out blueprints.go
-   seedling-gen gorm --dir ./models --import-path github.com/you/app/models --pkg testutil
-   seedling-gen ent --dir ./ent/schema --import-path github.com/you/app/ent --pkg testutil
-   seedling-gen atlas --pkg testutil schema.hcl
-   seedling-gen sql --explain schema.sql
    ```
+
+   Other input sources are supported (sqlc, GORM, ent, Atlas) -- see the [Guide](./docs/guide.md#cli) for the full list.
 
    This generates struct types, `NewRegistry()`, `RegisterBlueprints(reg)`, deterministic `Defaults` for common scalar fields, relations, and Insert stubs. Fill in the `// TODO` callbacks with your DB logic:
 
@@ -141,39 +139,98 @@ go install github.com/mhiro2/seedling/cmd/seedling-gen@latest
    }
    ```
 
-3. **Override only what the test cares about**
+That is the entire happy path. The next section shows the handful of patterns you reach for once tests grow.
 
-   ```go
-   func TestNamedUser(t *testing.T) {
-       reg := testutil.NewRegistry()
+## 🧩 Typical Use Cases
 
-       company := seedling.NewSession[testutil.Company](reg).InsertOne(t, db).Root()
+These three patterns cover the majority of real test code. Anything beyond them lives in the [Guide](./docs/guide.md).
 
-       result := seedling.NewSession[testutil.User](reg).InsertOne(t, db,
-           seedling.Set("Name", "alice"),
-           seedling.Use("company", company),
-       )
+> [!NOTE]
+> All snippets below assume the generated package (e.g. from `seedling-gen --pkg testutil`) is imported as `testutil`, and `reg := testutil.NewRegistry()` has been called. The package name is set by `--pkg`; rename to whatever fits your project.
 
-       user := result.Root()
-       _ = user
-   }
+### Override a field
 
-   func TestTaskProject(t *testing.T) {
-       reg := testutil.NewRegistry()
+Use `Set` when a test needs a specific column value:
 
-       // Only("project") inserts task + project subtree only,
-       // skipping the assignee relation entirely.
-       result := seedling.NewSession[testutil.Task](reg).InsertOne(t, db,
-           seedling.Only("project"),
-       )
-       _ = result
-   }
-   ```
+```go
+result := seedling.NewSession[testutil.User](reg).InsertOne(t, db,
+    seedling.Set("Name", "alice"),
+)
+user := result.Root()
+_ = user
+```
 
-   When you want automatic rollback with `database/sql`, use `seedling.WithTx(t, db)`.
-   For a runnable transaction-focused example, see [examples/with-tx](./examples/with-tx).
+### Reuse an existing parent row
 
-   For a runnable batch-oriented example, see [examples/batch-insert](./examples/batch-insert).
+Use `Use` to bind a relation to a row you already inserted, instead of letting seedling create another one:
+
+```go
+company := seedling.NewSession[testutil.Company](reg).InsertOne(t, db).Root()
+
+result := seedling.NewSession[testutil.User](reg).InsertOne(t, db,
+    seedling.Use("company", company),
+)
+user := result.Root()
+_ = user
+```
+
+### Auto-rollback per test
+
+Wrap the test in a transaction that rolls back automatically on cleanup. No manual deletion, no leaking state across tests.
+
+```go
+func TestUser(t *testing.T) {
+    tx := seedling.WithTx(t, db) // rollback runs at t.Cleanup
+    user := seedling.NewSession[testutil.User](reg).InsertOne(t, tx).Root()
+    _ = user
+}
+```
+
+For a runnable example, see [examples/with-tx](./examples/with-tx). For pgx-based projects, [`seedlingpgx.WithTx`](https://pkg.go.dev/github.com/mhiro2/seedling/seedlingpgx#WithTx) provides the same workflow.
+
+## 🩺 Diagnostics
+
+When a graph misbehaves, you usually want to answer one of three questions: _what would be inserted_, _what was inserted_, or _how do I clean it up_. seedling exposes one helper for each.
+
+### Inspect the plan before executing
+
+Use `Build` to construct the plan without inserting, then print the dependency tree or the dry-run insert order:
+
+```go
+plan := seedling.NewSession[testutil.Task](reg).Build(t,
+    seedling.Ref("project", seedling.Set("Name", "renewal")),
+)
+
+t.Log(plan.DebugString())   // dependency tree
+t.Log(plan.DryRunString())  // insert order + FK assignments
+
+result := plan.Insert(t, db)
+_ = result
+```
+
+### Trace inserts at runtime
+
+`WithInsertLog` reports each insert step (table, primary key, FK assignments) as it happens:
+
+```go
+result := seedling.NewSession[testutil.Task](reg).InsertOne(t, db,
+    seedling.WithInsertLog(func(log seedling.InsertLog) {
+        t.Logf("step %d: %s (fks: %v)", log.Step, log.Table, log.FKBindings)
+    }),
+)
+_ = result
+```
+
+### Clean up when transactions are not an option
+
+If you cannot use `WithTx`, call `Result.Cleanup` to delete inserted rows in reverse dependency order:
+
+```go
+result := seedling.NewSession[testutil.User](reg).InsertOne(t, db)
+t.Cleanup(func() { result.Cleanup(t, db) })
+```
+
+The [Guide](./docs/guide.md#debugging-and-cleanup) lists the full set of debugging APIs, including `BatchResult.NodeAt` for `InsertMany` graphs.
 
 ## ⚖️ Comparison
 
@@ -199,7 +256,7 @@ go install github.com/mhiro2/seedling/cmd/seedling-gen@latest
 
 ## 📚 Learn More
 
-- [Guide](./docs/guide.md) -- workflows, option reference, and integration patterns
+- [Guide](./docs/guide.md) -- workflows, full option reference (`Only`, `When`, `InsertMany`, batch sharing, ...), and integration patterns
 - [Architecture](./ARCHITECTURE.md) -- internal pipeline design (planner, graph, executor)
 - [Agent Skill: seedling-gen CLI](./skills/seedling-gen-cli/SKILL.md) -- instructions for AI agents that need to choose the right generator mode and scaffold blueprints
 - [Agent Skill: seedling test setup](./skills/seedling-test-setup/SKILL.md) -- instructions for AI agents that write Go tests using seedling blueprints
