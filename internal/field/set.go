@@ -14,10 +14,14 @@ func SetField(ptr any, name string, value any) error {
 		return fmt.Errorf("%w: SetField requires a pointer to struct", errx.ErrInvalidOption)
 	}
 
-	field := rv.Elem().FieldByName(name)
-	if !field.IsValid() {
-		return fmt.Errorf("set field %q: %w", name, errx.FieldNotFoundWithHint(rv.Elem().Type().Name(), name, exportedFields(rv.Elem().Type())))
+	elem := rv.Elem()
+	rt := elem.Type()
+	entry, ok := lookupFieldIndex(rt, name)
+	if !ok {
+		return fmt.Errorf("set field %q: %w", name, errx.FieldNotFoundWithHint(rt.Name(), name, exportedFields(rt)))
 	}
+
+	field := elem.FieldByIndex(entry.Index)
 	if !field.CanSet() {
 		return fmt.Errorf("%w: field %q is unexported", errx.ErrFieldNotFound, name)
 	}

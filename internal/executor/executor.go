@@ -140,23 +140,31 @@ func collectFKBindings(node *graph.Node) []FKBinding {
 }
 
 // assignFKs sets FK fields on the node based on its parent edges.
+//
+// All bindings for the node share a single allocation: we materialize one
+// addressable pointer to the value, copy every parent PK into the matching
+// FK field, then store the resulting struct back on the node. The copy goes
+// through [field.Copy], which uses cached field-index paths and avoids boxing
+// the PK through `any` once per binding.
 func assignFKs(node *graph.Node) error {
-	for _, edge := range node.Dependencies() {
+	deps := node.Dependencies()
+	if len(deps) == 0 {
+		return nil
+	}
+
+	ptr := reflect.New(reflect.TypeOf(node.Value))
+	ptr.Elem().Set(reflect.ValueOf(node.Value))
+	target := ptr.Interface()
+
+	for _, edge := range deps {
 		parent := edge.Parent
-
-		ptr := reflect.New(reflect.TypeOf(node.Value))
-		ptr.Elem().Set(reflect.ValueOf(node.Value))
-
 		for _, binding := range edge.Bindings {
-			pkVal, err := field.GetField(parent.Value, binding.ParentField)
-			if err != nil {
-				return fmt.Errorf("get parent field %q for node %q: %w", binding.ParentField, parent.ID, err)
-			}
-			if err := field.SetField(ptr.Interface(), binding.ChildField, pkVal); err != nil {
-				return fmt.Errorf("set child field %q for node %q: %w", binding.ChildField, node.ID, err)
+			if err := field.Copy(parent.Value, binding.ParentField, target, binding.ChildField); err != nil {
+				return fmt.Errorf("bind parent %q field %q to node %q field %q: %w",
+					parent.ID, binding.ParentField, node.ID, binding.ChildField, err)
 			}
 		}
-		node.Value = ptr.Elem().Interface()
 	}
+	node.Value = ptr.Elem().Interface()
 	return nil
 }
