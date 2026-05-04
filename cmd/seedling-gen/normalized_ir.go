@@ -53,11 +53,17 @@ type {{.StructName}} struct {
 `
 
 const normalizedBlueprintTemplate = `
-func RegisterBlueprints() {
+func NewRegistry() *seedling.Registry {
+	reg := seedling.NewRegistry()
+	RegisterBlueprints(reg)
+	return reg
+}
+
+func RegisterBlueprints(reg *seedling.Registry) {
 {{- range $i, $model := .}}
 {{- if $i}}
 {{ end }}
-	seedling.MustRegister(seedling.Blueprint[{{$model.TypeExpr}}]{
+	seedling.MustRegisterTo(reg, seedling.Blueprint[{{$model.TypeExpr}}]{
 		Name:  "{{$model.BlueprintID}}",
 		Table: "{{$model.TableName}}",
 {{- if isCompositePK $model}}

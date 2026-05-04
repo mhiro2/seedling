@@ -235,6 +235,9 @@ func TestGenerate_OutputIncludesExpectedSections(t *testing.T) {
 		{name: "context import", substr: `"context"`, message: "output should import context"},
 		{name: "time import", substr: `"time"`, message: "output should import time"},
 		{name: "seedling import", substr: `"github.com/mhiro2/seedling"`, message: "output should import seedling"},
+		{name: "new registry helper", substr: "func NewRegistry() *seedling.Registry", message: "output should contain local registry helper"},
+		{name: "registry argument", substr: "func RegisterBlueprints(reg *seedling.Registry)", message: "output should accept a registry argument"},
+		{name: "register to registry", substr: "seedling.MustRegisterTo(reg", message: "output should register into the provided registry"},
 		{name: "company struct", substr: "type Company struct", message: "output should contain Company struct"},
 		{name: "user struct", substr: "type User struct", message: "output should contain User struct"},
 		{name: "company blueprint", substr: `Name:    "company"`, message: "output should register company blueprint"},
@@ -315,7 +318,10 @@ func TestGenerate_EmptyInput(t *testing.T) {
 	if !strings.Contains(output, "package empty") {
 		t.Fatalf("expected package declaration, got:\n%s", output)
 	}
-	if !strings.Contains(output, "func RegisterBlueprints()") {
+	if !strings.Contains(output, "func NewRegistry() *seedling.Registry") {
+		t.Fatalf("expected NewRegistry function, got:\n%s", output)
+	}
+	if !strings.Contains(output, "func RegisterBlueprints(reg *seedling.Registry)") {
 		t.Fatalf("expected RegisterBlueprints function, got:\n%s", output)
 	}
 }
