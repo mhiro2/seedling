@@ -17,10 +17,11 @@ func GetField(v any, name string) (any, error) {
 		return nil, fmt.Errorf("%w: GetField requires a struct or pointer to struct", errx.ErrInvalidOption)
 	}
 
-	field := rv.FieldByName(name)
-	if !field.IsValid() {
-		return nil, fmt.Errorf("get field %q: %w", name, errx.FieldNotFoundWithHint(rv.Type().Name(), name, exportedFields(rv.Type())))
+	rt := rv.Type()
+	entry, ok := lookupFieldIndex(rt, name)
+	if !ok {
+		return nil, fmt.Errorf("get field %q: %w", name, errx.FieldNotFoundWithHint(rt.Name(), name, exportedFields(rt)))
 	}
 
-	return field.Interface(), nil
+	return rv.FieldByIndex(entry.Index).Interface(), nil
 }
