@@ -258,7 +258,7 @@ Supported locales: `en` (default), `ja`, `zh`, `ko`, `de`, `fr`.
 ## Examples
 
 - [basic](../examples/basic) -- register blueprints and insert rows with automatic parent creation
-- [quickstart](../examples/quickstart) -- generated-style `RegisterBlueprints()` flow that matches the README Quick Start
+- [quickstart](../examples/quickstart) -- generated-style `NewRegistry()` / `RegisterBlueprints(reg)` flow that matches the README Quick Start
 - [custom-defaults](../examples/custom-defaults) -- customize values with `Set`, `With`, and `Generate`
 - [reuse-parent](../examples/reuse-parent) -- reuse existing rows with `Use`
 - [batch-insert](../examples/batch-insert) -- batch inserts with shared `Ref` dependencies and per-row `SeqRef` overrides

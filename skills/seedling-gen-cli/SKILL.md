@@ -11,7 +11,7 @@ Use this skill when a Go project wants seedling blueprint scaffolding.
 
 - Go model structs for tables or entities
 - deterministic `Defaults` for common scalar fields
-- `RegisterBlueprints()` scaffolding
+- `NewRegistry()` / `RegisterBlueprints(reg)` scaffolding
 - relation definitions such as `seedling.BelongsTo`
 - project-specific `Insert` stubs with `// TODO: implement` markers
 

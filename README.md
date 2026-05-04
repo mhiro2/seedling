@@ -110,7 +110,7 @@ go install github.com/mhiro2/seedling/cmd/seedling-gen@latest
    seedling-gen sql --explain schema.sql
    ```
 
-   This generates struct types, `RegisterBlueprints()`, deterministic `Defaults` for common scalar fields, relations, and Insert stubs. Fill in the `// TODO` callbacks with your DB logic:
+   This generates struct types, `NewRegistry()`, `RegisterBlueprints(reg)`, deterministic `Defaults` for common scalar fields, relations, and Insert stubs. Fill in the `// TODO` callbacks with your DB logic:
 
    ```go
    Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
@@ -127,10 +127,9 @@ go install github.com/mhiro2/seedling/cmd/seedling-gen@latest
 
    ```go
    func TestUser(t *testing.T) {
-       seedling.ResetRegistry()
-       testutil.RegisterBlueprints()
+       reg := testutil.NewRegistry()
 
-       result := seedling.InsertOne[testutil.User](t, db)
+       result := seedling.NewSession[testutil.User](reg).InsertOne(t, db)
        user := result.Root()
 
        if user.ID == 0 {
@@ -146,12 +145,11 @@ go install github.com/mhiro2/seedling/cmd/seedling-gen@latest
 
    ```go
    func TestNamedUser(t *testing.T) {
-       seedling.ResetRegistry()
-       testutil.RegisterBlueprints()
+       reg := testutil.NewRegistry()
 
-       company := seedling.InsertOne[testutil.Company](t, db).Root()
+       company := seedling.NewSession[testutil.Company](reg).InsertOne(t, db).Root()
 
-       result := seedling.InsertOne[testutil.User](t, db,
+       result := seedling.NewSession[testutil.User](reg).InsertOne(t, db,
            seedling.Set("Name", "alice"),
            seedling.Use("company", company),
        )
@@ -161,12 +159,11 @@ go install github.com/mhiro2/seedling/cmd/seedling-gen@latest
    }
 
    func TestTaskProject(t *testing.T) {
-       seedling.ResetRegistry()
-       testutil.RegisterBlueprints()
+       reg := testutil.NewRegistry()
 
        // Only("project") inserts task + project subtree only,
        // skipping the assignee relation entirely.
-       result := seedling.InsertOne[testutil.Task](t, db,
+       result := seedling.NewSession[testutil.Task](reg).InsertOne(t, db,
            seedling.Only("project"),
        )
        _ = result
@@ -191,7 +188,7 @@ go install github.com/mhiro2/seedling/cmd/seedling-gen@latest
 ## 📂 Examples
 
 - [basic](./examples/basic): register blueprints and insert rows with automatic parent creation
-- [quickstart](./examples/quickstart): generated-style `RegisterBlueprints()` flow that matches the README Quick Start
+- [quickstart](./examples/quickstart): generated-style `NewRegistry()` / `RegisterBlueprints(reg)` flow that matches the README Quick Start
 - [custom-defaults](./examples/custom-defaults): customize values with `Set`, `With`, and `Generate`
 - [reuse-parent](./examples/reuse-parent): reuse existing rows with `Use`
 - [batch-insert](./examples/batch-insert): batch inserts with shared `Ref` dependencies and per-row `SeqRef` overrides
