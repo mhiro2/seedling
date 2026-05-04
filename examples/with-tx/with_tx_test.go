@@ -12,21 +12,22 @@ import (
 	withtx "github.com/mhiro2/seedling/examples/with-tx"
 )
 
-func setup(t *testing.T) {
+func setup(t *testing.T) *seedling.Registry {
 	t.Helper()
-	seedling.ResetRegistry()
 	withtx.ResetIDs()
-	withtx.RegisterBlueprints()
+	reg := seedling.NewRegistry()
+	withtx.RegisterBlueprints(reg)
+	return reg
 }
 
 func TestWithTx_InsertOneUser(t *testing.T) {
 	// Arrange
-	setup(t)
+	reg := setup(t)
 	db := openDB(t)
 
 	// Act
 	tx := seedling.WithTx(t, db)
-	user := seedling.InsertOne[withtx.User](t, tx).Root()
+	user := seedling.NewSession[withtx.User](reg).InsertOne(t, tx).Root()
 
 	// Assert
 	if user.ID == 0 {

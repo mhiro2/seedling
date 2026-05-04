@@ -13,9 +13,9 @@ func nextID() int {
 	return int(idSeq.Add(1))
 }
 
-// RegisterBlueprints registers the User blueprint with sensible defaults.
-func RegisterBlueprints() {
-	seedling.MustRegister(seedling.Blueprint[User]{
+// RegisterBlueprints registers the User blueprint with sensible defaults in reg.
+func RegisterBlueprints(reg *seedling.Registry) {
+	seedling.MustRegisterTo(reg, seedling.Blueprint[User]{
 		Name:    "user",
 		Table:   "users",
 		PKField: "ID",

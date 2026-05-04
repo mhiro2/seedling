@@ -9,19 +9,20 @@ import (
 	batchinsert "github.com/mhiro2/seedling/examples/batch-insert"
 )
 
-func setup(t *testing.T) {
+func setup(t *testing.T) *seedling.Registry {
 	t.Helper()
-	seedling.ResetRegistry()
 	batchinsert.ResetIDs()
-	batchinsert.RegisterBlueprints()
+	reg := seedling.NewRegistry()
+	batchinsert.RegisterBlueprints(reg)
+	return reg
 }
 
 func TestInsertManyE_SharedProject(t *testing.T) {
 	// Arrange
-	setup(t)
+	reg := setup(t)
 
 	// Act
-	result, err := seedling.InsertManyE[batchinsert.Task](context.Background(), nil, 2,
+	result, err := seedling.NewSession[batchinsert.Task](reg).InsertManyE(context.Background(), nil, 2,
 		seedling.Ref("project", seedling.Set("Name", "shared-project")),
 	)
 	if err != nil {
@@ -60,10 +61,10 @@ func TestInsertManyE_SharedProject(t *testing.T) {
 
 func TestInsertManyE_SeqRefCreatesDistinctProjects(t *testing.T) {
 	// Arrange
-	setup(t)
+	reg := setup(t)
 
 	// Act
-	result, err := seedling.InsertManyE[batchinsert.Task](context.Background(), nil, 2,
+	result, err := seedling.NewSession[batchinsert.Task](reg).InsertManyE(context.Background(), nil, 2,
 		seedling.SeqRef("project", func(i int) []seedling.Option {
 			return []seedling.Option{seedling.Set("Name", fmt.Sprintf("project-%d", i))}
 		}),

@@ -13,10 +13,9 @@ func nextID() int {
 	return int(idSeq.Add(1))
 }
 
-// RegisterBlueprints registers the Company and User blueprints.
-// Call seedling.ResetRegistry() before this in tests to start fresh.
-func RegisterBlueprints() {
-	seedling.MustRegister(seedling.Blueprint[Company]{
+// RegisterBlueprints registers the Company and User blueprints in reg.
+func RegisterBlueprints(reg *seedling.Registry) {
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
@@ -29,7 +28,7 @@ func RegisterBlueprints() {
 		},
 	})
 
-	seedling.MustRegister(seedling.Blueprint[User]{
+	seedling.MustRegisterTo(reg, seedling.Blueprint[User]{
 		Name:    "user",
 		Table:   "users",
 		PKField: "ID",

@@ -8,17 +8,18 @@ import (
 	example "github.com/mhiro2/seedling/examples/sqlc"
 )
 
-func setup(t *testing.T) {
+func setup(t *testing.T) *seedling.Registry {
 	t.Helper()
-	seedling.ResetRegistry()
-	example.RegisterBlueprints()
+	reg := seedling.NewRegistry()
+	example.RegisterBlueprints(reg)
+	return reg
 }
 
 func TestInsertOne_Member(t *testing.T) {
-	setup(t)
+	reg := setup(t)
 
 	// seedling auto-creates the parent Organization.
-	member := seedling.InsertOne[example.Member](t, nil)
+	member := seedling.NewSession[example.Member](reg).InsertOne(t, nil)
 
 	if member.Root().ID == 0 {
 		t.Fatal("expected member ID to be set")
@@ -32,9 +33,9 @@ func TestInsertOne_Member(t *testing.T) {
 }
 
 func TestInsertOne_Organization(t *testing.T) {
-	setup(t)
+	reg := setup(t)
 
-	org := seedling.InsertOne[example.Organization](t, nil,
+	org := seedling.NewSession[example.Organization](reg).InsertOne(t, nil,
 		seedling.Set("Name", "Acme Corp"),
 	)
 
@@ -47,9 +48,9 @@ func TestInsertOne_Organization(t *testing.T) {
 }
 
 func TestInsertMany_Members(t *testing.T) {
-	setup(t)
+	reg := setup(t)
 
-	members := seedling.InsertMany[example.Member](t, nil, 3,
+	members := seedling.NewSession[example.Member](reg).InsertMany(t, nil, 3,
 		seedling.Seq("Name", func(i int) string {
 			return fmt.Sprintf("member-%d", i)
 		}),

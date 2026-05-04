@@ -13,9 +13,9 @@ func nextID() int {
 	return int(idSeq.Add(1))
 }
 
-// RegisterBlueprints registers Company, Project, and Task blueprints.
-func RegisterBlueprints() {
-	seedling.MustRegister(seedling.Blueprint[Company]{
+// RegisterBlueprints registers Company, Project, and Task blueprints in reg.
+func RegisterBlueprints(reg *seedling.Registry) {
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
@@ -28,7 +28,7 @@ func RegisterBlueprints() {
 		},
 	})
 
-	seedling.MustRegister(seedling.Blueprint[Project]{
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Project]{
 		Name:    "project",
 		Table:   "projects",
 		PKField: "ID",
@@ -49,7 +49,7 @@ func RegisterBlueprints() {
 		},
 	})
 
-	seedling.MustRegister(seedling.Blueprint[Task]{
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Task]{
 		Name:    "task",
 		Table:   "tasks",
 		PKField: "ID",

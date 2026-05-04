@@ -13,9 +13,16 @@ func nextID() int {
 	return int(idSeq.Add(1))
 }
 
-// RegisterBlueprints registers the generated-style Company and User blueprints.
-func RegisterBlueprints() {
-	seedling.MustRegister(seedling.Blueprint[Company]{
+// NewRegistry returns a local registry populated with this example's blueprints.
+func NewRegistry() *seedling.Registry {
+	reg := seedling.NewRegistry()
+	RegisterBlueprints(reg)
+	return reg
+}
+
+// RegisterBlueprints registers the generated-style Company and User blueprints in reg.
+func RegisterBlueprints(reg *seedling.Registry) {
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
@@ -28,7 +35,7 @@ func RegisterBlueprints() {
 		},
 	})
 
-	seedling.MustRegister(seedling.Blueprint[User]{
+	seedling.MustRegisterTo(reg, seedling.Blueprint[User]{
 		Name:    "user",
 		Table:   "users",
 		PKField: "ID",

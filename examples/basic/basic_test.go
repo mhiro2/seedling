@@ -7,16 +7,17 @@ import (
 	"github.com/mhiro2/seedling/examples/basic"
 )
 
-func setup(t *testing.T) {
+func setup(t *testing.T) *seedling.Registry {
 	t.Helper()
-	seedling.ResetRegistry()
-	basic.RegisterBlueprints()
+	reg := seedling.NewRegistry()
+	basic.RegisterBlueprints(reg)
+	return reg
 }
 
 func TestInsertOne_Company(t *testing.T) {
-	setup(t)
+	reg := setup(t)
 
-	company := seedling.InsertOne[basic.Company](t, nil)
+	company := seedling.NewSession[basic.Company](reg).InsertOne(t, nil)
 
 	if company.Root().ID == 0 {
 		t.Fatal("expected company ID to be set")
@@ -27,10 +28,10 @@ func TestInsertOne_Company(t *testing.T) {
 }
 
 func TestInsertOne_User(t *testing.T) {
-	setup(t)
+	reg := setup(t)
 
 	// InsertOne[User] automatically creates a parent Company.
-	user := seedling.InsertOne[basic.User](t, nil)
+	user := seedling.NewSession[basic.User](reg).InsertOne(t, nil)
 
 	if user.Root().ID == 0 {
 		t.Fatal("expected user ID to be set")
@@ -44,9 +45,9 @@ func TestInsertOne_User(t *testing.T) {
 }
 
 func TestInsertOne_UserWithSet(t *testing.T) {
-	setup(t)
+	reg := setup(t)
 
-	user := seedling.InsertOne[basic.User](t, nil,
+	user := seedling.NewSession[basic.User](reg).InsertOne(t, nil,
 		seedling.Set("Name", "alice"),
 		seedling.Set("Email", "alice@example.com"),
 	)
