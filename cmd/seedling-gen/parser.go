@@ -250,7 +250,12 @@ func parseColumn(item string, enumTypes map[string]struct{}) (Column, bool) {
 	colName := normalizeIdent(nameToken)
 	sqlType := normalizeSQLType(parts[0])
 
-	upper := strings.ToUpper(item)
+	// Detect constraints on a copy with string-literal contents blanked out so a
+	// DEFAULT value like 'this is NOT NULL really' or 'see REFERENCES x' is not
+	// mistaken for a real constraint. Identifiers (and thus a REFERENCES target)
+	// stay intact, so they are sliced from the original item by index.
+	masked := maskSQLStringLiterals(item)
+	upper := strings.ToUpper(masked)
 	col := Column{
 		Name:    colName,
 		SQLType: sqlType,
@@ -260,26 +265,32 @@ func parseColumn(item string, enumTypes map[string]struct{}) (Column, bool) {
 		NotNull: strings.Contains(upper, "NOT NULL"),
 	}
 
-	if refMatch := inlineRefRE.FindStringSubmatch(item); refMatch != nil {
+	if loc := inlineRefRE.FindStringSubmatchIndex(masked); loc != nil {
 		col.IsFK = true
-		col.FKRefTable = normalizeIdent(refMatch[1])
+		col.FKRefTable = normalizeIdent(item[loc[2]:loc[3]])
 	}
 
 	return col, true
 }
 
 func applyTableConstraint(columns []Column, columnIndex map[string]int, constraint string) (ForeignKey, bool) {
-	if match := tablePKRE.FindStringSubmatch(constraint); match != nil {
-		for _, colName := range splitIdentifierList(match[1]) {
+	// Match constraint keywords on a copy with string-literal contents blanked
+	// out, so a CHECK body like 'PRIMARY KEY (id)' or 'FOREIGN KEY (x) REFERENCES y'
+	// is not mistaken for a real constraint. Captured identifiers are sliced from
+	// the original by index to keep their exact spelling.
+	masked := maskSQLStringLiterals(constraint)
+
+	if loc := tablePKRE.FindStringSubmatchIndex(masked); loc != nil {
+		for _, colName := range splitIdentifierList(constraint[loc[2]:loc[3]]) {
 			if idx, ok := columnIndex[colName]; ok {
 				columns[idx].IsPK = true
 			}
 		}
 	}
 
-	if match := tableFKRE.FindStringSubmatch(constraint); match != nil {
-		refTable := normalizeIdent(match[2])
-		cols := splitIdentifierList(match[1])
+	if loc := tableFKRE.FindStringSubmatchIndex(masked); loc != nil {
+		refTable := normalizeIdent(constraint[loc[4]:loc[5]])
+		cols := splitIdentifierList(constraint[loc[2]:loc[3]])
 		notNull := true
 		for _, colName := range cols {
 			if idx, ok := columnIndex[colName]; ok {
@@ -630,6 +641,63 @@ func stripSQLComments(sql string) string {
 	}
 
 	return b.String()
+}
+
+// maskSQLStringLiterals returns a copy of s with the contents of single-quoted
+// string literals replaced by spaces, preserving length so byte offsets stay
+// aligned with the original. Quoted identifiers (double quotes, backticks) are
+// left intact since they can legitimately name a REFERENCES target; their state
+// is still tracked so a single quote inside an identifier is not mistaken for
+// the start of a string literal. Doubled ” escapes are handled.
+func maskSQLStringLiterals(s string) string {
+	b := []byte(s)
+	out := make([]byte, len(b))
+	copy(out, b)
+
+	inSingle, inDouble, inBack := false, false, false
+	for i := 0; i < len(b); i++ {
+		switch {
+		case inSingle:
+			if b[i] != '\'' {
+				out[i] = ' '
+				continue
+			}
+			if i+1 < len(b) && b[i+1] == '\'' {
+				out[i] = ' '
+				out[i+1] = ' '
+				i++
+				continue
+			}
+			inSingle = false
+		case inDouble:
+			if b[i] == '"' {
+				if i+1 < len(b) && b[i+1] == '"' {
+					i++
+					continue
+				}
+				inDouble = false
+			}
+		case inBack:
+			if b[i] == '`' {
+				if i+1 < len(b) && b[i+1] == '`' {
+					i++
+					continue
+				}
+				inBack = false
+			}
+		default:
+			switch b[i] {
+			case '\'':
+				inSingle = true
+			case '"':
+				inDouble = true
+			case '`':
+				inBack = true
+			}
+		}
+	}
+
+	return string(out)
 }
 
 func trimIdentifierQuotes(s string) string {
