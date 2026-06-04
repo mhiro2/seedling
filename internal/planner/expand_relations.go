@@ -18,19 +18,20 @@ func (e *expander) expandRelation(
 	opts *OptionSet,
 	bindings map[string]*graph.Node,
 ) error {
-	decision, err := relationExpansion(node.Value, rel, opts)
-	if err != nil {
-		return err
-	}
-	if !decision.shouldBind {
-		return nil
-	}
-
+	// A structural back-reference binds the child to the parent that created it
+	// (e.g. an employee's belongs_to(department) inside department's has_many).
+	// This FK must always be set, independent of When/Omit on the child relation,
+	// otherwise the auto-generated child would be orphaned with a zero FK.
 	bound, err := e.bindRelationNode(bp.Name, node, rel, bindings)
 	if err != nil || bound {
 		return err
 	}
-	if !decision.shouldExpand {
+
+	shouldExpand, err := relationExpansion(node.Value, rel, opts)
+	if err != nil {
+		return err
+	}
+	if !shouldExpand {
 		return nil
 	}
 
@@ -46,28 +47,23 @@ func (e *expander) expandRelation(
 	}
 }
 
-type relationExpansionDecision struct {
-	shouldBind   bool
-	shouldExpand bool
-}
-
-func relationExpansion(value any, rel RelationDef, opts *OptionSet) (relationExpansionDecision, error) {
+// relationExpansion reports whether a relation that is not a structural
+// back-reference should expand a fresh subtree. Omit and a false When both
+// suppress expansion; otherwise expansion follows Required/Use/Ref/predicate.
+func relationExpansion(value any, rel RelationDef, opts *OptionSet) (bool, error) {
 	if relationOmitted(opts, rel.Name) {
-		return relationExpansionDecision{}, nil
+		return false, nil
 	}
 
-	shouldBind, err := relationWhen(value, rel, opts)
+	enabled, err := relationWhen(value, rel, opts)
 	if err != nil {
-		return relationExpansionDecision{}, err
+		return false, err
 	}
-	if !shouldBind {
-		return relationExpansionDecision{}, nil
+	if !enabled {
+		return false, nil
 	}
 
-	return relationExpansionDecision{
-		shouldBind:   true,
-		shouldExpand: relationEnabled(rel, opts),
-	}, nil
+	return relationEnabled(rel, opts), nil
 }
 
 func (e *expander) bindRelationNode(

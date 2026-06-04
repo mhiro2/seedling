@@ -444,6 +444,13 @@ func (l insertLogOption) applyOption(o *optionSet) {
 // also included:
 //
 //	seedling.InsertOne[Task](t, db, seedling.Only("project"))
+//
+// Only is an explicit minimal-graph escape hatch: relations not listed are never
+// expanded, even when they are Required. Their FK fields are left at the zero
+// value, so the caller is responsible for any NOT NULL FK constraints on the
+// excluded relations. Combining Only with an explicit [Use], [Ref], or [When] on
+// a relation outside the set is reported as an error, since that configuration
+// would otherwise be silently discarded.
 func Only(relations ...string) Option {
 	return onlyOption{relations: relations}
 }

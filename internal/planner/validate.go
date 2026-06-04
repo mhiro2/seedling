@@ -105,6 +105,31 @@ func validateOptions(reg Registry, bp *BlueprintDef, opts *OptionSet, allowOnly 
 		}
 	}
 
+	// When Only is active, a relation that carries an explicit Use/Ref/When but is
+	// not in the Only set is contradictory: Only would exclude it from expansion,
+	// silently discarding the user's configuration. Surface it instead of dropping
+	// it. (A required relation simply absent from Only is intentional minimal-graph
+	// behaviour; see the Only documentation.) Only mode is keyed on a non-nil set,
+	// matching the expander, so Only() with no relations still triggers the check.
+	// Guarded by allowOnly so it only runs at the root, where Only is valid.
+	if allowOnly && opts.Only != nil {
+		for name := range opts.Uses {
+			if !opts.Only[name] {
+				return fmt.Errorf("validate relation %q options: %w", name, errx.OnlyExcludesConfigured(bp.Name, name, "Use"))
+			}
+		}
+		for name := range opts.Refs {
+			if !opts.Only[name] {
+				return fmt.Errorf("validate relation %q options: %w", name, errx.OnlyExcludesConfigured(bp.Name, name, "Ref"))
+			}
+		}
+		for name := range opts.Whens {
+			if !opts.Only[name] {
+				return fmt.Errorf("validate relation %q options: %w", name, errx.OnlyExcludesConfigured(bp.Name, name, "When"))
+			}
+		}
+	}
+
 	for name, refOpts := range opts.Refs {
 		rel := rels.byName[name]
 		refBP, err := reg.LookupByName(rel.RefBlueprint)
