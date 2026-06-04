@@ -322,6 +322,32 @@ func TestFindDeleteQueryForTable(t *testing.T) {
 	}
 }
 
+func TestFindDeleteQueryForTable_ExactMatch(t *testing.T) {
+	// Substring matching would bind DeleteUserProfile/DeleteUserGroup to the
+	// User table; only the exact Delete<GoName> query must match, and the
+	// User table's own delete must still resolve regardless of slice order.
+	info := &SqlcInfo{
+		DeleteQueries: []SqlcDeleteQuery{
+			{Name: "DeleteUserProfile", ArgName: "id", ArgType: "int64"},
+			{Name: "DeleteUserGroup", ArgName: "id", ArgType: "int64"},
+			{Name: "DeleteUser", ArgName: "id", ArgType: "int64"},
+		},
+	}
+
+	dq := info.FindDeleteQueryForTable(Table{GoName: "User"})
+	if dq == nil {
+		t.Fatal("expected to find delete query for User")
+	}
+	if dq.Name != "DeleteUser" {
+		t.Fatalf("expected DeleteUser, got %q", dq.Name)
+	}
+
+	// A table with no exact delete query must not borrow a longer-named one.
+	if dq := info.FindDeleteQueryForTable(Table{GoName: "Account"}); dq != nil {
+		t.Fatalf("expected nil for Account, got %q", dq.Name)
+	}
+}
+
 func TestGenerateSqlc_BasicOutput(t *testing.T) {
 	schema := `
 CREATE TABLE companies (
