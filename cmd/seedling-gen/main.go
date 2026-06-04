@@ -61,6 +61,12 @@ func atomicWrite(dest string, fn func(w io.Writer) error) error {
 		_ = f.Close()
 		return err
 	}
+	// CreateTemp restricts the file to 0600; widen it to 0644 before the
+	// rename so generated code is world-readable like ordinary source files.
+	if err := f.Chmod(0o644); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("chmod temp file: %w", err)
+	}
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("close temp file: %w", err)
 	}
