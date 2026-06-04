@@ -341,11 +341,11 @@ func relationHasPredicate(rel RelationDef, opts *OptionSet) bool {
 	return ok
 }
 
+// relationCount reports how many HasMany/ManyToMany children to expand. A zero
+// Count (including the unset zero value) expands none; negative counts are
+// rejected when the blueprint is registered, so the value here is non-negative.
 func relationCount(rel RelationDef) int {
-	if rel.Count > 0 {
-		return rel.Count
-	}
-	return 1
+	return rel.Count
 }
 
 func relationNodeID(parentNodeID, relation string, index, count int) string {
