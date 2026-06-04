@@ -146,7 +146,7 @@ That is the entire happy path. The next section shows the handful of patterns yo
 These three patterns cover the majority of real test code. Anything beyond them lives in the [Guide](./docs/guide.md).
 
 > [!NOTE]
-> All snippets below assume the generated package (e.g. from `seedling-gen --pkg testutil`) is imported as `testutil`, and `reg := testutil.NewRegistry()` has been called. The package name is set by `--pkg`; rename to whatever fits your project.
+> All snippets below assume the generated package (e.g. from `seedling-gen sql --pkg testutil schema.sql`) is imported as `testutil`, and `reg := testutil.NewRegistry()` has been called. The package name is set by `--pkg`; rename to whatever fits your project.
 
 ### Override a field
 
@@ -252,7 +252,7 @@ The [Guide](./docs/guide.md#debugging-and-cleanup) lists the full set of debuggi
 - [with-tx](./examples/with-tx): `database/sql` transaction helper with `seedling.WithTx`
 - [sqlc](./examples/sqlc): wire blueprints to sqlc-generated query code
 - pgx transactions: use `github.com/mhiro2/seedling/seedlingpgx` with `pgxpool.Pool` or `*pgx.Conn`
-- GORM / ent / Atlas: use `seedling-gen` with `-gorm`, `-ent`, or `-atlas` flags to generate blueprints from your existing schema definitions
+- GORM / ent / Atlas: use the `seedling-gen gorm`, `seedling-gen ent`, or `seedling-gen atlas` subcommands to generate blueprints from your existing schema definitions
 
 ## 📚 Learn More
 

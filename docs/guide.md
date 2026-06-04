@@ -166,9 +166,9 @@ seedling does not generate SQL at runtime. Your blueprint owns the `Insert` and 
 - sqlc: map `Insert` callbacks to generated query methods. Prefer `seedling-gen sqlc --config ...` for automatic setup
 - `database/sql`: pass `*sql.DB` or `*sql.Tx`
 - pgx: pass your pool or transaction handle, or use `github.com/mhiro2/seedling/seedlingpgx` for rollback-on-cleanup helpers
-- GORM: use `-gorm` to generate blueprints with `gorm.DB`-based Insert/Delete callbacks
-- ent: use `-ent` to generate blueprints with ent fluent builder Insert/Delete callbacks
-- Atlas HCL: use `-atlas` to generate blueprints from Atlas schema definitions
+- GORM: use the `gorm` subcommand to generate blueprints with `gorm.DB`-based Insert/Delete callbacks
+- ent: use the `ent` subcommand to generate blueprints with ent fluent builder Insert/Delete callbacks
+- Atlas HCL: use the `atlas` subcommand to generate blueprints from Atlas schema definitions
 
 When you use `database/sql`, [`WithTx`](https://pkg.go.dev/github.com/mhiro2/seedling#WithTx) is the easiest way to get a rollback-on-cleanup transaction. [`NewTestSession`](https://pkg.go.dev/github.com/mhiro2/seedling#NewTestSession) offers the same with registry binding and custom `sql.TxOptions`. For pgx, use [`seedlingpgx.WithTx`](https://pkg.go.dev/github.com/mhiro2/seedling/seedlingpgx#WithTx) or [`seedlingpgx.NewTestSession`](https://pkg.go.dev/github.com/mhiro2/seedling/seedlingpgx#NewTestSession).
 
