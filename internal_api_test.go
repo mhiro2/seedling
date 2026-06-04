@@ -544,3 +544,49 @@ func TestToOptionSet_Nil(t *testing.T) {
 		t.Fatalf("expected nil, got %v", got)
 	}
 }
+
+type internalWidget struct {
+	ID int
+}
+
+func TestPlanInsertE_RootTypeMismatch(t *testing.T) {
+	// The execution root is normally guaranteed to be T by register-time type
+	// validation. Executing a graph built for one type as a Plan of another
+	// type must return a typed ErrTypeMismatch instead of panicking on the
+	// unchecked root assertion, mirroring InsertManyE.
+	reg := NewRegistry()
+	err := RegisterTo(reg, Blueprint[internalCompany]{
+		Name:    "company",
+		Table:   "companies",
+		PKField: "ID",
+		Defaults: func() internalCompany {
+			return internalCompany{Name: "test-company"}
+		},
+		Insert: func(_ context.Context, _ DBTX, v internalCompany) (internalCompany, error) {
+			v.ID = 1
+			return v, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := NewSession[internalCompany](reg).BuildE()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Reinterpret the company graph as a plan for an unrelated type.
+	mismatched := &Plan[internalWidget]{
+		graph:    plan.graph,
+		registry: plan.registry,
+	}
+
+	_, err = mismatched.InsertE(context.Background(), nil)
+	if err == nil {
+		t.Fatal("expected error for root type mismatch")
+	}
+	if !errors.Is(err, ErrTypeMismatch) {
+		t.Fatalf("got %v, want %v", err, ErrTypeMismatch)
+	}
+}
