@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"go/format"
+	"go/parser"
+	"go/token"
 	"io"
 	"strconv"
 	"strings"
@@ -64,12 +66,12 @@ func RegisterBlueprints(reg *seedling.Registry) {
 {{- if $i}}
 {{ end }}
 	seedling.MustRegisterTo(reg, seedling.Blueprint[{{$model.TypeExpr}}]{
-		Name:  "{{$model.BlueprintID}}",
-		Table: "{{$model.TableName}}",
+		Name:  {{quote $model.BlueprintID}},
+		Table: {{quote $model.TableName}},
 {{- if isCompositePK $model}}
-		PKFields: []string{ {{- range $i, $field := $model.PKFields}}{{if $i}}, {{end}}"{{$field}}"{{end}} },
+		PKFields: []string{ {{- range $i, $field := $model.PKFields}}{{if $i}}, {{end}}{{quote $field}}{{end}} },
 {{- else}}
-		PKField: "{{pkField $model}}",
+		PKField: {{quote (pkField $model)}},
 {{- end}}
 		Defaults: func() {{$model.TypeExpr}} {
 			return {{ defaultLiteral $model }}
@@ -77,7 +79,7 @@ func RegisterBlueprints(reg *seedling.Registry) {
 {{- if $model.Relations}}
 		Relations: []seedling.Relation{
 {{- range $model.Relations}}
-			{Name: "{{.Name}}", Kind: seedling.BelongsTo, {{- if isCompositeRelation .}} LocalFields: []string{ {{- range $i, $field := .LocalFields}}{{if $i}}, {{end}}"{{$field}}"{{end}} }, {{- else}} LocalField: "{{.LocalField}}", {{- end}} RefBlueprint: "{{.RefBlueprint}}"{{- if .Optional}}, Optional: true{{- end}}},
+			{Name: {{quote .Name}}, Kind: seedling.BelongsTo, {{- if isCompositeRelation .}} LocalFields: []string{ {{- range $i, $field := .LocalFields}}{{if $i}}, {{end}}{{quote $field}}{{end}} }, {{- else}} LocalField: {{quote .LocalField}}, {{- end}} RefBlueprint: {{quote .RefBlueprint}}{{- if .Optional}}, Optional: true{{- end}}},
 {{- end}}
 		},
 {{- end}}
@@ -97,6 +99,10 @@ func RegisterBlueprints(reg *seedling.Registry) {
 `
 
 func generateNormalizedCode(w io.Writer, kind, pkg string, imports []string, models []normalizedModel, emitStructs bool) error {
+	if err := validateNormalizedModels(models, emitStructs); err != nil {
+		return fmt.Errorf("validate %s generated code: %w", kind, err)
+	}
+
 	var buf strings.Builder
 
 	buf.WriteString("package ")
@@ -126,6 +132,7 @@ func generateNormalizedCode(w io.Writer, kind, pkg string, imports []string, mod
 		},
 		"defaultLiteral": buildDefaultLiteral,
 		"indent":         indentBlock,
+		"quote":          strconv.Quote,
 	})
 	if err != nil {
 		return fmt.Errorf("render %s blueprints: %w", kind, err)
@@ -142,6 +149,79 @@ func generateNormalizedCode(w io.Writer, kind, pkg string, imports []string, mod
 	}
 
 	return nil
+}
+
+// validateNormalizedModels guards against schema-derived identifiers and type
+// expressions injecting arbitrary tokens into the generated source. Identifier
+// positions must be valid Go identifiers, and type/expression positions must
+// parse as a single Go expression so a crafted value cannot break out and
+// append statements or fields. String-literal positions are escaped with
+// strconv.Quote at render time and therefore need no validation here. This
+// turns malformed input into a hard error instead of relying on format.Source
+// to reject whatever the templates happen to emit.
+func validateNormalizedModels(models []normalizedModel, emitStructs bool) error {
+	for _, model := range models {
+		name := model.StructName
+		if name == "" {
+			name = model.TypeExpr
+		}
+
+		if err := validateGoExpr("type expression", model.TypeExpr); err != nil {
+			return fmt.Errorf("model %q: %w", name, err)
+		}
+		if model.ZeroValueExpr != "" {
+			if err := validateGoExpr("zero-value expression", model.ZeroValueExpr); err != nil {
+				return fmt.Errorf("model %q: %w", name, err)
+			}
+		}
+
+		if emitStructs && !token.IsIdentifier(model.StructName) {
+			return fmt.Errorf("model %q: invalid struct name %q", name, model.StructName)
+		}
+
+		for _, field := range model.Fields {
+			if !token.IsIdentifier(field.GoName) {
+				return fmt.Errorf("model %q: invalid field name %q", name, field.GoName)
+			}
+			// GoType is only emitted as a type in the struct template.
+			if emitStructs {
+				if err := validateGoExpr("field type", field.GoType); err != nil {
+					return fmt.Errorf("model %q field %q: %w", name, field.GoName, err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// validateGoExpr reports whether expr parses as a single, complete Go
+// expression. It is a breakout guard, not a type check: parser.ParseExpr
+// rejects trailing tokens, so a crafted value cannot append statements or
+// declarations after the expression, while the Go compiler still validates
+// whether the expression is usable as a type when the generated code is built.
+func validateGoExpr(label, expr string) error {
+	if strings.TrimSpace(expr) == "" {
+		return fmt.Errorf("empty %s", label)
+	}
+	if _, err := parser.ParseExpr(expr); err != nil {
+		return fmt.Errorf("invalid %s %q: %w", label, expr, err)
+	}
+	return nil
+}
+
+// importSpec builds one import line with the path escaped via strconv.Quote and
+// the alias (when present) validated as a Go identifier. Import paths and
+// aliases come from CLI flags / tool config rather than the schema, but they
+// reach the generated source through the same raw-concatenation path, so they
+// are hardened the same way instead of trusting the caller-supplied string.
+func importSpec(alias, path string) (string, error) {
+	if alias != "" && !token.IsIdentifier(alias) {
+		return "", fmt.Errorf("invalid import alias %q", alias)
+	}
+	if alias == "" {
+		return strconv.Quote(path), nil
+	}
+	return alias + " " + strconv.Quote(path), nil
 }
 
 func renderImports(buf *strings.Builder, imports []string) {

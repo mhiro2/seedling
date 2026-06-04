@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"strings"
 )
@@ -22,10 +23,14 @@ func Generate(w io.Writer, pkg string, tables []Table) error {
 // GenerateSqlc generates blueprint code that imports and uses sqlc-generated types.
 func GenerateSqlc(w io.Writer, pkg, sqlcImportPath string, tables []Table, sqlcInfo *SqlcInfo) error {
 	models := normalizeSqlcModels(tables, sqlcInfo)
+	spec, err := importSpec(sqlcInfo.Package, sqlcImportPath)
+	if err != nil {
+		return fmt.Errorf("sqlc import: %w", err)
+	}
 	imports := []string{
 		`"context"`,
 		`"github.com/mhiro2/seedling"`,
-		sqlcInfo.Package + ` "` + sqlcImportPath + `"`,
+		spec,
 	}
 	if normalizedModelsNeedTimeImport(models) {
 		imports = append(imports, `"time"`)
