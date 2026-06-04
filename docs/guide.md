@@ -155,6 +155,7 @@ For runnable examples of these options, see [`example_test.go`](../example_test.
 - `HasMany`: insert children automatically from a parent blueprint using `Count`
 - `ManyToMany`: create related rows and join-table rows together
 - Composite keys: use `PKFields`, `LocalFields`, and `RemoteFields`
+- Matching field types: a child FK field and its parent PK field must have the exact same Go type. A named type and its underlying type (e.g. `type UserID int64` versus `int64`) are not interchangeable, so declare the FK with the same type as the referenced PK
 - Self/mutual references (e.g. `employees.manager_id → employees.id`, or `A ↔ B`) must be `Optional`: a *required* reference back to a blueprint already being expanded has no finite expansion and is rejected with `ErrCycleDetected`
 
 The execution model and graph expansion rules are documented in [ARCHITECTURE.md](../ARCHITECTURE.md).
