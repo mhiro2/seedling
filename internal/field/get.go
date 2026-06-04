@@ -22,6 +22,12 @@ func GetField(v any, name string) (any, error) {
 	if !ok {
 		return nil, fmt.Errorf("get field %q: %w", name, errx.FieldNotFoundWithHint(rt.Name(), name, exportedFields(rt)))
 	}
+	// An unexported field cannot be read via reflection (.Interface() panics), so
+	// report it as not found, mirroring how Copy/SetField reject unexported
+	// destinations instead of panicking.
+	if !entry.Exported {
+		return nil, fmt.Errorf("%w: field %q is unexported", errx.ErrFieldNotFound, name)
+	}
 
 	return rv.FieldByIndex(entry.Index).Interface(), nil
 }
