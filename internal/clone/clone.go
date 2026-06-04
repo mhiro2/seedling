@@ -10,6 +10,12 @@ import "reflect"
 // at each other) are handled: each pointer is cloned at most once and shared
 // addresses map to a single clone, preserving identity instead of recursing
 // forever.
+//
+// Only settable (exported) fields are deep-copied. An unexported reference-typed
+// field (pointer, slice, map, ...) is shallow-copied and therefore keeps sharing
+// its backing storage with the original; this also preserves the internal
+// pointers of value types such as time.Time. Keep mutable state that must be
+// isolated across clones in exported fields.
 func Value(v any) any {
 	if v == nil {
 		return nil

@@ -3,6 +3,7 @@ package clone_test
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/mhiro2/seedling/internal/clone"
 )
@@ -154,6 +155,57 @@ func TestValue_UnexportedField(t *testing.T) {
 	// Assert
 	if cp.Name != "test" {
 		t.Fatalf("got %v, want %v", cp.Name, "test")
+	}
+}
+
+type unexportedRefs struct {
+	Name  string
+	items []int
+}
+
+// TestValue_UnexportedReferenceFieldsAreShared characterizes the documented
+// limitation: unexported reference fields are shallow-copied and keep sharing
+// their backing with the original. Deep-copying them would require unsafe and
+// would also corrupt value types whose internals are unexported pointers (e.g.
+// time.Time's location); keep isolated mutable state in exported fields instead.
+func TestValue_UnexportedReferenceFieldsAreShared(t *testing.T) {
+	// Arrange
+	orig := unexportedRefs{Name: "root", items: []int{1, 2, 3}}
+
+	// Act
+	cp := clone.Value(orig).(unexportedRefs)
+	cp.items[0] = 99
+
+	// Assert: backing is shared (documented behavior, not deep-copied).
+	if orig.items[0] != 99 {
+		t.Fatalf("expected shared backing for unexported field, got %v", orig.items)
+	}
+}
+
+type withTime struct {
+	When time.Time
+}
+
+// TestValue_TimeFieldKeepsLocation guards against deep-copying the unexported
+// internals of value types: a cloned time.Time must remain Equal and keep the
+// same Location as the original.
+func TestValue_TimeFieldKeepsLocation(t *testing.T) {
+	// Arrange
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := withTime{When: time.Date(2026, 6, 4, 12, 0, 0, 0, loc)}
+
+	// Act
+	cp := clone.Value(orig).(withTime)
+
+	// Assert
+	if !cp.When.Equal(orig.When) {
+		t.Fatalf("cloned time not equal: got %v, want %v", cp.When, orig.When)
+	}
+	if cp.When.Location() != orig.When.Location() {
+		t.Fatalf("cloned time lost its Location identity: got %v, want %v", cp.When.Location(), orig.When.Location())
 	}
 }
 
