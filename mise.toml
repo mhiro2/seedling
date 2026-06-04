@@ -1,5 +1,8 @@
 [tools]
 go = "1.26"
-golangci-lint = "latest"
+golangci-lint = "2.12.2"
 lefthook = "latest"
 typos = "latest"
+
+[settings]
+install_before = "7d"
