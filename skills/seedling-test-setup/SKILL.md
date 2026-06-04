@@ -55,7 +55,7 @@ seedling.InsertOne[User](t, db, seedling.Set("Email", "test@example.com"))
 
 ```go
 org := getExistingOrg()
-seedling.InsertOne[User](t, db, seedling.Use("Organization", org))
+seedling.InsertOne[User](t, db, seedling.Use("organization", org))
 ```
 
 The `Use`'d record is not inserted by seedling and is skipped during cleanup.
@@ -64,7 +64,7 @@ The `Use`'d record is not inserted by seedling and is skipped during cleanup.
 
 ```go
 seedling.InsertOne[User](t, db,
-    seedling.Ref("Organization", seedling.Set("Name", "Acme")),
+    seedling.Ref("organization", seedling.Set("Name", "Acme")),
 )
 ```
 
@@ -73,7 +73,7 @@ seedling.InsertOne[User](t, db,
 ### Omit — skip an optional relation
 
 ```go
-seedling.InsertOne[User](t, db, seedling.Omit("Profile"))
+seedling.InsertOne[User](t, db, seedling.Omit("profile"))
 ```
 
 ### With — type-safe struct mutation
@@ -109,7 +109,7 @@ Chain options for readability:
 ```go
 result := seedling.For[User]().
     Set("Name", "Alice").
-    Ref("Organization", seedling.Set("Plan", "enterprise")).
+    Ref("organization", seedling.Set("Plan", "enterprise")).
     BlueprintTrait("admin").
     Insert(t, db)
 ```
