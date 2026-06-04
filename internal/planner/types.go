@@ -38,7 +38,7 @@ type RelationDef struct {
 	ThroughBlueprint string
 	RemoteFields     []string
 	Required         bool
-	Count            int            // For has_many/many_to_many: number of records to create (default 1)
+	Count            int            // For has_many/many_to_many: number of records to create; zero (including unset) creates none
 	When             func(any) bool // Optional predicate: expand only when true
 }
 
