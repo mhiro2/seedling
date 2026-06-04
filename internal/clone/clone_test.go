@@ -157,6 +157,72 @@ func TestValue_UnexportedField(t *testing.T) {
 	}
 }
 
+type selfRef struct {
+	Name string
+	Next *selfRef
+}
+
+func TestValue_SelfReferentialPointer(t *testing.T) {
+	// Arrange: a node whose pointer points back to itself.
+	orig := &selfRef{Name: "a"}
+	orig.Next = orig
+
+	// Act
+	cp := clone.Value(orig).(*selfRef)
+	cp.Name = "b"
+
+	// Assert
+	if orig.Name != "a" {
+		t.Fatalf("original was mutated: got %v, want %v", orig.Name, "a")
+	}
+	if cp == orig {
+		t.Fatal("clone returned same pointer")
+	}
+	if cp.Next != cp {
+		t.Fatal("clone did not preserve self-reference identity")
+	}
+}
+
+func TestValue_MutuallyReferentialPointers(t *testing.T) {
+	// Arrange: two nodes that point at each other.
+	a := &selfRef{Name: "a"}
+	b := &selfRef{Name: "b"}
+	a.Next = b
+	b.Next = a
+
+	// Act
+	cp := clone.Value(a).(*selfRef)
+
+	// Assert
+	if cp.Next == b {
+		t.Fatal("clone shared the original mutual pointer")
+	}
+	if cp.Next.Next != cp {
+		t.Fatal("clone did not preserve the mutual cycle")
+	}
+}
+
+func TestValue_CyclicSliceElement(t *testing.T) {
+	// Arrange: a struct reachable from its own slice via a pointer element.
+	type ring struct {
+		Name  string
+		Peers []*ring
+	}
+	orig := &ring{Name: "root"}
+	orig.Peers = []*ring{orig}
+
+	// Act
+	cp := clone.Value(orig).(*ring)
+
+	// Assert
+	if len(cp.Peers) != 1 {
+		t.Fatalf("got %d peers, want 1", len(cp.Peers))
+	}
+	if cp.Peers[0] != cp {
+		t.Fatal("clone did not preserve the cycle through the slice element")
+	}
+}
+
 func TestValue_DeepCopy(t *testing.T) {
 	// Arrange
 	orig := nestedSample{

@@ -434,6 +434,33 @@ func TestClone_NilFieldsInValue(t *testing.T) {
 	}
 }
 
+func TestClone_SelfReferentialPointerValue(t *testing.T) {
+	// Arrange: a node whose Value contains a self-referential pointer. Before
+	// the cycle-aware clone, this overflowed the stack and killed the process.
+	type cyclic struct {
+		Name string
+		Self *cyclic
+	}
+	value := &cyclic{Name: "root"}
+	value.Self = value
+
+	g := graph.New()
+	node := &graph.Node{ID: "n", BlueprintName: "n", Value: value}
+	g.AddNode(node)
+
+	// Act
+	cloned := g.Clone()
+
+	// Assert
+	cv := cloned.Node("n").Value.(*cyclic)
+	if cv == value {
+		t.Fatal("Clone shared the original pointer value")
+	}
+	if cv.Self != cv {
+		t.Fatal("Clone did not preserve the self-reference")
+	}
+}
+
 func TestClone_StructWithUnexportedField(t *testing.T) {
 	// Arrange
 	type withUnexported struct {
