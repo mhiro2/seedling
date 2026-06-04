@@ -81,6 +81,9 @@ func validateOptions(reg Registry, bp *BlueprintDef, opts *OptionSet, allowOnly 
 		if opts.Omits[name] {
 			return fmt.Errorf("validate relation %q options: %w", name, errx.OmitAndUseConflict(bp.Name, name))
 		}
+		if _, ok := opts.Whens[name]; ok {
+			return fmt.Errorf("validate relation %q options: %w", name, errx.UseAndWhenConflict(bp.Name, name))
+		}
 	}
 	for name := range opts.Refs {
 		if opts.Omits[name] {

@@ -98,6 +98,28 @@ func TestUseAndRefConflict(t *testing.T) {
 	}
 }
 
+func TestUseAndWhenConflict(t *testing.T) {
+	// Arrange
+	setupBlueprints(t)
+	company := insertOne[Company](t, nil)
+
+	// Act
+	// A Use'd relation is always bound, so a When predicate on the same
+	// relation is contradictory and must be rejected at validation.
+	_, err := buildE[User](t,
+		seedling.Use("company", company),
+		seedling.When[User]("company", func(User) bool { return true }),
+	)
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected error for Use+When on same relation")
+	}
+	if !errors.Is(err, seedling.ErrInvalidOption) {
+		t.Fatalf("got %v, want %v", err, seedling.ErrInvalidOption)
+	}
+}
+
 func TestRef_RejectsRootOnlyOptions(t *testing.T) {
 	// Arrange
 	ctx := context.Background()
