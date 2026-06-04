@@ -105,6 +105,10 @@ func OnlyOutsideRoot() error {
 	return fmt.Errorf("%w: only must be declared on root options", ErrInvalidOption)
 }
 
+func OnlyExcludesConfigured(blueprint, relation, option string) error {
+	return fmt.Errorf("%w: relation %q on blueprint %q is configured with %s but excluded by Only; add %q to Only or drop the %s", ErrInvalidOption, relation, blueprint, option, relation, option)
+}
+
 func SetOnFKField(blueprint, field, relation string) error {
 	return fmt.Errorf("%w: field %q on blueprint %q is the FK for relation %q and will be overwritten by the executor; use Use(%q, ...) instead", ErrInvalidOption, field, blueprint, relation, relation)
 }

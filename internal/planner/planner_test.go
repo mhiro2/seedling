@@ -361,6 +361,63 @@ func TestPlan_NestedOnlyIsInvalid(t *testing.T) {
 	}
 }
 
+func TestPlan_OnlyWithRefOnExcludedRelationIsInvalid(t *testing.T) {
+	// Arrange: Only("project") excludes assignee, but a Ref configures it. The
+	// contradiction must surface instead of silently discarding the Ref.
+	reg := newMockRegistry()
+	opts := newEmptyOptionSet()
+	opts.Only = map[string]bool{"project": true}
+	opts.Refs["assignee"] = &planner.OptionSet{
+		Sets:  map[string]any{"Name": "ignored"},
+		Uses:  make(map[string]any),
+		Refs:  make(map[string]*planner.OptionSet),
+		Omits: make(map[string]bool),
+	}
+
+	// Act & Assert
+	_, err := planner.Plan(reg, reflect.TypeFor[Task](), opts)
+	if !errors.Is(err, errx.ErrInvalidOption) {
+		t.Fatalf("got %v, want %v", err, errx.ErrInvalidOption)
+	}
+	if !strings.Contains(err.Error(), "assignee") {
+		t.Fatalf("expected error to mention %q, got %v", "assignee", err.Error())
+	}
+}
+
+func TestPlan_EmptyOnlyWithRefIsInvalid(t *testing.T) {
+	// Arrange: Only() with no relations is a non-nil empty set; a Ref on any
+	// relation is still excluded and must be reported, not silently dropped.
+	reg := newMockRegistry()
+	opts := newEmptyOptionSet()
+	opts.Only = map[string]bool{}
+	opts.Refs["project"] = &planner.OptionSet{
+		Sets:  make(map[string]any),
+		Uses:  make(map[string]any),
+		Refs:  make(map[string]*planner.OptionSet),
+		Omits: make(map[string]bool),
+	}
+
+	// Act & Assert
+	_, err := planner.Plan(reg, reflect.TypeFor[Task](), opts)
+	if !errors.Is(err, errx.ErrInvalidOption) {
+		t.Fatalf("got %v, want %v", err, errx.ErrInvalidOption)
+	}
+}
+
+func TestPlan_OnlyWithUseOnExcludedRelationIsInvalid(t *testing.T) {
+	// Arrange: Only("project") excludes assignee, but a Use provides it.
+	reg := newMockRegistry()
+	opts := newEmptyOptionSet()
+	opts.Only = map[string]bool{"project": true}
+	opts.Uses["assignee"] = User{ID: 99, Name: "existing-user"}
+
+	// Act & Assert
+	_, err := planner.Plan(reg, reflect.TypeFor[Task](), opts)
+	if !errors.Is(err, errx.ErrInvalidOption) {
+		t.Fatalf("got %v, want %v", err, errx.ErrInvalidOption)
+	}
+}
+
 func TestPlan_OmitAndRefConflict(t *testing.T) {
 	// Arrange
 	reg := newMockRegistry()
@@ -436,6 +493,43 @@ func TestPlan_HasManyAutoExpand(t *testing.T) {
 		}
 		if order[i].Dependencies()[0].Parent.ID != "department" {
 			t.Fatalf("got %v, want %v", order[i].Dependencies()[0].Parent.ID, "department")
+		}
+	}
+}
+
+func TestPlan_HasManyChildBackReferenceBindsDespiteWhen(t *testing.T) {
+	// Arrange: a false When on the child's belongs_to(department) back-reference
+	// must not strip the structural FK that ties an auto-generated employee to
+	// the department that created it.
+	reg := newMockRegistry()
+	opts := newEmptyOptionSet()
+	opts.Refs["employees"] = &planner.OptionSet{
+		Sets:  make(map[string]any),
+		Uses:  make(map[string]any),
+		Refs:  make(map[string]*planner.OptionSet),
+		Omits: make(map[string]bool),
+		Whens: map[string]func(any) (bool, error){
+			"department": func(any) (bool, error) { return false, nil },
+		},
+	}
+
+	// Act
+	result, err := planner.Plan(reg, reflect.TypeFor[Department](), opts)
+	// Assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, nodeID := range []string{"department.employees[0]", "department.employees[1]"} {
+		node := result.Graph.Node(nodeID)
+		if node == nil {
+			t.Fatalf("expected node %q", nodeID)
+		}
+		deps := node.Dependencies()
+		if len(deps) != 1 {
+			t.Fatalf("%s: got %d dependencies, want 1 (department back-reference)", nodeID, len(deps))
+		}
+		if deps[0].Parent.ID != "department" {
+			t.Fatalf("%s: got parent %q, want %q", nodeID, deps[0].Parent.ID, "department")
 		}
 	}
 }

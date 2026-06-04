@@ -74,6 +74,133 @@ func TestParseSchema_SingleQuoteEscapeInDefault(t *testing.T) {
 	}
 }
 
+func columnByName(t *testing.T, table Table, name string) Column {
+	t.Helper()
+	for _, c := range table.Columns {
+		if c.Name == name {
+			return c
+		}
+	}
+	t.Fatalf("column %q not found", name)
+	return Column{}
+}
+
+func TestParseSchema_StringLiteralDefaultDoesNotTriggerConstraints(t *testing.T) {
+	// Arrange: SQL keywords sitting inside DEFAULT string literals must not be
+	// mistaken for real constraints.
+	sql := `CREATE TABLE notes (
+		id INT PRIMARY KEY,
+		body TEXT DEFAULT 'this is NOT NULL really',
+		tag TEXT DEFAULT 'see REFERENCES manual',
+		label TEXT DEFAULT 'PRIMARY KEY note'
+	);`
+
+	// Act
+	tables, err := ParseSchemaWithDialect(sql, "postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	if len(tables) != 1 {
+		t.Fatalf("expected 1 table, got %d", len(tables))
+	}
+	if body := columnByName(t, tables[0], "body"); body.NotNull {
+		t.Error("body must not be NOT NULL from a string literal")
+	}
+	if tag := columnByName(t, tables[0], "tag"); tag.IsFK {
+		t.Errorf("tag must not be a FK from a string literal, got ref %q", tag.FKRefTable)
+	}
+	if label := columnByName(t, tables[0], "label"); label.IsPK {
+		t.Error("label must not be PK from a string literal")
+	}
+	if id := columnByName(t, tables[0], "id"); !id.IsPK {
+		t.Error("id should remain a real PK")
+	}
+	if len(tables[0].ForeignKeys) != 0 {
+		t.Fatalf("expected no foreign keys, got %d", len(tables[0].ForeignKeys))
+	}
+}
+
+func TestParseSchema_RealConstraintsCoexistWithStringLiterals(t *testing.T) {
+	// Arrange: a real NOT NULL / REFERENCES alongside literal text that contains
+	// the same keywords. The quoted REFERENCES target must survive intact.
+	sql := `CREATE TABLE items (
+		id INT PRIMARY KEY,
+		name TEXT NOT NULL DEFAULT 'has NOT NULL inside',
+		owner_id INT NOT NULL REFERENCES "users",
+		note TEXT DEFAULT 'mentions REFERENCES users'
+	);`
+
+	// Act
+	tables, err := ParseSchemaWithDialect(sql, "postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	if name := columnByName(t, tables[0], "name"); !name.NotNull {
+		t.Error("name should keep its real NOT NULL")
+	}
+	owner := columnByName(t, tables[0], "owner_id")
+	if !owner.IsFK || owner.FKRefTable != "users" {
+		t.Fatalf("owner_id: got FK=%v ref=%q, want FK to users", owner.IsFK, owner.FKRefTable)
+	}
+	if note := columnByName(t, tables[0], "note"); note.IsFK {
+		t.Errorf("note must not be a FK from a string literal, got ref %q", note.FKRefTable)
+	}
+}
+
+func TestParseSchema_TableConstraintStringLiteralDoesNotTrigger(t *testing.T) {
+	// Arrange: constraint keywords sitting inside a CHECK body string literal must
+	// not be applied as real table-level PRIMARY KEY / FOREIGN KEY constraints.
+	sql := `CREATE TABLE t (
+		id INT,
+		body TEXT,
+		CONSTRAINT ck CHECK (body <> 'PRIMARY KEY (id)'),
+		CONSTRAINT ck2 CHECK (body <> 'FOREIGN KEY (id) REFERENCES other')
+	);`
+
+	// Act
+	tables, err := ParseSchemaWithDialect(sql, "postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	if id := columnByName(t, tables[0], "id"); id.IsPK {
+		t.Error("id must not be PK from a CHECK string literal")
+	}
+	if len(tables[0].ForeignKeys) != 0 {
+		t.Fatalf("expected no foreign keys, got %d", len(tables[0].ForeignKeys))
+	}
+}
+
+func TestParseSchema_TableConstraintRealKeysStillDetected(t *testing.T) {
+	// Arrange: a real table-level PRIMARY KEY / FOREIGN KEY must still be detected.
+	sql := `CREATE TABLE t (
+		id INT,
+		owner_id INT,
+		PRIMARY KEY (id),
+		FOREIGN KEY (owner_id) REFERENCES owners (id)
+	);`
+
+	// Act
+	tables, err := ParseSchemaWithDialect(sql, "postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	if id := columnByName(t, tables[0], "id"); !id.IsPK {
+		t.Error("id should be detected as PK")
+	}
+	owner := columnByName(t, tables[0], "owner_id")
+	if !owner.IsFK || owner.FKRefTable != "owners" {
+		t.Fatalf("owner_id: got FK=%v ref=%q, want FK to owners", owner.IsFK, owner.FKRefTable)
+	}
+}
+
 func TestParseSchema_DottedQualifiedTable(t *testing.T) {
 	// Arrange
 	tests := []struct {

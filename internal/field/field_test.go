@@ -162,6 +162,25 @@ func TestGetField_FieldNotFound(t *testing.T) {
 	}
 }
 
+type withUnexported struct {
+	ID     int
+	secret int //nolint:unused // exercises GetField's unexported-field handling
+}
+
+func TestGetField_UnexportedFieldReturnsError(t *testing.T) {
+	// Act: reading an unexported field must not panic (reflect's .Interface()
+	// would), it should report it as not found like Copy/SetField do.
+	_, err := field.GetField(withUnexported{}, "secret")
+
+	// Assert
+	if !errors.Is(err, errx.ErrFieldNotFound) {
+		t.Fatalf("got %v, want %v", err, errx.ErrFieldNotFound)
+	}
+	if !strings.Contains(err.Error(), "unexported") {
+		t.Fatalf("expected error to mention %q, got %v", "unexported", err.Error())
+	}
+}
+
 func TestExists_ReturnsExpectedResult(t *testing.T) {
 	// Arrange
 	s := sample{}

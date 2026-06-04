@@ -106,6 +106,8 @@ result := seedling.InsertOne[Task](t, db,
 result := seedling.InsertOne[Task](t, db, seedling.Only())
 ```
 
+`Only` is an explicit minimal-graph escape hatch: relations not listed are skipped even when they are `Required`, leaving their FK fields at the zero value. Make sure the excluded relations are nullable, or list them in `Only`, when the schema enforces `NOT NULL` foreign keys. Combining `Only` with an explicit `Use` / `Ref` / `When` on a relation outside the set is rejected as a contradiction rather than silently dropped.
+
 `Only` also works with `InsertMany`. The filter is applied per root before batch sharing is resolved, so matching `BelongsTo` parents can still be shared across the batch.
 
 ### Transaction auto-rollback
