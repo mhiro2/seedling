@@ -37,6 +37,16 @@ func init() {
 			"Eichen", "Buchen", "Birken", "Tannen", "Wiesen", "Feld", "Brücken", "Turm", "Markt",
 		},
 		streetSuffixes: []string{"straße", "weg", "gasse", "allee", "platz", "ring"},
+		// firstNames are already ASCII, so only lastNames need romanizing for
+		// Email. Umlauts and ß are transliterated (ä→ae, ö→oe, ü→ue, ß→ss).
+		romanizedLastNames: []string{
+			"mueller", "schmidt", "schneider", "fischer", "weber", "meyer", "wagner", "becker",
+			"schulz", "hoffmann", "schaefer", "koch", "bauer", "richter", "klein", "wolf",
+			"schroeder", "neumann", "schwarz", "zimmermann", "braun", "krueger", "hofmann", "hartmann",
+			"lange", "schmitt", "werner", "schmitz", "krause", "meier", "lehmann", "schmid",
+			"schulze", "maier", "koehler", "herrmann", "koenig", "walter", "mayer", "huber",
+			"kaiser", "fuchs", "peters", "lang", "scholz", "moeller", "weiss", "jung",
+		},
 		formatPhone: func(rng *rand.Rand) string {
 			return fmt.Sprintf("+49-%03d-%07d",
 				rng.IntN(900)+100, rng.IntN(10000000))
