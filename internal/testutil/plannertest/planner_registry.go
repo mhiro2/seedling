@@ -209,6 +209,13 @@ func (r *PlannerRegistry) RegisterManyToMany() {
 	})
 }
 
+// Register adds a custom blueprint to the registry. It is exported so external
+// test packages can register fixtures (e.g. self-referential blueprints) that
+// the built-in Register* helpers do not provide.
+func (r *PlannerRegistry) Register(bp *planner.BlueprintDef) {
+	r.register(bp)
+}
+
 func (r *PlannerRegistry) register(bp *planner.BlueprintDef) {
 	r.blueprints[bp.Name] = bp
 	r.types[bp.ModelType] = bp

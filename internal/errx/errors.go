@@ -3,6 +3,7 @@ package errx
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 var (
@@ -58,6 +59,18 @@ func DuplicateBlueprint(name string) error {
 
 func CycleDetected(nodeIDs []string) error {
 	return fmt.Errorf("%w: nodes %v", ErrCycleDetected, nodeIDs)
+}
+
+// RelationCycle reports a cycle discovered while expanding a blueprint's
+// relations, where path is the chain of blueprints visited before the
+// expansion returned to an already-active blueprint. A required self- or
+// mutual reference produces an infinite chain, so it must be modelled as an
+// Optional relation (a nullable FK) instead.
+func RelationCycle(path []string) error {
+	return fmt.Errorf(
+		"%w: relation chain revisits blueprint %q (path: %s); self/mutual references must be Optional to avoid an infinite required chain",
+		ErrCycleDetected, path[len(path)-1], strings.Join(path, " -> "),
+	)
 }
 
 func FieldNotFoundWithHint(typeName, field string, available []string) error {
