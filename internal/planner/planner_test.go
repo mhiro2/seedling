@@ -838,6 +838,120 @@ func TestPlan_ManyToManyRefAppliesToChildren(t *testing.T) {
 	}
 }
 
+type cycleNode struct {
+	ID       int64
+	ParentID int64
+}
+
+type cycleLeft struct {
+	ID      int64
+	RightID int64
+}
+
+type cycleRight struct {
+	ID     int64
+	LeftID int64
+}
+
+func registerCycleSelfRef(reg *mockRegistry) {
+	reg.Register(&planner.BlueprintDef{
+		Name:     "cycle_node",
+		Table:    "cycle_nodes",
+		PKFields: []string{"ID"},
+		Relations: []planner.RelationDef{
+			{Name: "parent", Kind: planner.BelongsTo, LocalFields: []string{"ParentID"}, RefBlueprint: "cycle_node", Required: true},
+		},
+		Defaults:  func() any { return cycleNode{} },
+		ModelType: reflect.TypeFor[cycleNode](),
+	})
+}
+
+func registerCycleMutual(reg *mockRegistry) {
+	reg.Register(&planner.BlueprintDef{
+		Name:     "cycle_left",
+		Table:    "cycle_lefts",
+		PKFields: []string{"ID"},
+		Relations: []planner.RelationDef{
+			{Name: "right", Kind: planner.BelongsTo, LocalFields: []string{"RightID"}, RefBlueprint: "cycle_right", Required: true},
+		},
+		Defaults:  func() any { return cycleLeft{} },
+		ModelType: reflect.TypeFor[cycleLeft](),
+	})
+	reg.Register(&planner.BlueprintDef{
+		Name:     "cycle_right",
+		Table:    "cycle_rights",
+		PKFields: []string{"ID"},
+		Relations: []planner.RelationDef{
+			{Name: "left", Kind: planner.BelongsTo, LocalFields: []string{"LeftID"}, RefBlueprint: "cycle_left", Required: true},
+		},
+		Defaults:  func() any { return cycleRight{} },
+		ModelType: reflect.TypeFor[cycleRight](),
+	})
+}
+
+func TestPlan_RequiredSelfReferenceReturnsCycleError(t *testing.T) {
+	// Arrange
+	reg := newMockRegistry()
+	registerCycleSelfRef(reg)
+
+	// Act
+	_, err := planner.Plan(reg, reflect.TypeFor[cycleNode](), nil)
+
+	// Assert
+	if !errors.Is(err, errx.ErrCycleDetected) {
+		t.Fatalf("got %v, want %v", err, errx.ErrCycleDetected)
+	}
+}
+
+func TestPlan_RequiredMutualReferenceReturnsCycleError(t *testing.T) {
+	// Arrange
+	reg := newMockRegistry()
+	registerCycleMutual(reg)
+
+	// Act
+	_, err := planner.Plan(reg, reflect.TypeFor[cycleLeft](), nil)
+
+	// Assert
+	if !errors.Is(err, errx.ErrCycleDetected) {
+		t.Fatalf("got %v, want %v", err, errx.ErrCycleDetected)
+	}
+}
+
+func TestPlan_OptionalSelfReferenceExpandsOneLevel(t *testing.T) {
+	// Arrange: an optional self-reference explicitly Ref'd expands exactly one
+	// level and must not be misreported as a cycle.
+	reg := newMockRegistry()
+	reg.Register(&planner.BlueprintDef{
+		Name:     "tree_node",
+		Table:    "tree_nodes",
+		PKFields: []string{"ID"},
+		Relations: []planner.RelationDef{
+			{Name: "parent", Kind: planner.BelongsTo, LocalFields: []string{"ParentID"}, RefBlueprint: "tree_node"},
+		},
+		Defaults:  func() any { return cycleNode{} },
+		ModelType: reflect.TypeFor[cycleNode](),
+	})
+
+	opts := newEmptyOptionSet()
+	opts.Refs["parent"] = newEmptyOptionSet()
+
+	// Act
+	result, err := planner.Plan(reg, reflect.TypeFor[cycleNode](), opts)
+	// Assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Graph.Node("tree_node") == nil {
+		t.Fatal("expected root node")
+	}
+	if result.Graph.Node("tree_node.parent") == nil {
+		t.Fatal("expected one expanded parent node")
+	}
+	if result.Graph.Node("tree_node.parent.parent") != nil {
+		t.Fatal("optional self-reference should not expand a second level")
+	}
+}
+
 func TestPlan_OptionalManyToManyRefExpandsRelation(t *testing.T) {
 	// Arrange
 	reg := newMockRegistry()

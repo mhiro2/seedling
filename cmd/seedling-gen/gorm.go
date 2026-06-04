@@ -312,11 +312,15 @@ func toSnakeCase(s string) string {
 func GenerateGorm(w io.Writer, pkg, modelImportPath string, models []GormModel) error {
 	alias := filepath.Base(modelImportPath)
 	normalized := normalizeGormModels(models, alias)
+	spec, err := importSpec(alias, modelImportPath)
+	if err != nil {
+		return fmt.Errorf("gorm model import: %w", err)
+	}
 	imports := []string{
 		`"context"`,
 		`"github.com/mhiro2/seedling"`,
 		`"gorm.io/gorm"`,
-		alias + ` "` + modelImportPath + `"`,
+		spec,
 	}
 	if normalizedModelsNeedTimeImport(normalized) {
 		imports = append(imports, `"time"`)

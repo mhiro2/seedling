@@ -57,6 +57,7 @@ Core responsibilities:
 - expand `belongs_to`, `has_many`, and `many_to_many`
 - lazy evaluation with `Only(...)`: skip root-level relations not in the set, building only the required subgraph
 - reuse already-expanded nodes by node ID
+- detect cycles during expansion: a required relation that returns to a blueprint already on the expansion stack has no finite expansion and is rejected with `ErrCycleDetected` (model self/mutual references as `Optional`)
 - mark `Use(...)` relations as provided nodes so the executor skips insertion
 
 Relation expansion rules:

@@ -153,6 +153,7 @@ For runnable examples of these options, see [`example_test.go`](../example_test.
 - `HasMany`: insert children automatically from a parent blueprint using `Count`
 - `ManyToMany`: create related rows and join-table rows together
 - Composite keys: use `PKFields`, `LocalFields`, and `RemoteFields`
+- Self/mutual references (e.g. `employees.manager_id → employees.id`, or `A ↔ B`) must be `Optional`: a *required* reference back to a blueprint already being expanded has no finite expansion and is rejected with `ErrCycleDetected`
 
 The execution model and graph expansion rules are documented in [ARCHITECTURE.md](../ARCHITECTURE.md).
 
