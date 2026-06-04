@@ -590,3 +590,16 @@ func TestPlanInsertE_RootTypeMismatch(t *testing.T) {
 		t.Fatalf("got %v, want %v", err, ErrTypeMismatch)
 	}
 }
+
+func TestPlan_DebugString_NilGraph(t *testing.T) {
+	// A zero-value Plan has no graph; DebugString/DryRunString must report it
+	// as empty instead of panicking, symmetric with Result.DebugString.
+	var p Plan[internalCompany]
+
+	if got := p.DebugString(); got != "(empty)" {
+		t.Fatalf("DebugString got %q, want %q", got, "(empty)")
+	}
+	if got := p.DryRunString(); got != "(empty)" {
+		t.Fatalf("DryRunString got %q, want %q", got, "(empty)")
+	}
+}

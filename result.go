@@ -352,9 +352,6 @@ func cloneNodeResults(nodes map[string]executor.NodeResult) map[string]NodeResul
 }
 
 func debugResultString(g *graph.Graph) string {
-	if g == nil {
-		return "(empty)"
-	}
 	return debug.ResultString(g)
 }
 

@@ -12,6 +12,9 @@ import (
 // TreeString returns a human-readable tree representation of the graph,
 // starting from the root node.
 func TreeString(g *graph.Graph) string {
+	if g == nil {
+		return "(empty)"
+	}
 	root := g.Root()
 	if root == nil {
 		return "(empty)"
@@ -70,6 +73,9 @@ func writeNode(b *strings.Builder, node *graph.Node, prefix, prevID string, seen
 // ResultString returns a human-readable tree representation of execution results,
 // showing each node with its PK value.
 func ResultString(g *graph.Graph) string {
+	if g == nil {
+		return "(empty)"
+	}
 	root := g.Root()
 	if root == nil {
 		return "(empty)"
@@ -135,6 +141,9 @@ func writeResultNode(b *strings.Builder, node *graph.Node, prefix, prevID string
 // Each step shows which table will be inserted and how FK fields are populated
 // from parent PK values.
 func DryRunString(g *graph.Graph) string {
+	if g == nil {
+		return "(empty)"
+	}
 	order, err := g.TopoSort()
 	if err != nil {
 		return fmt.Sprintf("(error: %v)", err)
