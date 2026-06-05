@@ -37,6 +37,24 @@ func init() {
 			"Foch", "Clemenceau", "Verdun", "Paix", "Moulin", "Château", "Fontaine", "Gare",
 		},
 		streetSuffixes: []string{"rue", "avenue", "boulevard", "place", "allée", "impasse"},
+		// Accented names are transliterated to ASCII (é/è/ê→e, ç→c, ë→e, î→i)
+		// so Email produces valid ASCII local-parts.
+		romanizedFirstNames: []string{
+			"jean", "marie", "pierre", "francoise", "michel", "monique", "andre", "isabelle",
+			"philippe", "catherine", "alain", "nathalie", "jacques", "sylvie", "bernard", "christine",
+			"daniel", "martine", "patrick", "dominique", "nicolas", "sophie", "laurent", "julie",
+			"thomas", "camille", "lucas", "lea", "hugo", "manon", "theo", "chloe",
+			"antoine", "emma", "louis", "clara", "gabriel", "ines", "raphael", "jade",
+			"maxime", "louise", "alexandre", "alice", "julien", "juliette", "mathieu", "charlotte",
+		},
+		romanizedLastNames: []string{
+			"martin", "bernard", "dubois", "thomas", "robert", "richard", "petit", "durand",
+			"leroy", "moreau", "simon", "laurent", "lefebvre", "michel", "garcia", "david",
+			"bertrand", "roux", "vincent", "fournier", "morel", "girard", "andre", "lefevre",
+			"mercier", "dupont", "lambert", "bonnet", "francois", "martinez", "legrand", "garnier",
+			"faure", "rousseau", "blanc", "guerin", "muller", "henry", "roussel", "nicolas",
+			"perrin", "morin", "mathieu", "clement", "gauthier", "dumont", "lopez", "fontaine",
+		},
 		formatPhone: func(rng *rand.Rand) string {
 			return fmt.Sprintf("+33-%d-%02d-%02d-%02d-%02d",
 				rng.IntN(5)+1, rng.IntN(100), rng.IntN(100), rng.IntN(100), rng.IntN(100))

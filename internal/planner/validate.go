@@ -81,6 +81,14 @@ func validateOptions(reg Registry, bp *BlueprintDef, opts *OptionSet, allowOnly 
 		if opts.Omits[name] {
 			return fmt.Errorf("validate relation %q options: %w", name, errx.OmitAndUseConflict(bp.Name, name))
 		}
+		// A Use'd relation is always bound, so a When predicate can never take
+		// effect, whether it is passed as an option or declared on the relation.
+		if _, ok := opts.Whens[name]; ok {
+			return fmt.Errorf("validate relation %q options: %w", name, errx.UseAndWhenConflict(bp.Name, name))
+		}
+		if rel, ok := rels.byName[name]; ok && rel.When != nil {
+			return fmt.Errorf("validate relation %q options: %w", name, errx.UseAndWhenConflict(bp.Name, name))
+		}
 	}
 	for name := range opts.Refs {
 		if opts.Omits[name] {

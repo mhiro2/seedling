@@ -67,6 +67,13 @@ func Execute(ctx context.Context, db any, g *graph.Graph, lookup BlueprintLookup
 			return nil, fmt.Errorf("execute graph: %w", err)
 		}
 
+		// Planner-built nodes always carry a struct value, but a graph.Node
+		// assembled externally may carry a nil interface; reject it before the
+		// reflection paths below panic on reflect.New(nil) or a nil assertion.
+		if node.Value == nil {
+			return nil, fmt.Errorf("execute node %q: node value must not be nil", node.ID)
+		}
+
 		// Collect FK bindings for logging before assignment.
 		var bindings []FKBinding
 		if logFn != nil {

@@ -246,6 +246,26 @@ func TestUseAndRefConflict(t *testing.T) {
 	}
 }
 
+func TestUseAndWhenConflict(t *testing.T) {
+	// Act
+	err := UseAndWhenConflict("posts", "author")
+
+	// Assert
+	if !errors.Is(err, ErrInvalidOption) {
+		t.Fatalf("got %v, want %v", err, ErrInvalidOption)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "posts") {
+		t.Errorf("expected error to contain %q, got %v", "posts", msg)
+	}
+	if !strings.Contains(msg, "author") {
+		t.Errorf("expected error to contain %q, got %v", "author", msg)
+	}
+	if !strings.Contains(msg, "Use") || !strings.Contains(msg, "When") {
+		t.Errorf("expected error to mention Use and When, got %v", msg)
+	}
+}
+
 func TestOmitRequiredRelation(t *testing.T) {
 	// Act
 	err := OmitRequiredRelation("posts", "author")

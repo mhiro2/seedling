@@ -48,7 +48,10 @@ type Relation struct {
 	Optional bool
 
 	// Count specifies how many related records to create for HasMany and
-	// ManyToMany relations. Defaults to 1 if not set.
+	// ManyToMany relations. The zero value (including when Count is left
+	// unset) creates no related records, so set it explicitly (e.g. Count: 1)
+	// to expand the relation. A negative Count is rejected when the blueprint
+	// is registered.
 	Count int
 
 	// When is an optional predicate that dynamically controls whether this

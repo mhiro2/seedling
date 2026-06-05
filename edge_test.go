@@ -98,6 +98,137 @@ func TestUseAndRefConflict(t *testing.T) {
 	}
 }
 
+func TestUseAndWhenConflict(t *testing.T) {
+	// Arrange
+	setupBlueprints(t)
+	company := insertOne[Company](t, nil)
+
+	// Act
+	// A Use'd relation is always bound, so a When predicate on the same
+	// relation is contradictory and must be rejected at validation.
+	_, err := buildE[User](t,
+		seedling.Use("company", company),
+		seedling.When[User]("company", func(User) bool { return true }),
+	)
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected error for Use+When on same relation")
+	}
+	if !errors.Is(err, seedling.ErrInvalidOption) {
+		t.Fatalf("got %v, want %v", err, seedling.ErrInvalidOption)
+	}
+}
+
+func TestUseAndBlueprintWhenConflict(t *testing.T) {
+	// A blueprint-level When on a relation is just as incompatible with Use as
+	// an option-level When: the Use'd value is always bound, so the predicate
+	// can never apply. Both must be rejected at validation.
+	reg := seedling.NewRegistry()
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
+		Name:     "company",
+		Table:    "companies",
+		PKField:  "ID",
+		Defaults: func() Company { return Company{Name: "acme"} },
+		Insert: func(_ context.Context, _ seedling.DBTX, v Company) (Company, error) {
+			v.ID = 1
+			return v, nil
+		},
+	})
+	seedling.MustRegisterTo(reg, seedling.Blueprint[User]{
+		Name:     "user",
+		Table:    "users",
+		PKField:  "ID",
+		Defaults: func() User { return User{Name: "alice"} },
+		Relations: []seedling.Relation{
+			{
+				Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company",
+				When: seedling.WhenFunc(func(User) bool { return true }),
+			},
+		},
+		Insert: func(_ context.Context, _ seedling.DBTX, v User) (User, error) {
+			v.ID = 2
+			return v, nil
+		},
+	})
+	company := seedling.NewSession[Company](reg).InsertOne(t, nil).Root()
+
+	// Act
+	_, err := seedling.NewSession[User](reg).BuildE(seedling.Use("company", company))
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected error for Use on a relation with a blueprint-level When")
+	}
+	if !errors.Is(err, seedling.ErrInvalidOption) {
+		t.Fatalf("got %v, want %v", err, seedling.ErrInvalidOption)
+	}
+}
+
+func TestHasMany_ZeroCount_CreatesNoChildren(t *testing.T) {
+	// Arrange: a HasMany relation with Count: 0 must expand to no children
+	// rather than being silently rounded up to one.
+	reg := seedling.NewRegistry()
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Department]{
+		Name:     "department",
+		Table:    "departments",
+		PKField:  "ID",
+		Defaults: func() Department { return Department{Name: "engineering"} },
+		Relations: []seedling.Relation{
+			{Name: "employees", Kind: seedling.HasMany, LocalField: "DepartmentID", RefBlueprint: "employee", Count: 0},
+		},
+		Insert: func(_ context.Context, _ seedling.DBTX, v Department) (Department, error) {
+			v.ID = 1
+			return v, nil
+		},
+	})
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Employee]{
+		Name:     "employee",
+		Table:    "employees",
+		PKField:  "ID",
+		Defaults: func() Employee { return Employee{Name: "employee"} },
+		Relations: []seedling.Relation{
+			{Name: "department", Kind: seedling.BelongsTo, LocalField: "DepartmentID", RefBlueprint: "department"},
+		},
+		Insert: func(_ context.Context, _ seedling.DBTX, v Employee) (Employee, error) {
+			v.ID = 2
+			return v, nil
+		},
+	})
+
+	// Act
+	result := seedling.NewSession[Department](reg).InsertOne(t, nil)
+
+	// Assert
+	if got := result.Nodes("employee"); len(got) != 0 {
+		t.Fatalf("expected 0 employee nodes for Count=0, got %d", len(got))
+	}
+}
+
+func TestRegister_NegativeCount_ReturnsError(t *testing.T) {
+	// Arrange & Act
+	reg := seedling.NewRegistry()
+	err := seedling.RegisterTo(reg, seedling.Blueprint[Department]{
+		Name:    "department",
+		Table:   "departments",
+		PKField: "ID",
+		Relations: []seedling.Relation{
+			{Name: "employees", Kind: seedling.HasMany, LocalField: "DepartmentID", RefBlueprint: "employee", Count: -1},
+		},
+		Insert: func(_ context.Context, _ seedling.DBTX, v Department) (Department, error) {
+			return v, nil
+		},
+	})
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected error for negative Count")
+	}
+	if !errors.Is(err, seedling.ErrInvalidOption) {
+		t.Fatalf("got %v, want %v", err, seedling.ErrInvalidOption)
+	}
+}
+
 func TestRef_RejectsRootOnlyOptions(t *testing.T) {
 	// Arrange
 	ctx := context.Background()

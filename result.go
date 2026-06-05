@@ -352,9 +352,6 @@ func cloneNodeResults(nodes map[string]executor.NodeResult) map[string]NodeResul
 }
 
 func debugResultString(g *graph.Graph) string {
-	if g == nil {
-		return "(empty)"
-	}
 	return debug.ResultString(g)
 }
 
@@ -443,8 +440,7 @@ func cleanupResultGraph(ctx context.Context, g *graph.Graph, deleteFns map[strin
 		return fmt.Errorf("sort cleanup graph: %w", err)
 	}
 
-	for i := len(order) - 1; i >= 0; i-- {
-		node := order[i]
+	for _, node := range slices.Backward(order) {
 		if node.IsProvided {
 			continue
 		}

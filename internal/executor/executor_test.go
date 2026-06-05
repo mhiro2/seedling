@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/mhiro2/seedling/internal/errx"
@@ -329,5 +330,28 @@ func TestExecute_InsertError(t *testing.T) {
 	// Assert
 	if !errors.Is(err, errx.ErrInsertFailed) {
 		t.Fatalf("got %v, want %v", err, errx.ErrInsertFailed)
+	}
+}
+
+func TestExecute_NilNodeValue(t *testing.T) {
+	// Arrange: a child node assembled outside the planner carries a nil value
+	// and depends on a parent, which would panic in assignFKs on
+	// reflect.New(nil). The executor must return an error instead.
+	g := graph.New()
+	company := &graph.Node{ID: "company", BlueprintName: "company", Value: Company{Name: "acme"}, PKField: "ID"}
+	user := &graph.Node{ID: "user", BlueprintName: "user", Value: nil, PKField: "ID"}
+	g.AddNode(user)
+	g.AddNode(company)
+	g.AddEdge(company, user, "CompanyID")
+
+	// Act
+	_, err := executor.Execute(t.Context(), nil, g, newTestLookup(), nil)
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected error for nil node value")
+	}
+	if !strings.Contains(err.Error(), "nil") {
+		t.Fatalf("expected nil-value error, got %v", err)
 	}
 }

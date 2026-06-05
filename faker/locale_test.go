@@ -154,8 +154,10 @@ func TestZH_PhoneFormat(t *testing.T) {
 	}
 }
 
-func TestCJK_EmailIsASCII(t *testing.T) {
-	for _, locale := range []string{"ja", "zh", "ko"} {
+func TestEmailIsASCII(t *testing.T) {
+	// Locales with non-Latin or accented names must romanize for Email so the
+	// generated address is always valid ASCII (see Faker.Email).
+	for _, locale := range []string{"ja", "zh", "ko", "de", "fr"} {
 		t.Run(locale, func(t *testing.T) {
 			f := NewWithLocale(rand.New(rand.NewPCG(1, 1)), locale)
 			for range 50 {

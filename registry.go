@@ -138,6 +138,14 @@ func registerTyped[T any](r *registry, bp Blueprint[T]) error {
 		}
 	}
 
+	// Count is the number of HasMany/ManyToMany children to create. A negative
+	// value is meaningless (zero creates none), so reject it at the source.
+	for _, rel := range bp.Relations {
+		if rel.Count < 0 {
+			return fmt.Errorf("%w: blueprint %q relation %q has negative Count %d", errx.ErrInvalidOption, bp.Name, rel.Name, rel.Count)
+		}
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 

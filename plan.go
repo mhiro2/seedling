@@ -104,7 +104,11 @@ func (p *Plan[T]) InsertE(ctx context.Context, db DBTX) (Result[T], error) {
 		return zero, fmt.Errorf("execute plan: %w", err)
 	}
 
-	root := execResult.Root.(T)
+	root, ok := execResult.Root.(T)
+	if !ok {
+		var zero Result[T]
+		return zero, fmt.Errorf("%w: root node has value %T, want %s", ErrTypeMismatch, execResult.Root, reflect.TypeFor[T]())
+	}
 
 	result := Result[T]{
 		root:      root,

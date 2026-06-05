@@ -155,6 +155,7 @@ For runnable examples of these options, see [`example_test.go`](../example_test.
 - `HasMany`: insert children automatically from a parent blueprint using `Count`
 - `ManyToMany`: create related rows and join-table rows together
 - Composite keys: use `PKFields`, `LocalFields`, and `RemoteFields`
+- Matching field types: a child FK field and its parent PK field must have the exact same Go type. A named type and its underlying type (e.g. `type UserID int64` versus `int64`) are not interchangeable, so declare the FK with the same type as the referenced PK
 - Self/mutual references (e.g. `employees.manager_id → employees.id`, or `A ↔ B`) must be `Optional`: a *required* reference back to a blueprint already being expanded has no finite expansion and is rejected with `ErrCycleDetected`
 
 The execution model and graph expansion rules are documented in [ARCHITECTURE.md](../ARCHITECTURE.md).
@@ -166,9 +167,9 @@ seedling does not generate SQL at runtime. Your blueprint owns the `Insert` and 
 - sqlc: map `Insert` callbacks to generated query methods. Prefer `seedling-gen sqlc --config ...` for automatic setup
 - `database/sql`: pass `*sql.DB` or `*sql.Tx`
 - pgx: pass your pool or transaction handle, or use `github.com/mhiro2/seedling/seedlingpgx` for rollback-on-cleanup helpers
-- GORM: use `-gorm` to generate blueprints with `gorm.DB`-based Insert/Delete callbacks
-- ent: use `-ent` to generate blueprints with ent fluent builder Insert/Delete callbacks
-- Atlas HCL: use `-atlas` to generate blueprints from Atlas schema definitions
+- GORM: use the `gorm` subcommand to generate blueprints with `gorm.DB`-based Insert/Delete callbacks
+- ent: use the `ent` subcommand to generate blueprints with ent fluent builder Insert/Delete callbacks
+- Atlas HCL: use the `atlas` subcommand to generate blueprints from Atlas schema definitions
 
 When you use `database/sql`, [`WithTx`](https://pkg.go.dev/github.com/mhiro2/seedling#WithTx) is the easiest way to get a rollback-on-cleanup transaction. [`NewTestSession`](https://pkg.go.dev/github.com/mhiro2/seedling#NewTestSession) offers the same with registry binding and custom `sql.TxOptions`. For pgx, use [`seedlingpgx.WithTx`](https://pkg.go.dev/github.com/mhiro2/seedling/seedlingpgx#WithTx) or [`seedlingpgx.NewTestSession`](https://pkg.go.dev/github.com/mhiro2/seedling/seedlingpgx#NewTestSession).
 

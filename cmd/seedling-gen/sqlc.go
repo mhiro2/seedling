@@ -260,11 +260,14 @@ func (info *SqlcInfo) FindQueryForTable(table Table) *SqlcQuery {
 }
 
 // FindDeleteQueryForTable finds the sqlc delete query function for the given table.
+// Delete queries are parsed from functions whose name starts with "delete", so a
+// query matches a table only when its name is exactly Delete<GoName>. A substring
+// match would wrongly bind, say, DeleteUserProfile to the User table, mirroring the
+// exact matching used by FindQueryForTable.
 func (info *SqlcInfo) FindDeleteQueryForTable(table Table) *SqlcDeleteQuery {
+	target := "delete" + strings.ToLower(table.GoName)
 	for i, dq := range info.DeleteQueries {
-		name := strings.ToLower(dq.Name)
-		target := strings.ToLower(table.GoName)
-		if strings.Contains(name, target) {
+		if strings.ToLower(dq.Name) == target {
 			return &info.DeleteQueries[i]
 		}
 	}
