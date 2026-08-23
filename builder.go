@@ -48,7 +48,9 @@ func (b *Builder[T]) Omit(name string) *Builder[T] {
 	return b
 }
 
-// With applies a type-safe modification function to the root struct.
+// With applies a type-safe modification function to the root model.
+// For Builder[*Model], fn receives **Model because T is already a pointer.
+// Use Apply with the package-level With option to receive *Model directly.
 func (b *Builder[T]) With(fn func(*T)) *Builder[T] {
 	b.opts = append(b.opts, With(fn))
 	return b
@@ -67,12 +69,16 @@ func (b *Builder[T]) InlineTrait(opts ...Option) *Builder[T] {
 }
 
 // Generate applies a rand-driven mutation function.
+// For Builder[*Model], fn receives **Model because T is already a pointer.
+// Use Apply with the package-level Generate option to receive *Model directly.
 func (b *Builder[T]) Generate(fn func(*rand.Rand, *T)) *Builder[T] {
 	b.opts = append(b.opts, Generate(fn))
 	return b
 }
 
 // GenerateE applies a rand-driven mutation function that can return an error.
+// For Builder[*Model], fn receives **Model because T is already a pointer.
+// Use Apply with the package-level GenerateE option to receive *Model directly.
 func (b *Builder[T]) GenerateE(fn func(*rand.Rand, *T) error) *Builder[T] {
 	b.opts = append(b.opts, GenerateE(fn))
 	return b

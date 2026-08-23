@@ -259,7 +259,7 @@ func TestRegister_DuplicateGoType(t *testing.T) {
 	}
 }
 
-func TestRegister_PointerTypeRejected(t *testing.T) {
+func TestRegister_PointerToStruct(t *testing.T) {
 	// Arrange
 	reg := seedling.NewRegistry()
 
@@ -272,13 +272,9 @@ func TestRegister_PointerTypeRejected(t *testing.T) {
 			return v, nil
 		},
 	})
-
 	// Assert
-	if err == nil {
-		t.Fatal("expected error for pointer type blueprint")
-	}
-	if !errors.Is(err, seedling.ErrInvalidOption) {
-		t.Fatalf("got %v, want %v", err, seedling.ErrInvalidOption)
+	if err != nil {
+		t.Fatalf("register pointer blueprint: %v", err)
 	}
 }
 

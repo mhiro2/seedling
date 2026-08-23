@@ -33,11 +33,14 @@ func applyOpts(node *graph.Node, opts *OptionSet) error {
 	// Apply Set options.
 	for fieldName, value := range opts.Sets {
 		// We need a pointer to set fields.
+		keepPointer := reflect.ValueOf(node.Value).Kind() == reflect.Pointer
 		ptr := toPointer(node.Value)
 		if err := field.SetField(ptr, fieldName, value); err != nil {
 			return fmt.Errorf("apply set %q: %w", fieldName, err)
 		}
-		node.Value = reflect.ValueOf(ptr).Elem().Interface()
+		if !keepPointer {
+			node.Value = reflect.ValueOf(ptr).Elem().Interface()
+		}
 		node.SetFields = append(node.SetFields, fieldName)
 	}
 

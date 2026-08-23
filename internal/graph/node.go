@@ -5,7 +5,7 @@ type Node struct {
 	ID            string // unique identifier within the graph
 	BlueprintName string // name of the blueprint this node was created from
 	Table         string // database table name
-	Value         any    // the struct value to be inserted
+	Value         any    // the struct or pointer-to-struct value to be inserted
 	IsProvided    bool   // true if the value was provided via Use (skip insert)
 
 	// PKField is the Go struct field name of the primary key.

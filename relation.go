@@ -56,9 +56,9 @@ type Relation struct {
 
 	// When is an optional predicate that dynamically controls whether this
 	// relation should be expanded. The function receives the current record
-	// value (the owning blueprint's struct) and returns true to expand the
-	// relation or false to skip it. When nil, the relation uses the
-	// standard Optional logic.
+	// value (the owning blueprint's struct or pointer-to-struct) and returns
+	// true to expand the relation or false to skip it. When nil, the relation
+	// uses the standard Optional logic.
 	//
 	// This allows conditional relation expansion based on the record's
 	// field values at plan time:

@@ -122,19 +122,26 @@ func registerTyped[T any](r *registry, bp Blueprint[T]) error {
 	if modelType.Kind() == reflect.Interface {
 		return fmt.Errorf("%w: blueprint %q uses interface type %s; register a concrete struct type", errx.ErrInvalidOption, bp.Name, modelType)
 	}
-	if modelType.Kind() == reflect.Pointer {
-		return fmt.Errorf("%w: blueprint %q uses pointer type %s; use the struct type directly (e.g. Blueprint[User] instead of Blueprint[*User])", errx.ErrInvalidOption, bp.Name, modelType)
+	if modelType.Kind() != reflect.Struct {
+		if modelType.Kind() != reflect.Pointer {
+			return fmt.Errorf("%w: blueprint %q uses unsupported model type %s; blueprints must use a struct or an unnamed pointer directly to a struct", errx.ErrInvalidOption, bp.Name, modelType)
+		}
+		if modelType.Name() != "" || modelType.Elem().Kind() != reflect.Struct {
+			return fmt.Errorf("%w: blueprint %q uses unsupported pointer type %s; pointer blueprints must use an unnamed pointer directly to a struct (e.g. Blueprint[*User])", errx.ErrInvalidOption, bp.Name, modelType)
+		}
 	}
 
-	// Defaults must produce a value whose dynamic type equals T. When/Validate
-	// rely on direct type assertions to T (not *T), so a Defaults that returns
-	// a pointer or any other shape would silently turn typed predicates into
-	// (false, nil). Validate at registration time so the failure surfaces at
-	// the source instead of much later in expand_relations.
+	// Defaults must produce a value whose dynamic type equals T. Typed options,
+	// insertion, and cleanup rely on direct assertions to that exact type.
+	// Validate at registration time so a mismatch surfaces at the source.
 	if bp.Defaults != nil {
-		got := reflect.TypeOf(bp.Defaults())
+		value := bp.Defaults()
+		got := reflect.TypeOf(value)
 		if got != modelType {
 			return fmt.Errorf("%w: blueprint %q Defaults returned %s but expected value type %s", errx.ErrInvalidOption, bp.Name, got, modelType)
+		}
+		if modelType.Kind() == reflect.Pointer && reflect.ValueOf(value).IsNil() {
+			return fmt.Errorf("%w: blueprint %q Defaults returned nil %s", errx.ErrInvalidOption, bp.Name, modelType)
 		}
 	}
 
@@ -174,6 +181,13 @@ func registerTyped[T any](r *registry, bp Blueprint[T]) error {
 		defaults: func() any {
 			if bp.Defaults != nil {
 				return bp.Defaults()
+			}
+			if modelType.Kind() == reflect.Pointer {
+				value := reflect.New(modelType.Elem())
+				if value.Type() != modelType {
+					value = value.Convert(modelType)
+				}
+				return value.Interface()
 			}
 			var z T
 			return z
