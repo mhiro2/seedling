@@ -3,7 +3,7 @@ module github.com/mhiro2/seedling/seedlingpgx
 go 1.26.0
 
 require (
-	github.com/jackc/pgx/v5 v5.8.0
+	github.com/jackc/pgx/v5 v5.10.0
 	github.com/mhiro2/seedling v0.3.2
 )
 

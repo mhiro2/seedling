@@ -19,16 +19,36 @@ permissions:
 
 jobs:
   lint:
+    name: Lint (${{ matrix.module }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - module: root
+            directory: .
+            go_mod: go.mod
+            go_sum: go.sum
+            build_tags: ""
+          - module: integration
+            directory: integration/
+            go_mod: integration/go.mod
+            go_sum: integration/go.sum
+            build_tags: "--build-tags=integration"
+          - module: seedlingpgx
+            directory: seedlingpgx/
+            go_mod: seedlingpgx/go.mod
+            go_sum: seedlingpgx/go.sum
+            build_tags: ""
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version-file: ${{ matrix.go_mod }}
           cache: true
-          cache-dependency-path: go.sum
+          cache-dependency-path: ${{ matrix.go_sum }}
       - name: Set up mise
         uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
         with:
@@ -42,44 +62,65 @@ jobs:
         uses: reviewdog/action-golangci-lint@c76cceaaab89abe74e649d2e34c6c9adc26662d2 # v2.10.0
         with:
           golangci_lint_version: ${{ steps.golangci.outputs.version }}
+          golangci_lint_flags: "--config=${{ github.workspace }}/.golangci.yaml ${{ matrix.build_tags }}"
+          workdir: ${{ matrix.directory }}
           github_token: ${{ secrets.github_token }}
           level: warning
           filter_mode: nofilter
           reporter: github-pr-review
 
-  lint-integration:
+  module-quality:
+    name: Format and licenses (${{ matrix.module }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - module: root
+            go_mod: go.mod
+          - module: integration
+            go_mod: integration/go.mod
+          - module: seedlingpgx
+            go_mod: seedlingpgx/go.mod
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: integration/go.mod
+          go-version-file: ${{ matrix.go_mod }}
           cache: true
-          cache-dependency-path: integration/go.sum
+          cache-dependency-path: |
+            go.sum
+            integration/go.sum
+            seedlingpgx/go.sum
       - name: Set up mise
         uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654 # v4.2.4
         with:
           version: 2026.6.0
-          install: false
+          install: true
+          install_args: golangci-lint
           cache: false
-      - name: Resolve golangci-lint version
-        id: golangci
-        run: echo "version=v$(mise current golangci-lint)" >> "$GITHUB_OUTPUT"
-      - name: Run golangci-lint
-        uses: reviewdog/action-golangci-lint@c76cceaaab89abe74e649d2e34c6c9adc26662d2 # v2.10.0
-        with:
-          golangci_lint_version: ${{ steps.golangci.outputs.version }}
-          golangci_lint_flags: "--config=${{ github.workspace }}/.golangci.yaml --build-tags=integration"
-          workdir: integration/
-          github_token: ${{ secrets.github_token }}
-          level: warning
-          filter_mode: nofilter
-          reporter: github-pr-review
+      - name: Install Go tools
+        run: go install tool
+      - name: Check formatting
+        run: make fmt-check-${{ matrix.module }}
+      - name: Check licenses
+        run: make check-licenses-${{ matrix.module }}
 
   test:
+    name: Unit test (${{ matrix.module }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - module: root
+            go_mod: go.mod
+            go_sum: go.sum
+          - module: seedlingpgx
+            go_mod: seedlingpgx/go.mod
+            go_sum: seedlingpgx/go.sum
     permissions:
       actions: write
       contents: read
@@ -90,16 +131,20 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version-file: ${{ matrix.go_mod }}
           cache: true
-          cache-dependency-path: go.sum
-      - name: Install dependencies
+          cache-dependency-path: |
+            go.sum
+            ${{ matrix.go_sum }}
+      - name: Install Go tools
         run: go install tool
-      - name: Check licenses
-        run: make check-licenses
       - name: Test
-        run: make test
+        run: make test-${{ matrix.module }}
+      - name: Test seedlingpgx against in-repo root
+        if: matrix.module == 'seedlingpgx'
+        run: make test-seedlingpgx-inrepo
       - name: Coverage analysis
+        if: matrix.module == 'root'
         uses: k1LoW/octocov-action@a167dc0dee441b7ffc45e1b862ab55ec0d87f278 # v1.5.2
         with:
           config: .octocov.yaml
@@ -121,9 +166,10 @@ jobs:
         with:
           go-version-file: integration/go.mod
           cache: true
-          cache-dependency-path: integration/go.sum
-      - name: Install dependencies
+          cache-dependency-path: |
+            go.sum
+            integration/go.sum
+      - name: Install Go tools
         run: go install tool
-        working-directory: integration/
       - name: Run ${{ matrix.db }} integration tests
         run: make test-integration-${{ matrix.db }}
