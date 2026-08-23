@@ -132,12 +132,13 @@ func (s Session[T]) InsertManyE(ctx context.Context, db DBTX, n int, opts ...Opt
 	}
 
 	result := BatchResult[T]{
-		roots:     roots,
-		rootIDs:   plan.RootIDs,
-		nodes:     execResult.Nodes,
-		graph:     execResult.Graph,
-		registry:  s.registry,
-		deleteFns: snapshotDeleteFns(s.registry, execResult.Nodes),
+		roots:         roots,
+		rootIDs:       plan.RootIDs,
+		nodes:         execResult.Nodes,
+		graph:         execResult.Graph,
+		registry:      s.registry,
+		deleteFns:     snapshotDeleteFns(s.registry, execResult.Nodes),
+		cleanupValues: snapshotCleanupValues(execResult.Graph),
 	}
 
 	for i, root := range roots {

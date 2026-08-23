@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mhiro2/seedling/internal/clone"
 	"github.com/mhiro2/seedling/internal/debug"
 	"github.com/mhiro2/seedling/internal/errx"
 	"github.com/mhiro2/seedling/internal/executor"
@@ -24,11 +25,12 @@ type deleteFn struct {
 
 // Result holds all created nodes after insertion.
 type Result[T any] struct {
-	root      T
-	nodes     map[string]executor.NodeResult
-	graph     *graph.Graph
-	registry  *Registry
-	deleteFns map[string]deleteFn // blueprint name → delete function snapshot
+	root          T
+	nodes         map[string]executor.NodeResult
+	graph         *graph.Graph
+	registry      *Registry
+	deleteFns     map[string]deleteFn // blueprint name → delete function snapshot
+	cleanupValues map[string]any      // node ID → as-inserted value snapshot
 }
 
 // Root returns the root record that was inserted.
@@ -101,8 +103,12 @@ func (r Result[T]) Cleanup(tb testing.TB, db DBTX) {
 // is not affected by subsequent registry resets or re-registrations.
 //
 // CleanupE is fail-fast: it stops at the first delete error and returns it.
+//
+// Delete receives each record as it was returned by Insert. For a pointer
+// blueprint the caller holds that same pointer, so later mutations to Root()
+// or a NodeAs result do not change which rows cleanup removes.
 func (r Result[T]) CleanupE(ctx context.Context, db DBTX) error {
-	return cleanupResultGraph(ctx, r.graph, r.deleteFns, db)
+	return cleanupResultGraph(ctx, r.graph, r.deleteFns, r.cleanupValues, db)
 }
 
 // snapshotDeleteFns captures the delete functions from the registry for all
@@ -126,6 +132,25 @@ func snapshotDeleteFns(reg *Registry, nodes map[string]executor.NodeResult) map[
 	return fns
 }
 
+// snapshotCleanupValues captures each node's value as it was returned by
+// Insert. A pointer blueprint hands the caller the same pointer the graph
+// holds, so mutating Root() or a NodeAs result would otherwise change the
+// value Delete receives and target a different row during cleanup.
+func snapshotCleanupValues(g *graph.Graph) map[string]any {
+	if g == nil {
+		return nil
+	}
+	nodes := g.Nodes()
+	values := make(map[string]any, len(nodes))
+	for _, node := range nodes {
+		if node.IsProvided {
+			continue
+		}
+		values[node.ID] = clone.Value(node.Value)
+	}
+	return values
+}
+
 // NodeResult holds the result of a single node.
 type NodeResult struct {
 	name  string
@@ -134,12 +159,13 @@ type NodeResult struct {
 
 // BatchResult holds all created nodes after batch insertion.
 type BatchResult[T any] struct {
-	roots     []T
-	rootIDs   []string
-	nodes     map[string]executor.NodeResult
-	graph     *graph.Graph
-	registry  *Registry
-	deleteFns map[string]deleteFn // blueprint name → delete function snapshot
+	roots         []T
+	rootIDs       []string
+	nodes         map[string]executor.NodeResult
+	graph         *graph.Graph
+	registry      *Registry
+	deleteFns     map[string]deleteFn // blueprint name → delete function snapshot
+	cleanupValues map[string]any      // node ID → as-inserted value snapshot
 }
 
 // Len returns the number of inserted root records.
@@ -240,7 +266,7 @@ func (r BatchResult[T]) Cleanup(tb testing.TB, db DBTX) {
 // CleanupE deletes all records that were inserted by seedling in reverse dependency order.
 // CleanupE is fail-fast: it stops at the first delete error and returns it.
 func (r BatchResult[T]) CleanupE(ctx context.Context, db DBTX) error {
-	return cleanupResultGraph(ctx, r.graph, r.deleteFns, db)
+	return cleanupResultGraph(ctx, r.graph, r.deleteFns, r.cleanupValues, db)
 }
 
 // Name returns the blueprint name of this node.
@@ -430,7 +456,7 @@ func (r BatchResult[T]) rootNodeID(rootIndex int) (string, bool) {
 	return fmt.Sprintf("root[%d]", rootIndex), true
 }
 
-func cleanupResultGraph(ctx context.Context, g *graph.Graph, deleteFns map[string]deleteFn, db DBTX) error {
+func cleanupResultGraph(ctx context.Context, g *graph.Graph, deleteFns map[string]deleteFn, values map[string]any, db DBTX) error {
 	if g == nil {
 		return nil
 	}
@@ -450,7 +476,11 @@ func cleanupResultGraph(ctx context.Context, g *graph.Graph, deleteFns map[strin
 			return fmt.Errorf("cleanup blueprint %q: %w", node.BlueprintName, errx.DeleteNotDefined(node.BlueprintName))
 		}
 
-		if err := df.fn(ctx, db, node.Value); err != nil {
+		value, ok := values[node.ID]
+		if !ok {
+			value = node.Value
+		}
+		if err := df.fn(ctx, db, value); err != nil {
 			return fmt.Errorf("cleanup blueprint %q: %w", node.BlueprintName, errx.DeleteFailed(node.BlueprintName, err))
 		}
 	}

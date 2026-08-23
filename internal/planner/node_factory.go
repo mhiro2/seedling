@@ -19,7 +19,7 @@ func newBlueprintNode(bp *BlueprintDef, nodeID string, opts *OptionSet) (*graph.
 		return nil, fmt.Errorf("%w: blueprint %q Defaults returned nil %s", errx.ErrInvalidOption, bp.Name, rv.Type())
 	}
 	if rv.Type() != bp.ModelType {
-		return nil, fmt.Errorf("%w: blueprint %q Defaults returned %s but expected %s", errx.ErrTypeMismatch, bp.Name, rv.Type(), bp.ModelType)
+		return nil, fmt.Errorf("%w: blueprint %q Defaults returned %s but expected %s", errx.ErrInvalidOption, bp.Name, rv.Type(), bp.ModelType)
 	}
 
 	node := newGraphNode(bp, nodeID, value, false)

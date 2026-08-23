@@ -183,11 +183,7 @@ func registerTyped[T any](r *registry, bp Blueprint[T]) error {
 				return bp.Defaults()
 			}
 			if modelType.Kind() == reflect.Pointer {
-				value := reflect.New(modelType.Elem())
-				if value.Type() != modelType {
-					value = value.Convert(modelType)
-				}
-				return value.Interface()
+				return reflect.New(modelType.Elem()).Interface()
 			}
 			var z T
 			return z

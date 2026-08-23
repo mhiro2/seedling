@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 
@@ -70,7 +71,7 @@ func Execute(ctx context.Context, db any, g *graph.Graph, lookup BlueprintLookup
 		// Planner-built nodes carry a struct or a non-nil pointer to one, but a
 		// graph.Node assembled externally may violate that invariant. Reject nil
 		// values before the reflection and typed callback paths can panic.
-		if isNilPointer(node.Value) {
+		if isNilValue(node.Value) {
 			return nil, fmt.Errorf("execute node %q: node value must not be nil", node.ID)
 		}
 
@@ -112,8 +113,8 @@ func Execute(ctx context.Context, db any, g *graph.Graph, lookup BlueprintLookup
 			if err != nil {
 				return nil, fmt.Errorf("insert node %q: %w", node.ID, errx.InsertFailed(node.BlueprintName, err))
 			}
-			if isNilPointer(inserted) {
-				err := fmt.Errorf("%w: insert returned a nil value", errx.ErrInvalidOption)
+			if isNilValue(inserted) {
+				err := errors.New("insert returned a nil value")
 				return nil, fmt.Errorf("insert node %q: %w", node.ID, errx.InsertFailed(node.BlueprintName, err))
 			}
 			node.Value = inserted
@@ -185,7 +186,8 @@ func assignFKs(node *graph.Node) error {
 	return nil
 }
 
-func isNilPointer(value any) bool {
+// isNilValue reports whether value is a nil interface or a nil pointer.
+func isNilValue(value any) bool {
 	if value == nil {
 		return true
 	}

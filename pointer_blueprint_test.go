@@ -392,7 +392,57 @@ func TestPointerBlueprint_NilInsertResultReturnsError(t *testing.T) {
 	if !errors.Is(err, seedling.ErrInsertFailed) {
 		t.Fatalf("insert error = %v, want %v", err, seedling.ErrInsertFailed)
 	}
-	if !errors.Is(err, seedling.ErrInvalidOption) {
-		t.Fatalf("insert error = %v, want %v", err, seedling.ErrInvalidOption)
+}
+
+func TestPointerBlueprint_UseRejectsExtraIndirection(t *testing.T) {
+	// Arrange
+	reg, _ := newPointerRegistry(t)
+	company := &pointerCompany{ID: 42}
+
+	// Act
+	_, err := seedling.NewSession[*pointerUser](reg).InsertOneE(
+		t.Context(),
+		nil,
+		seedling.Use("company", &company),
+	)
+
+	// Assert
+	if !errors.Is(err, seedling.ErrTypeMismatch) {
+		t.Fatalf("insert error = %v, want %v", err, seedling.ErrTypeMismatch)
+	}
+}
+
+func TestPointerBlueprint_CleanupUsesInsertedSnapshot(t *testing.T) {
+	// Arrange
+	reg := seedling.NewRegistry()
+	var deleted []int
+	seedling.MustRegisterTo(reg, seedling.Blueprint[*pointerCompany]{
+		Name:    "snapshot_company",
+		Table:   "snapshot_companies",
+		PKField: "ID",
+		Insert: func(_ context.Context, _ seedling.DBTX, company *pointerCompany) (*pointerCompany, error) {
+			company.ID = 7
+			return company, nil
+		},
+		Delete: func(_ context.Context, _ seedling.DBTX, company *pointerCompany) error {
+			deleted = append(deleted, company.ID)
+			return nil
+		},
+	})
+
+	result, err := seedling.NewSession[*pointerCompany](reg).InsertOneE(t.Context(), nil)
+	if err != nil {
+		t.Fatalf("insert snapshot company: %v", err)
+	}
+
+	// Act: the caller holds the live pointer and repoints its PK.
+	result.Root().ID = 999
+	if err := result.CleanupE(t.Context(), nil); err != nil {
+		t.Fatalf("cleanup snapshot company: %v", err)
+	}
+
+	// Assert
+	if !reflect.DeepEqual(deleted, []int{7}) {
+		t.Fatalf("deleted IDs = %v, want [7]", deleted)
 	}
 }
