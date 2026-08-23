@@ -186,7 +186,13 @@ func validateUseValueType(relation string, expectedType reflect.Type, useVal any
 	if useType == expectedType {
 		return nil
 	}
-	if useType != nil && useType.Kind() == reflect.Pointer && useType.Elem() == expectedType {
+	// A value blueprint accepts a pointer to its model, and a pointer blueprint
+	// accepts the bare struct. Both are normalized in normalizeUseValue. Any
+	// deeper indirection (e.g. **T for a *T blueprint) stays rejected here so
+	// the mismatch surfaces as a use error instead of a reflection failure
+	// during FK binding.
+	if expectedType != nil && expectedType.Kind() != reflect.Pointer &&
+		useType != nil && useType.Kind() == reflect.Pointer && useType.Elem() == expectedType {
 		return nil
 	}
 	if expectedType != nil && expectedType.Kind() == reflect.Pointer && expectedType.Elem() == useType {

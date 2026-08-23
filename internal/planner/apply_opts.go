@@ -30,14 +30,17 @@ func applyOpts(node *graph.Node, opts *OptionSet) error {
 		node.Value = updated
 	}
 
-	// Apply Set options.
+	// Apply Set options. A pointer node is already addressable, so it is
+	// mutated in place; a value node is copied through a temporary pointer.
+	keepPointer := reflect.ValueOf(node.Value).Kind() == reflect.Pointer
 	for fieldName, value := range opts.Sets {
-		// We need a pointer to set fields.
 		ptr := toPointer(node.Value)
 		if err := field.SetField(ptr, fieldName, value); err != nil {
 			return fmt.Errorf("apply set %q: %w", fieldName, err)
 		}
-		node.Value = reflect.ValueOf(ptr).Elem().Interface()
+		if !keepPointer {
+			node.Value = reflect.ValueOf(ptr).Elem().Interface()
+		}
 		node.SetFields = append(node.SetFields, fieldName)
 	}
 

@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 
@@ -67,10 +68,10 @@ func Execute(ctx context.Context, db any, g *graph.Graph, lookup BlueprintLookup
 			return nil, fmt.Errorf("execute graph: %w", err)
 		}
 
-		// Planner-built nodes always carry a struct value, but a graph.Node
-		// assembled externally may carry a nil interface; reject it before the
-		// reflection paths below panic on reflect.New(nil) or a nil assertion.
-		if node.Value == nil {
+		// Planner-built nodes carry a struct or a non-nil pointer to one, but a
+		// graph.Node assembled externally may violate that invariant. Reject nil
+		// values before the reflection and typed callback paths can panic.
+		if isNilValue(node.Value) {
 			return nil, fmt.Errorf("execute node %q: node value must not be nil", node.ID)
 		}
 
@@ -112,6 +113,10 @@ func Execute(ctx context.Context, db any, g *graph.Graph, lookup BlueprintLookup
 			if err != nil {
 				return nil, fmt.Errorf("insert node %q: %w", node.ID, errx.InsertFailed(node.BlueprintName, err))
 			}
+			if isNilValue(inserted) {
+				err := errors.New("insert returned a nil value")
+				return nil, fmt.Errorf("insert node %q: %w", node.ID, errx.InsertFailed(node.BlueprintName, err))
+			}
 			node.Value = inserted
 		}
 
@@ -148,20 +153,23 @@ func collectFKBindings(node *graph.Node) []FKBinding {
 
 // assignFKs sets FK fields on the node based on its parent edges.
 //
-// All bindings for the node share a single allocation: we materialize one
-// addressable pointer to the value, copy every parent PK into the matching
-// FK field, then store the resulting struct back on the node. The copy goes
-// through [field.Copy], which uses cached field-index paths and avoids boxing
-// the PK through `any` once per binding.
+// Value nodes use a single allocation to materialize an addressable struct.
+// Pointer nodes are already addressable and are mutated in place. The copy
+// goes through [field.Copy], which uses cached field-index paths and avoids
+// boxing the PK through `any` once per binding.
 func assignFKs(node *graph.Node) error {
 	deps := node.Dependencies()
 	if len(deps) == 0 {
 		return nil
 	}
 
-	ptr := reflect.New(reflect.TypeOf(node.Value))
-	ptr.Elem().Set(reflect.ValueOf(node.Value))
-	target := ptr.Interface()
+	value := reflect.ValueOf(node.Value)
+	target := node.Value
+	if value.Kind() != reflect.Pointer {
+		ptr := reflect.New(value.Type())
+		ptr.Elem().Set(value)
+		target = ptr.Interface()
+	}
 
 	for _, edge := range deps {
 		parent := edge.Parent
@@ -172,6 +180,17 @@ func assignFKs(node *graph.Node) error {
 			}
 		}
 	}
-	node.Value = ptr.Elem().Interface()
+	if value.Kind() != reflect.Pointer {
+		node.Value = reflect.ValueOf(target).Elem().Interface()
+	}
 	return nil
+}
+
+// isNilValue reports whether value is a nil interface or a nil pointer.
+func isNilValue(value any) bool {
+	if value == nil {
+		return true
+	}
+	rv := reflect.ValueOf(value)
+	return rv.Kind() == reflect.Pointer && rv.IsNil()
 }

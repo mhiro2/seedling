@@ -187,15 +187,25 @@ func TestGeneratorOutputsCompile(t *testing.T) {
 		if err := GenerateEnt(&buf, "compile", "github.com/mhiro2/seedling/cmd/seedling-gen/testent", schemas); err != nil {
 			t.Fatalf("GenerateEnt: %v", err)
 		}
-		ensureCompiles(t, "ent", buf.String())
+		ensureCompilesAndRuns(t, "ent", buf.String(), entLifecycleTest)
 	})
 }
 
 func ensureCompiles(t *testing.T, name, src string) {
 	t.Helper()
+	ensureCompilesAndRuns(t, name, src, "")
+}
+
+func ensureCompilesAndRuns(t *testing.T, name, src, testSrc string) {
+	t.Helper()
 	tmpDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(tmpDir, "blueprint.go"), []byte(src), 0o600); err != nil {
 		t.Fatalf("write %s generated code: %v", name, err)
+	}
+	if testSrc != "" {
+		if err := os.WriteFile(filepath.Join(tmpDir, "blueprint_test.go"), []byte(testSrc), 0o600); err != nil {
+			t.Fatalf("write %s generated test: %v", name, err)
+		}
 	}
 
 	root := moduleRoot(t)
@@ -225,6 +235,59 @@ replace gorm.io/gorm => %s
 		t.Fatalf("go test compile %s: %v\n%s", name, err, output)
 	}
 }
+
+const entLifecycleTest = `package compile
+
+import (
+	"testing"
+
+	"github.com/mhiro2/seedling"
+	testent "github.com/mhiro2/seedling/cmd/seedling-gen/testent"
+)
+
+func TestGeneratedEntBlueprintLifecycle(t *testing.T) {
+	const wantName = "runtime-company"
+
+	companyClient := &testent.CompanyClient{}
+	client := &testent.Client{Company: companyClient}
+	reg := NewRegistry()
+	result, err := seedling.NewSession[*testent.Company](reg).InsertOneE(
+		t.Context(),
+		client,
+		seedling.Set("Name", wantName),
+	)
+	if err != nil {
+		t.Fatalf("insert generated ent blueprint: %v", err)
+	}
+
+	root := result.Root()
+	if root == nil {
+		t.Fatal("inserted root is nil")
+	}
+	if got := companyClient.InsertCount; got != 1 {
+		t.Fatalf("insert count = %d, want 1", got)
+	}
+	if got := companyClient.InsertedValue.Name; got != wantName {
+		t.Fatalf("inserted name = %q, want %q", got, wantName)
+	}
+	if got := root.Name; got != wantName {
+		t.Fatalf("root name = %q, want %q", got, wantName)
+	}
+	if root.ID == 0 {
+		t.Fatal("inserted root ID is zero")
+	}
+
+	if err := result.CleanupE(t.Context(), client); err != nil {
+		t.Fatalf("cleanup generated ent blueprint: %v", err)
+	}
+	if got := companyClient.DeleteCount; got != 1 {
+		t.Fatalf("delete count = %d, want 1", got)
+	}
+	if got := companyClient.DeletedID; got != root.ID {
+		t.Fatalf("deleted ID = %d, want %d", got, root.ID)
+	}
+}
+`
 
 func moduleRoot(t *testing.T) string {
 	t.Helper()

@@ -111,11 +111,12 @@ func (p *Plan[T]) InsertE(ctx context.Context, db DBTX) (Result[T], error) {
 	}
 
 	result := Result[T]{
-		root:      root,
-		nodes:     execResult.Nodes,
-		graph:     execResult.Graph,
-		registry:  p.registry,
-		deleteFns: snapshotDeleteFns(p.registry, execResult.Nodes),
+		root:          root,
+		nodes:         execResult.Nodes,
+		graph:         execResult.Graph,
+		registry:      p.registry,
+		deleteFns:     snapshotDeleteFns(p.registry, execResult.Nodes),
+		cleanupValues: snapshotCleanupValues(execResult.Graph),
 	}
 
 	// Run AfterInsert callbacks.

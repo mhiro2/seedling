@@ -486,25 +486,37 @@ type rawGenerateOption struct{ fn generateFn }
 func (g rawGenerateOption) applyOption(o *optionSet) { o.genFns = append(o.genFns, g.fn) }
 
 func applyTypedMutation[T any](kind string, value any, fn func(*T) error) (any, error) {
-	ptr := toOptionPointer(value)
-	target, ok := ptr.(*T)
-	if !ok {
-		return nil, fmt.Errorf("%w: %s option expects *%s but got %T", ErrTypeMismatch, kind, typeName[T](), value)
-	}
-	if err := fn(target); err != nil {
-		return nil, err
-	}
-	return reflect.ValueOf(ptr).Elem().Interface(), nil
-}
-
-func toOptionPointer(value any) any {
 	rv := reflect.ValueOf(value)
-	if rv.Kind() == reflect.Pointer {
-		return value
+	if !rv.IsValid() || (rv.Kind() == reflect.Pointer && rv.IsNil()) {
+		return nil, fmt.Errorf("%w: %s option expects non-nil *%s but got %T", ErrTypeMismatch, kind, typeName[T](), value)
 	}
-	ptr := reflect.New(rv.Type())
-	ptr.Elem().Set(rv)
-	return ptr.Interface()
+
+	targetType := reflect.TypeFor[T]()
+	if rv.Type() == targetType {
+		target := new(T)
+		*target = value.(T)
+		if err := fn(target); err != nil {
+			return nil, err
+		}
+		updated := reflect.ValueOf(*target)
+		if updated.Kind() == reflect.Pointer && updated.IsNil() {
+			return nil, fmt.Errorf("%w: %s option returned nil %s", ErrInvalidOption, kind, targetType)
+		}
+		return *target, nil
+	}
+
+	if rv.Kind() == reflect.Pointer && rv.Type().Elem() == targetType {
+		target, ok := value.(*T)
+		if !ok {
+			return nil, fmt.Errorf("%w: %s option expects *%s but got %T", ErrTypeMismatch, kind, typeName[T](), value)
+		}
+		if err := fn(target); err != nil {
+			return nil, err
+		}
+		return value, nil
+	}
+
+	return nil, fmt.Errorf("%w: %s option expects *%s but got %T", ErrTypeMismatch, kind, typeName[T](), value)
 }
 
 func typeName[T any]() string {

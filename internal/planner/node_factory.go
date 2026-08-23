@@ -10,7 +10,19 @@ import (
 )
 
 func newBlueprintNode(bp *BlueprintDef, nodeID string, opts *OptionSet) (*graph.Node, error) {
-	node := newGraphNode(bp, nodeID, bp.Defaults(), false)
+	value := bp.Defaults()
+	if value == nil {
+		return nil, fmt.Errorf("%w: blueprint %q Defaults returned nil", errx.ErrInvalidOption, bp.Name)
+	}
+	rv := reflect.ValueOf(value)
+	if rv.Kind() == reflect.Pointer && rv.IsNil() {
+		return nil, fmt.Errorf("%w: blueprint %q Defaults returned nil %s", errx.ErrInvalidOption, bp.Name, rv.Type())
+	}
+	if rv.Type() != bp.ModelType {
+		return nil, fmt.Errorf("%w: blueprint %q Defaults returned %s but expected %s", errx.ErrInvalidOption, bp.Name, rv.Type(), bp.ModelType)
+	}
+
+	node := newGraphNode(bp, nodeID, value, false)
 	if err := applyOpts(node, opts); err != nil {
 		return nil, err
 	}
@@ -52,7 +64,7 @@ func (e *expander) providedBelongsToNode(rel RelationDef, nodeID string, opts *O
 		return nil, false, fmt.Errorf("lookup blueprint %q for use %q: %w", rel.RefBlueprint, rel.Name, err)
 	}
 
-	// Normalize pointer to value type when blueprint expects a value type.
+	// Normalize the provided value to the blueprint's exact model type.
 	useVal = normalizeUseValue(parentBP.ModelType, useVal)
 
 	usedNode := newProvidedNode(parentBP, relationNodeID(nodeID, rel.Name, 0, 1), useVal)
@@ -62,14 +74,18 @@ func (e *expander) providedBelongsToNode(rel RelationDef, nodeID string, opts *O
 	return usedNode, true, nil
 }
 
-// normalizeUseValue dereferences a pointer value when the blueprint's model
-// type is a non-pointer struct. This ensures that provided nodes always store
-// values consistent with the blueprint definition, so NodeAs[T] works
-// regardless of whether the caller passed T or *T to Use.
+// normalizeUseValue converts between a struct and its direct pointer so a
+// provided node always stores the blueprint's exact model type. Validation
+// rejects all other type combinations before this function is called.
 func normalizeUseValue(modelType reflect.Type, val any) any {
 	rv := reflect.ValueOf(val)
 	if rv.Kind() == reflect.Pointer && modelType.Kind() != reflect.Pointer {
 		return rv.Elem().Interface()
+	}
+	if rv.Kind() != reflect.Pointer && modelType.Kind() == reflect.Pointer {
+		ptr := reflect.New(rv.Type())
+		ptr.Elem().Set(rv)
+		return ptr.Interface()
 	}
 	return val
 }

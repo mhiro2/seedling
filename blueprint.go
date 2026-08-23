@@ -3,6 +3,9 @@ package seedling
 import "context"
 
 // Blueprint describes how to create and insert a model of type T.
+// T may be a struct or an unnamed pointer directly to a struct. Other pointer
+// shapes, such as **User, *int, or a named pointer type, are rejected at
+// registration time.
 type Blueprint[T any] struct {
 	// Name is the unique identifier for this blueprint (e.g. "task", "company").
 	// Used for relation references (RefBlueprint) and Result.Node() lookups.
@@ -24,10 +27,10 @@ type Blueprint[T any] struct {
 	// This function is called once per record creation to avoid shared mutable state.
 	// Always return a fresh value — do not return a package-level variable.
 	//
-	// The returned value's dynamic type must equal T. Pointer-typed Defaults
-	// (e.g. returning *T from Blueprint[T]) are rejected at registration time
-	// because [When] / [Validate] type-assertions assume the value type matches
-	// the type parameter T exactly.
+	// The returned value's dynamic type must equal T. For a pointer blueprint,
+	// Defaults must return a non-nil pointer. When Defaults is omitted, a value
+	// blueprint starts from its zero value and a pointer blueprint starts from a
+	// newly allocated zero-value struct.
 	//
 	//	Defaults: func() User {
 	//	    return User{Name: "test-user", Role: "member"}
