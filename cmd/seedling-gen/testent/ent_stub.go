@@ -9,28 +9,42 @@ type Client struct {
 	Company *CompanyClient
 }
 
-type CompanyClient struct{}
-
-func (CompanyClient) Create() *CompanyCreate {
-	return &CompanyCreate{}
+type CompanyClient struct {
+	InsertCount   int
+	InsertedValue Company
+	DeleteCount   int
+	DeletedID     int64
 }
 
-func (CompanyClient) DeleteOneID(int64) *CompanyDelete {
-	return &CompanyDelete{}
+func (c *CompanyClient) Create() *CompanyCreate {
+	return &CompanyCreate{client: c}
 }
 
-type CompanyCreate struct{}
+func (c *CompanyClient) DeleteOneID(id int64) *CompanyDelete {
+	return &CompanyDelete{client: c, id: id}
+}
 
-func (c *CompanyCreate) SetName(string) *CompanyCreate {
+type CompanyCreate struct {
+	client *CompanyClient
+	value  Company
+}
+
+func (c *CompanyCreate) SetName(name string) *CompanyCreate {
+	c.value.Name = name
 	return c
 }
 
-func (c *CompanyCreate) SetCreatedAt(time.Time) *CompanyCreate {
+func (c *CompanyCreate) SetCreatedAt(createdAt time.Time) *CompanyCreate {
+	c.value.CreatedAt = createdAt
 	return c
 }
 
-func (CompanyCreate) Save(context.Context) (*Company, error) {
-	return &Company{}, nil
+func (c *CompanyCreate) Save(context.Context) (*Company, error) {
+	c.value.ID = 42
+	c.client.InsertCount++
+	c.client.InsertedValue = c.value
+	inserted := c.value
+	return &inserted, nil
 }
 
 type Company struct {
@@ -39,8 +53,13 @@ type Company struct {
 	CreatedAt time.Time
 }
 
-type CompanyDelete struct{}
+type CompanyDelete struct {
+	client *CompanyClient
+	id     int64
+}
 
-func (CompanyDelete) Exec(context.Context) error {
+func (d *CompanyDelete) Exec(context.Context) error {
+	d.client.DeleteCount++
+	d.client.DeletedID = d.id
 	return nil
 }
