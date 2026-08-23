@@ -149,6 +149,8 @@ func TestUser(t *testing.T) {
 
 For runnable examples of these options, see [`example_test.go`](../example_test.go).
 
+With a pointer blueprint (`Blueprint[*Model]`, as generated for ent), the package-level `With` / `Generate` / `GenerateE` options take `*Model` and mutate the record in place. The `Builder` methods of the same name take `**Model` instead, because they are parameterized on the blueprint type itself; use `Apply` with the package-level option when you want the `*Model` form. `Root()` and `NodeAs` hand back the inserted pointer, and `Cleanup` deletes each record as `Insert` returned it, so mutating that pointer afterwards does not change which rows are removed.
+
 ## Relationship Patterns
 
 - `BelongsTo`: insert required parent rows and write the parent key into the child
