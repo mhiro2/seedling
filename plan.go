@@ -25,6 +25,7 @@ type Plan[T any] struct {
 	afterInserts []any // func(T, DBTX) closures
 	ctx          context.Context
 	registry     *Registry
+	db           DBTX
 	logFn        func(InsertLog)
 }
 
@@ -55,6 +56,7 @@ func (s Session[T]) BuildE(opts ...Option) (*Plan[T], error) {
 		afterInserts: collected.afterInserts,
 		ctx:          collected.ctx,
 		registry:     s.registry,
+		db:           s.db,
 		logFn:        collected.logFn,
 	}, nil
 }
@@ -92,32 +94,34 @@ func (p *Plan[T]) Insert(tb testing.TB, db DBTX) Result[T] {
 }
 
 // InsertE executes the plan and inserts all records, returning an error on failure.
+// If execution fails after inserting dependencies, the returned Result contains
+// the successful nodes and can be passed to [Result.CleanupE].
 func (p *Plan[T]) InsertE(ctx context.Context, db DBTX) (Result[T], error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if p.graph != nil {
+		if root := p.graph.Root(); root != nil {
+			if _, ok := root.Value.(T); !ok {
+				var zero Result[T]
+				return zero, fmt.Errorf("%w: root node has value %T, want %s", ErrTypeMismatch, root.Value, reflect.TypeFor[T]())
+			}
+		}
+	}
+
 	adapter := newRegistryAdapter(p.registry)
 	g := p.graph.Clone()
-	execResult, err := executor.Execute(ctx, db, g, adapter, p.toExecutorLogFn())
+	effectiveDB := p.resolveDB(db)
+	execResult, err := executor.Execute(ctx, effectiveDB, g, adapter, p.toExecutorLogFn())
+	result, resultErr := p.resultFromExecutor(execResult, err == nil)
+	if resultErr != nil {
+		return result, resultErr
+	}
 	if err != nil {
-		var zero Result[T]
-		return zero, fmt.Errorf("execute plan: %w", err)
+		return result, fmt.Errorf("execute plan: %w", err)
 	}
 
-	root, ok := execResult.Root.(T)
-	if !ok {
-		var zero Result[T]
-		return zero, fmt.Errorf("%w: root node has value %T, want %s", ErrTypeMismatch, execResult.Root, reflect.TypeFor[T]())
-	}
-
-	result := Result[T]{
-		root:          root,
-		nodes:         execResult.Nodes,
-		graph:         execResult.Graph,
-		registry:      p.registry,
-		deleteFns:     snapshotDeleteFns(p.registry, execResult.Nodes),
-		cleanupValues: snapshotCleanupValues(execResult.Graph),
-	}
+	root := result.root
 
 	// Run AfterInsert callbacks.
 	// On failure the result is still returned so callers can clean up
@@ -125,15 +129,50 @@ func (p *Plan[T]) InsertE(ctx context.Context, db DBTX) (Result[T], error) {
 	for _, fn := range p.afterInserts {
 		switch cb := fn.(type) {
 		case func(T, DBTX):
-			cb(root, db)
+			cb(root, effectiveDB)
 		case func(T, DBTX) error:
-			if err := cb(root, db); err != nil {
+			if err := cb(root, effectiveDB); err != nil {
 				return result, fmt.Errorf("run after-insert callback: %w", err)
 			}
 		}
 	}
 
 	return result, nil
+}
+
+func (p *Plan[T]) resultFromExecutor(execResult *executor.Result, requireRoot bool) (Result[T], error) {
+	if execResult == nil {
+		var zero Result[T]
+		return zero, fmt.Errorf("%w: executor returned a nil result", ErrInvalidOption)
+	}
+
+	result := Result[T]{
+		nodes:         execResult.Nodes,
+		graph:         execResult.Graph,
+		registry:      p.registry,
+		deleteFns:     snapshotDeleteFns(p.registry, execResult.Nodes),
+		cleanupValues: snapshotCleanupValues(execResult.Graph),
+	}
+	if execResult.Root == nil {
+		if requireRoot {
+			return result, fmt.Errorf("%w: root node has value <nil>, want %s", ErrTypeMismatch, reflect.TypeFor[T]())
+		}
+		return result, nil
+	}
+
+	root, ok := execResult.Root.(T)
+	if !ok {
+		return result, fmt.Errorf("%w: root node has value %T, want %s", ErrTypeMismatch, execResult.Root, reflect.TypeFor[T]())
+	}
+	result.root = root
+	return result, nil
+}
+
+func (p *Plan[T]) resolveDB(db DBTX) DBTX {
+	if db != nil {
+		return db
+	}
+	return p.db
 }
 
 // DebugString returns a human-readable tree representation of the plan.
@@ -143,7 +182,7 @@ func (p *Plan[T]) DebugString() string {
 
 // DryRunString returns the planned INSERT execution order with FK assignments.
 // Each step shows which table will be inserted and how FK fields are populated
-// from parent PK values. Provided nodes (via [Use]) are marked as skipped.
+// from referenced parent field values. Provided nodes (via [Use]) are marked as skipped.
 //
 // This is useful for understanding how seedling will resolve dependencies
 // before actually executing inserts.

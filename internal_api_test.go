@@ -251,7 +251,8 @@ func TestBatchResult_RootAccessors(t *testing.T) {
 			{ID: 1, Name: "one"},
 			{ID: 2, Name: "two"},
 		},
-		rootIDs: []string{"root[0]", "root[1]"},
+		rootIndices: []int{0, 1},
+		rootIDs:     []string{"root[0]", "root[1]"},
 	}
 
 	// Act
@@ -290,8 +291,9 @@ func TestBatchResult_NodeAt_ReturnsSharedAncestorWithoutCrossingRoots(t *testing
 	g.AddEdge(root0, assignee0, "TaskID")
 
 	result := BatchResult[internalCompany]{
-		roots:   []internalCompany{{ID: 1, Name: "one"}, {ID: 2, Name: "two"}},
-		rootIDs: []string{"root[0]", "root[1]"},
+		roots:       []internalCompany{{ID: 1, Name: "one"}, {ID: 2, Name: "two"}},
+		rootIndices: []int{0, 1},
+		rootIDs:     []string{"root[0]", "root[1]"},
 		nodes: map[string]executor.NodeResult{
 			"shared.project":   {Name: "project", Value: "shared-project"},
 			"root[0]":          {Name: "task", Value: "task-0"},
@@ -555,6 +557,7 @@ func TestPlanInsertE_RootTypeMismatch(t *testing.T) {
 	// type must return a typed ErrTypeMismatch instead of panicking on the
 	// unchecked root assertion, mirroring InsertManyE.
 	reg := NewRegistry()
+	insertCalls := 0
 	err := RegisterTo(reg, Blueprint[internalCompany]{
 		Name:    "company",
 		Table:   "companies",
@@ -563,6 +566,7 @@ func TestPlanInsertE_RootTypeMismatch(t *testing.T) {
 			return internalCompany{Name: "test-company"}
 		},
 		Insert: func(_ context.Context, _ DBTX, v internalCompany) (internalCompany, error) {
+			insertCalls++
 			v.ID = 1
 			return v, nil
 		},
@@ -588,6 +592,9 @@ func TestPlanInsertE_RootTypeMismatch(t *testing.T) {
 	}
 	if !errors.Is(err, ErrTypeMismatch) {
 		t.Fatalf("got %v, want %v", err, ErrTypeMismatch)
+	}
+	if insertCalls != 0 {
+		t.Fatalf("got %d Insert calls before root type validation, want 0", insertCalls)
 	}
 }
 

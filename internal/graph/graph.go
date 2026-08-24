@@ -46,6 +46,13 @@ func (*Graph) AddEdgeBindings(parent, child *Node, bindings []FieldBinding) {
 	parent.dependents = append(parent.dependents, e)
 }
 
+// SetRoot overrides the node that AddNode inferred as the root. Pass nil for a
+// graph that has no single entry point, such as a partial result whose root
+// never completed.
+func (g *Graph) SetRoot(n *Node) {
+	g.root = n
+}
+
 // Root returns the root node of the graph.
 func (g *Graph) Root() *Node {
 	return g.root

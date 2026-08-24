@@ -61,9 +61,8 @@ func (r Result[T]) Root() T {
 
 // Node returns a named node from the dependency graph by blueprint name.
 // If multiple nodes share the same blueprint name, the one with the
-// lexicographically smallest node ID is returned. Node IDs are constructed
-// as "root.relation" paths, so the smallest ID is typically the node
-// closest to the root in the dependency graph.
+// lexicographically smallest node ID is returned. Planner-generated node IDs
+// are opaque identifiers and must not be parsed by callers.
 //
 // To retrieve all nodes that match a given blueprint name, use [Result.Nodes].
 func (r Result[T]) Node(name string) (NodeResult, bool) {
@@ -85,7 +84,7 @@ func (r Result[T]) MustNode(name string) NodeResult {
 	return nr
 }
 
-// All returns all nodes in the result as a map keyed by node ID.
+// All returns all nodes in the result as a map keyed by opaque node ID.
 // This is useful for inspecting every record that was created during insertion.
 func (r Result[T]) All() map[string]NodeResult {
 	return cloneNodeResults(r.nodes)
@@ -228,9 +227,13 @@ type NodeResult struct {
 	value any
 }
 
-// BatchResult holds all created nodes after batch insertion.
+// BatchResult holds all created nodes after batch insertion. When execution
+// fails partway through, roots contains only successfully completed roots in
+// their original request order; dependency nodes that completed before the
+// failure remain available through Node, Nodes, and All for cleanup.
 type BatchResult[T any] struct {
 	roots         []T
+	rootIndices   []int
 	rootIDs       []string
 	nodes         map[string]executor.NodeResult
 	graph         *graph.Graph
@@ -239,7 +242,8 @@ type BatchResult[T any] struct {
 	cleanupValues map[string]any      // node ID → as-inserted value snapshot
 }
 
-// Len returns the number of inserted root records.
+// Len returns the number of successfully inserted root records represented by
+// the result. For a partial result, this can be smaller than the requested count.
 func (r BatchResult[T]) Len() int {
 	return len(r.roots)
 }
@@ -253,20 +257,22 @@ func (r BatchResult[T]) rootsView() []T {
 	return r.roots
 }
 
-// RootAt returns the inserted root record at index.
+// RootAt returns the successfully inserted root record at its original request
+// index. It returns false when that root did not complete in a partial result.
 func (r BatchResult[T]) RootAt(index int) (T, bool) {
 	var zero T
-	if index < 0 || index >= len(r.roots) {
+	resultIndex := slices.Index(r.rootIndices, index)
+	if resultIndex < 0 {
 		return zero, false
 	}
-	return r.roots[index], true
+	return r.roots[resultIndex], true
 }
 
 // MustRootAt returns the inserted root record at index or panics.
 func (r BatchResult[T]) MustRootAt(index int) T {
 	root, ok := r.RootAt(index)
 	if !ok {
-		panic(fmt.Sprintf("seedling: root index %d out of range", index))
+		panic(fmt.Sprintf("seedling: root index %d is not present in result", index))
 	}
 	return root
 }
@@ -285,15 +291,17 @@ func (r BatchResult[T]) Nodes(name string) []NodeResult {
 	return lookupNodeResults(r.nodes, name)
 }
 
-// NodeAt returns the named node associated with the root at index.
-// Shared belongs-to dependencies are included when that root references them.
+// NodeAt returns the named node associated with the root at its original request
+// index. Shared belongs-to dependencies are included when that root references
+// them. It returns false when the root did not complete in a partial result.
 func (r BatchResult[T]) NodeAt(rootIndex int, name string) (NodeResult, bool) {
 	return lookupNodeResult(r.nodesForRoot(rootIndex), name)
 }
 
-// NodesForRoot returns all named nodes associated with the root at index,
-// sorted by node ID. Shared belongs-to dependencies are included when that
-// root references them.
+// NodesForRoot returns all named nodes associated with the root at its original
+// request index, sorted by node ID. Shared belongs-to dependencies are included
+// when that root references them. It returns nil when the root did not complete
+// in a partial result.
 func (r BatchResult[T]) NodesForRoot(rootIndex int, name string) []NodeResult {
 	return lookupNodeResults(r.nodesForRoot(rootIndex), name)
 }
@@ -316,7 +324,7 @@ func (r BatchResult[T]) MustNode(name string) NodeResult {
 	return nr
 }
 
-// All returns all nodes in the result as a map keyed by node ID.
+// All returns all nodes in the result as a map keyed by opaque node ID.
 func (r BatchResult[T]) All() map[string]NodeResult {
 	return cloneNodeResults(r.nodes)
 }
@@ -457,8 +465,9 @@ func debugResultString(g *graph.Graph) string {
 
 func emptyBatchResult[T any]() BatchResult[T] {
 	return BatchResult[T]{
-		roots:   []T{},
-		rootIDs: []string{},
+		roots:       []T{},
+		rootIndices: []int{},
+		rootIDs:     []string{},
 	}
 }
 
@@ -521,13 +530,13 @@ func selectNodeResults(nodes map[string]executor.NodeResult, selected map[string
 }
 
 func (r BatchResult[T]) rootNodeID(rootIndex int) (string, bool) {
-	if rootIndex < 0 || rootIndex >= len(r.roots) {
+	if rootIndex < 0 || rootIndex >= len(r.rootIDs) {
 		return "", false
 	}
-	if len(r.rootIDs) == len(r.roots) {
-		return r.rootIDs[rootIndex], true
+	if slices.Index(r.rootIndices, rootIndex) < 0 {
+		return "", false
 	}
-	return fmt.Sprintf("root[%d]", rootIndex), true
+	return r.rootIDs[rootIndex], true
 }
 
 func cleanupResultGraph(ctx context.Context, g *graph.Graph, deleteFns map[string]deleteFn, values map[string]any, db DBTX) error {

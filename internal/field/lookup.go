@@ -74,6 +74,93 @@ func CanCopyType(source, destination reflect.Type) bool {
 		destination.Kind() == reflect.Pointer && source.AssignableTo(destination.Elem())
 }
 
+// CanBind reports whether Copy could later move srcName out of a srcType value
+// into dstName on dst.
+//
+// The source is checked by type alone. The value that will supply it is the
+// output of its own Insert callback, so an embedded pointer that is still nil
+// now may well be allocated by the time the copy happens.
+//
+// The destination is checked against dst itself, because nothing populates a
+// node's own value between this check and the assignment: a nil embedded
+// pointer there can never become settable and is reported now, before any
+// Insert callback has had a chance to write to the database.
+func CanBind(srcType reflect.Type, srcName string, dst any, dstName string) error {
+	srcStruct, err := structTypeFor(srcType, "source")
+	if err != nil {
+		return err
+	}
+	srcEntry, err := exportedFieldEntry(srcStruct, srcName, "get")
+	if err != nil {
+		return err
+	}
+
+	dstElem, err := addressableStruct(dst)
+	if err != nil {
+		return err
+	}
+	dstEntry, err := exportedFieldEntry(dstElem.Type(), dstName, "set")
+	if err != nil {
+		return err
+	}
+	dstField, err := dstElem.FieldByIndexErr(dstEntry.Index)
+	if err != nil {
+		return fmt.Errorf("set field %q: %w: %w", dstName, errx.ErrInvalidOption, err)
+	}
+	if !dstField.CanSet() {
+		return fmt.Errorf("%w: field %q is unexported", errx.ErrFieldNotFound, dstName)
+	}
+	if !CanCopyType(srcEntry.Type, dstEntry.Type) {
+		return fmt.Errorf("set field %q: %w", dstName, errx.TypeMismatch(dstName, dstEntry.Type.String(), srcEntry.Type.String()))
+	}
+	return nil
+}
+
+// structTypeFor unwraps a single pointer and rejects anything that is not a struct.
+func structTypeFor(rt reflect.Type, role string) (reflect.Type, error) {
+	if rt == nil {
+		return nil, fmt.Errorf("%w: %s must be a struct or pointer to struct", errx.ErrInvalidOption, role)
+	}
+	if rt.Kind() == reflect.Pointer {
+		rt = rt.Elem()
+	}
+	if rt.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("%w: %s must be a struct or pointer to struct", errx.ErrInvalidOption, role)
+	}
+	return rt, nil
+}
+
+// addressableStruct returns a settable struct value for v, copying a non-pointer
+// into fresh storage the same way Copy does.
+func addressableStruct(v any) (reflect.Value, error) {
+	rv := reflect.ValueOf(v)
+	if !rv.IsValid() {
+		return reflect.Value{}, fmt.Errorf("%w: destination must be a struct or pointer to struct", errx.ErrInvalidOption)
+	}
+	if rv.Kind() != reflect.Pointer {
+		ptr := reflect.New(rv.Type())
+		ptr.Elem().Set(rv)
+		rv = ptr
+	}
+	if rv.IsNil() || rv.Elem().Kind() != reflect.Struct {
+		return reflect.Value{}, fmt.Errorf("%w: destination must be a struct or pointer to struct", errx.ErrInvalidOption)
+	}
+	return rv.Elem(), nil
+}
+
+// exportedFieldEntry resolves an exported field on a struct type, describing
+// failures with the caller's access verb ("get" or "set").
+func exportedFieldEntry(rt reflect.Type, name, verb string) (fieldIndexEntry, error) {
+	entry, ok := lookupFieldIndex(rt, name)
+	if !ok {
+		return fieldIndexEntry{}, fmt.Errorf("%s field %q: %w", verb, name, errx.FieldNotFoundWithHint(rt.Name(), name, exportedFields(rt)))
+	}
+	if !entry.Exported {
+		return fieldIndexEntry{}, fmt.Errorf("%w: field %q is unexported", errx.ErrFieldNotFound, name)
+	}
+	return entry, nil
+}
+
 // Copy reads srcName from src (struct or *struct) and assigns the value to
 // dstName on dstPtr (must be *struct). It avoids the boxing round-trip that
 // using GetField + SetField would incur, and reuses the cached field index

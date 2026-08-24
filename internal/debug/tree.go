@@ -12,18 +12,51 @@ import (
 // TreeString returns a human-readable tree representation of the graph,
 // starting from the root node.
 func TreeString(g *graph.Graph) string {
+	return renderGraph(g, writeNode)
+}
+
+// renderGraph walks the root first and then any node the root could not reach,
+// so a partial result whose root never completed still lists every node it has.
+func renderGraph(g *graph.Graph, write func(*strings.Builder, *graph.Node, string, string, map[string]bool)) string {
 	if g == nil {
 		return "(empty)"
 	}
-	root := g.Root()
-	if root == nil {
+	entries := entryNodes(g)
+	if len(entries) == 0 {
 		return "(empty)"
 	}
 
 	var b strings.Builder
 	seen := make(map[string]bool)
-	writeNode(&b, root, "", "", seen)
+	for _, entry := range entries {
+		if seen[entry.ID] {
+			continue
+		}
+		write(&b, entry, "", "", seen)
+	}
 	return b.String()
+}
+
+// entryNodes returns the root, when the graph has one, followed by every other
+// node ordered by ID so the rendering is deterministic.
+func entryNodes(g *graph.Graph) []*graph.Node {
+	nodes := g.Nodes()
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i].ID < nodes[j].ID
+	})
+
+	root := g.Root()
+	if root == nil {
+		return nodes
+	}
+	entries := make([]*graph.Node, 0, len(nodes))
+	entries = append(entries, root)
+	for _, node := range nodes {
+		if node.ID != root.ID {
+			entries = append(entries, node)
+		}
+	}
+	return entries
 }
 
 func writeNode(b *strings.Builder, node *graph.Node, prefix, prevID string, seen map[string]bool) {
@@ -73,18 +106,7 @@ func writeNode(b *strings.Builder, node *graph.Node, prefix, prevID string, seen
 // ResultString returns a human-readable tree representation of execution results,
 // showing each node with its PK value.
 func ResultString(g *graph.Graph) string {
-	if g == nil {
-		return "(empty)"
-	}
-	root := g.Root()
-	if root == nil {
-		return "(empty)"
-	}
-
-	var b strings.Builder
-	seen := make(map[string]bool)
-	writeResultNode(&b, root, "", "", seen)
-	return b.String()
+	return renderGraph(g, writeResultNode)
 }
 
 func writeResultNode(b *strings.Builder, node *graph.Node, prefix, prevID string, seen map[string]bool) {
