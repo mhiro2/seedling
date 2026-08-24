@@ -181,6 +181,7 @@ func ensureCompiles(t *testing.T, name, src string) {
 
 func ensureCompilesAndRuns(t *testing.T, name, src, testSrc string) {
 	t.Helper()
+	requireGoToolchain(t)
 	tmpDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(tmpDir, "blueprint.go"), []byte(src), 0o600); err != nil {
 		t.Fatalf("write %s generated code: %v", name, err)
@@ -382,6 +383,19 @@ func TestGeneratedEntBlueprintLifecycle(t *testing.T) {
 	}
 }
 `
+
+// requireGoToolchain skips tests that build and run a temporary module. They
+// shell out to the go toolchain and need its module cache populated, so they are
+// not runnable in short mode or in an environment without the go binary.
+func requireGoToolchain(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("builds a temporary module with the go toolchain")
+	}
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skipf("go toolchain is unavailable: %v", err)
+	}
+}
 
 func moduleRoot(t *testing.T) string {
 	t.Helper()
