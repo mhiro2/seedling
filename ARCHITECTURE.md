@@ -99,7 +99,7 @@ The graph must be acyclic. `TopoSort()` uses Kahn's algorithm and returns nodes 
 
 ### 4. Executor
 
-The executor consumes a cloned graph and mutates node values during execution. Before the first insert, it resolves every blueprint and validates node types plus all FK source/destination field bindings. This preflight keeps graph-shape errors from appearing after rows have already been created.
+The executor consumes a cloned graph and mutates node values during execution. Before the first insert, it resolves every blueprint and validates node types plus all FK bindings. Referenced parent fields are checked by declared type only, because a parent's `Insert` may still allocate the embedded struct that holds them; the child's own FK field is checked against its value, since nothing populates that between the check and the assignment. This preflight keeps graph-shape errors from appearing after rows have already been created.
 
 After preflight, each node runs in topological order:
 
@@ -137,7 +137,7 @@ Important detail:
 - FK fields are not finalized by the planner.
 - They are assigned by the executor immediately before each insert.
 - This allows database-generated primary keys, or other returned referenced values, to flow into downstream child nodes.
-- If execution stops after some inserts succeed, the executor returns those nodes with the error. Its partial graph contains only completed nodes, so `Result.CleanupE` and `BatchResult.CleanupE` never attempt to delete failed or unvisited nodes.
+- If execution stops after some inserts succeed, the executor returns those nodes with the error. Its partial graph contains only completed nodes, so `Result.CleanupE` and `BatchResult.CleanupE` never attempt to delete failed or unvisited nodes. That graph keeps the original root when the root completed and has no root otherwise, so `DebugString` never presents an arbitrary surviving node as the root.
 
 ## Why the split exists
 
@@ -161,6 +161,7 @@ flowchart LR
     SQLCManual --> ParseSqlc["ParseSqlcDir"]
     GORM["GORM models<br/>*.go with gorm tags"] --> ParseG["ParseGormDir<br/>go/ast"]
     ENT["ent schemas<br/>Fields() / Edges()"] --> ParseE["ParseEntSchemaDir<br/>go/ast"]
+    ENTPKG["generated Ent package"] --> ResolveE["ResolveEntSchemas<br/>go/packages + go/types"]
     ATLAS["Atlas HCL<br/>schema.hcl"] --> ParseA["ParseAtlasHCL<br/>regex"]
 
     Parse --> T["[]Table"]
@@ -168,7 +169,8 @@ flowchart LR
     ParseA --> T
 
     ParseG --> GM["[]GormModel"]
-    ParseE --> ES["[]EntSchema"]
+    ParseE --> ResolveE
+    ResolveE --> ES["[]EntSchema<br/>exact generated names"]
     ParseSqlc --> SQLC["SqlcInfo"]
 
     T --> IR["[]normalizedModel"]
@@ -180,7 +182,7 @@ flowchart LR
     Render --> Out["Go source code<br/>Blueprint registrations"]
 ```
 
-SQL DDL, sqlc config, manual sqlc mode, and Atlas HCL still share the common `[]Table` parser output, including both local and referenced FK columns. GORM and ent continue to parse into adapter-specific types (`[]GormModel`, `[]EntSchema`). Before code generation, each adapter is normalized into the same `[]normalizedModel` IR, including PK metadata, explicit referenced-field mappings, belongs-to relations, and Insert/Delete hook bodies. The final renderer is shared, so adapter-specific logic is isolated to parsing and normalization rather than duplicated template code.
+SQL DDL, sqlc config, manual sqlc mode, and Atlas HCL still share the common `[]Table` parser output, including both local and referenced FK columns. GORM and ent continue to parse into adapter-specific types (`[]GormModel`, `[]EntSchema`). Ent additionally loads the generated client package and binds schema fields to its exact entity, builder, and ID signatures; this preserves project-defined entc acronyms, incorporates generated mixin fields, and rejects missing or incompatible generated signatures. Before code generation, each adapter is normalized into the same `[]normalizedModel` IR, including PK metadata, explicit referenced-field mappings, belongs-to relations, and Insert/Delete hook bodies. The final renderer is shared, so adapter-specific logic is isolated to parsing and normalization rather than duplicated template code.
 
 The same normalization path also powers `seedling-gen --explain` and `--json`. Diagnostic mode emits both the parser output and the inferred blueprint summary, so relation naming, PK detection, and sqlc query matching can be inspected without reading generated code.
 

@@ -41,7 +41,7 @@ result := seedling.InsertOne[User](t, db)
 t.Cleanup(func() { result.Cleanup(t, db) })
 ```
 
-`Cleanup` uses a bounded context that remains active while test cleanup callbacks run.
+`Cleanup` uses a bounded context that remains active while test cleanup callbacks run. Its budget follows the test deadline; `seedling.WithCleanupTimeout(d)` overrides it.
 
 When using transaction rollback (recommended), explicit cleanup is unnecessary.
 

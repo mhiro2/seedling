@@ -126,7 +126,7 @@ The shortest path is two steps: generate blueprints from your schema, then call 
    },
    ```
 
-   Generated relations retain the referenced columns, so foreign keys targeting unique non-primary columns use `RefField`/`RefFields` instead of being treated as primary-key references. Generated `Defaults` intentionally skip primary keys, relation FK fields, and unsupported custom types. They are meant to make the first insert usable with zero setup, not to satisfy every unique or business constraint automatically.
+   Generated relations retain the referenced columns, so foreign keys targeting unique non-primary columns use `RefField`/`RefFields` instead of being treated as primary-key references. Relations are still named after the referenced table, so recording those columns does not rename an existing relation; a name derived from the FK columns is used only to separate two foreign keys that would otherwise collide. Generated `Defaults` intentionally skip primary keys, relation FK fields, and unsupported custom types. They are meant to make the first insert usable with zero setup, not to satisfy every unique or business constraint automatically.
 
    The snippets below assume the generated package is named `testutil`.
    For a runnable minimal version of this flow, see [examples/quickstart](./examples/quickstart).
@@ -240,7 +240,7 @@ result := seedling.NewSession[testutil.User](reg).InsertOne(t, db)
 t.Cleanup(func() { result.Cleanup(t, db) })
 ```
 
-`Cleanup` uses a bounded context that remains active during `t.Cleanup`, even after the test context is canceled.
+`Cleanup` uses a bounded context that remains active during `t.Cleanup`, even after the test context is canceled. Its budget follows the test binary's own deadline; pass `seedling.WithCleanupTimeout` to cap it explicitly when tearing down a large graph against a slow database.
 
 The [Guide](./docs/guide.md#debugging-and-cleanup) lists the full set of debugging APIs, including `BatchResult.NodeAt` for `InsertMany` graphs.
 
@@ -264,7 +264,7 @@ The [Guide](./docs/guide.md#debugging-and-cleanup) lists the full set of debuggi
 - [with-tx](./examples/with-tx): `database/sql` transaction helper with `seedling.WithTx`
 - [sqlc](./examples/sqlc): wire blueprints to sqlc-generated query code
 - pgx transactions: use `github.com/mhiro2/seedling/seedlingpgx` with `pgxpool.Pool` or `*pgx.Conn`
-- GORM / ent / Atlas: use the `seedling-gen gorm`, `seedling-gen ent`, or `seedling-gen atlas` subcommands to generate blueprints from your existing schema definitions
+- GORM / ent / Atlas: use the `seedling-gen gorm`, `seedling-gen ent`, or `seedling-gen atlas` subcommands to generate blueprints from your existing schema definitions. Run entc first: the Ent adapter verifies exact field and builder signatures against the generated package supplied with `--import-path`
 
 ## 📚 Learn More
 

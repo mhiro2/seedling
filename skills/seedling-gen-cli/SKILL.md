@@ -31,7 +31,7 @@ Choose exactly one input source. Prefer the strongest source of truth already us
 2. GORM model directory with `gorm` struct tags
    Use `gorm --dir` and `--import-path`.
 3. ent schema directory with `Fields()` / `Edges()`
-   Use `ent --dir` and `--import-path`.
+   Generate the Ent client first, then use `ent --dir` and `--import-path`. The generated package is the source of truth for field and builder names.
 4. Atlas HCL schema
    Use `atlas`.
 5. SQL DDL files
@@ -102,6 +102,7 @@ seedling-gen atlas \
 - `--json` prints the same diagnostic report as JSON.
 - `--dialect` is available on `sql` and `sqlc`. It is a validation hint and defaults to `auto` when omitted. Supported values are `auto`, `postgres`, `mysql`, and `sqlite`.
 - `--import-path` must be a full Go import path.
+- The `ent` import path must resolve to compilable entc output. `seedling-gen` reads exact field, mixin, setter, lifecycle, and ID signatures so custom acronyms are preserved and missing or incompatible generated signatures are rejected.
 - Generated `Defaults` fill common scalar fields deterministically, but skip primary keys, relation foreign keys, and unsupported custom types.
 - The generated file is a starting point. Agents should expect follow-up edits for callback wiring, naming cleanup, and any domain-specific default overrides.
 
@@ -111,7 +112,8 @@ seedling-gen atlas \
 - **FK or relation not detected** — `seedling-gen` infers relations from foreign key constraints. If the schema lacks explicit FK definitions (common in MySQL or older DDL), add the missing `Relation` entries manually in the generated file.
 - **Composite key mismatch** — Verify that `LocalFields`, `RefFields`, and `RemoteFields` in the generated `Relation` list their columns in matching schema order.
 - **Generated defaults violate constraints** — Override generated `Defaults` when the schema expects unique values, enumerated business values, or non-scalar custom types that the generator intentionally leaves untouched.
-- **ent edge not mapped** — Singular edges marked `Unique` or `Required` must expose their foreign key with `.Field(...)`; the named field must also appear in `Fields()`. M2M edges via join tables require manual `ManyToManyRelation` definitions.
+- **ent edge not mapped** — A singular edge (`Unique` or `Required`) needs `.Field(...)` on whichever schema holds the FK column, and the named field must also appear in that schema's `Fields()`. The opposite side of a one-to-one needs nothing, since ent does not allow `.Field(...)` there. M2M edges via join tables require manual `ManyToManyRelation` definitions.
+- **ent generated signature mismatch** — Run Ent generation again and ensure `--import-path` names that generated package. seedling-gen stops when schema fields, builder setters, lifecycle methods, or ID types differ from the compiled Ent output.
 
 ## Verification checklist
 
