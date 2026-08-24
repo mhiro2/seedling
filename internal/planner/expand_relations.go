@@ -3,7 +3,6 @@ package planner
 import (
 	"fmt"
 	"reflect"
-	"strings"
 
 	"github.com/mhiro2/seedling/internal/errx"
 	"github.com/mhiro2/seedling/internal/graph"
@@ -12,8 +11,8 @@ import (
 func (e *expander) expandRelation(
 	bp *BlueprintDef,
 	node *graph.Node,
-	nodeID string,
-	relationPath string,
+	nodeID nodeIdentity,
+	relationPath relationPath,
 	rel RelationDef,
 	opts *OptionSet,
 	bindings map[string]*graph.Node,
@@ -92,8 +91,8 @@ func (e *expander) bindRelationNode(
 func (e *expander) expandBelongsTo(
 	bp *BlueprintDef,
 	node *graph.Node,
-	nodeID string,
-	relationPath string,
+	nodeID nodeIdentity,
+	relationPath relationPath,
 	rel RelationDef,
 	opts *OptionSet,
 ) error {
@@ -131,8 +130,8 @@ func (e *expander) expandBelongsTo(
 
 func (e *expander) expandHasMany(
 	parentNode *graph.Node,
-	parentNodeID string,
-	relationPath string,
+	parentNodeID nodeIdentity,
+	relationPath relationPath,
 	rel RelationDef,
 	opts *OptionSet,
 ) error {
@@ -152,7 +151,7 @@ func (e *expander) expandHasMany(
 
 	for i := range count {
 		childPath := appendRelationPath(relationPath, rel.Name)
-		childNode, err := e.expandBlueprint(childBP, relationNodeID(parentNodeID, rel.Name, i, count), childOpts, childBindings, childPath)
+		childNode, err := e.expandBlueprint(childBP, relationNodeIdentity(parentNodeID, rel.Name, i, count), childOpts, childBindings, childPath)
 		if err != nil {
 			return err
 		}
@@ -189,8 +188,8 @@ func hasManyBindings(childBP *BlueprintDef, parentNode *graph.Node, rel Relation
 
 func (e *expander) expandManyToMany(
 	parentNode *graph.Node,
-	parentNodeID string,
-	relationPath string,
+	parentNodeID nodeIdentity,
+	relationPath relationPath,
 	rel RelationDef,
 	opts *OptionSet,
 ) error {
@@ -221,14 +220,14 @@ func (e *expander) expandManyToMany(
 
 	for i := range count {
 		childPath := appendRelationPath(relationPath, rel.Name)
-		childNodeID := relationNodeID(parentNodeID, rel.Name, i, count)
+		childNodeID := relationNodeIdentity(parentNodeID, rel.Name, i, count)
 		childNode, err := e.expandBlueprint(childBP, childNodeID, childOpts, nil, childPath)
 		if err != nil {
 			return err
 		}
 
 		joinBindings, parentBound, childBound := manyToManyBindings(joinBP, parentNode, childNode, rel)
-		joinNode, err := e.expandBlueprint(joinBP, relationNodeID(childNodeID, rel.ThroughBlueprint, 0, 1), nil, joinBindings, appendRelationPath(childPath, rel.ThroughBlueprint))
+		joinNode, err := e.expandBlueprint(joinBP, joinNodeIdentity(childNodeID, rel.ThroughBlueprint), nil, joinBindings, appendJoinPath(childPath, rel.ThroughBlueprint))
 		if err != nil {
 			return err
 		}
@@ -348,70 +347,54 @@ func relationCount(rel RelationDef) int {
 	return rel.Count
 }
 
-func relationNodeID(parentNodeID, relation string, index, count int) string {
-	nodeID := fmt.Sprintf("%s.%s", parentNodeID, relation)
-	if count <= 1 {
-		return nodeID
-	}
-	return fmt.Sprintf("%s[%d]", nodeID, index)
-}
-
-func appendRelationPath(path, relation string) string {
-	if path == "" {
-		return relation
-	}
-	return path + "." + relation
-}
-
-func (e *expander) belongsToNodeID(parentNodeID, relationPath string, rel RelationDef, opts *OptionSet) string {
+func (e *expander) belongsToNodeID(parentNodeID nodeIdentity, path relationPath, rel RelationDef, opts *OptionSet) nodeIdentity {
 	if e.share == nil {
-		return relationNodeID(parentNodeID, rel.Name, 0, 1)
+		return relationNodeIdentity(parentNodeID, rel.Name, 0, 1)
 	}
-	return e.share.belongsToNodeID(parentNodeID, relationPath, rel, opts)
+	return e.share.belongsToNodeID(parentNodeID, path, rel, opts)
 }
 
 type batchShareState struct {
-	candidates map[string][]sharedCandidate
+	candidates map[relationPath][]sharedCandidate
 }
 
 type sharedCandidate struct {
-	nodeID string
+	nodeID nodeIdentity
 	opts   *OptionSet
 }
 
 func newBatchShareState() *batchShareState {
 	return &batchShareState{
-		candidates: make(map[string][]sharedCandidate),
+		candidates: make(map[relationPath][]sharedCandidate),
 	}
 }
 
-func (s *batchShareState) belongsToNodeID(parentNodeID, relationPath string, rel RelationDef, opts *OptionSet) string {
+func (s *batchShareState) belongsToNodeID(parentNodeID nodeIdentity, path relationPath, rel RelationDef, opts *OptionSet) nodeIdentity {
 	if !shareableOptionSet(opts) {
-		return relationNodeID(parentNodeID, rel.Name, 0, 1)
+		return relationNodeIdentity(parentNodeID, rel.Name, 0, 1)
 	}
 
-	candidates := s.candidates[relationPath]
+	candidates := s.candidates[path]
 	for _, candidate := range candidates {
 		if reflect.DeepEqual(candidate.opts, opts) {
 			return candidate.nodeID
 		}
 	}
 
-	nodeID := sharedRelationNodeID(relationPath, len(candidates))
-	s.candidates[relationPath] = append(candidates, sharedCandidate{
+	nodeID := sharedRelationNodeIdentity(path, len(candidates))
+	s.candidates[path] = append(candidates, sharedCandidate{
 		nodeID: nodeID,
 		opts:   opts,
 	})
 	return nodeID
 }
 
-func sharedRelationNodeID(path string, index int) string {
-	replacer := strings.NewReplacer(".", "__", "[", "_", "]", "")
-	base := "shared." + replacer.Replace(path)
+func sharedRelationNodeIdentity(path relationPath, index int) nodeIdentity {
+	base := "shared." + string(path)
 	if index == 0 {
-		return base
+		return nodeIdentity(base)
 	}
-	return fmt.Sprintf("%s#%d", base, index)
+	return nodeIdentity(fmt.Sprintf("%s#%d", base, index))
 }
 
 func shareableOptionSet(opts *OptionSet) bool {

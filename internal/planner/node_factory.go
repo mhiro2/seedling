@@ -46,7 +46,7 @@ func newGraphNode(bp *BlueprintDef, nodeID string, value any, isProvided bool) *
 	}
 }
 
-func (e *expander) providedBelongsToNode(rel RelationDef, nodeID string, opts *OptionSet) (*graph.Node, bool, error) {
+func (e *expander) providedBelongsToNode(rel RelationDef, nodeID nodeIdentity, opts *OptionSet) (*graph.Node, bool, error) {
 	useVal, ok := usedRelationValue(opts, rel.Name)
 	if !ok {
 		return nil, false, nil
@@ -67,9 +67,10 @@ func (e *expander) providedBelongsToNode(rel RelationDef, nodeID string, opts *O
 	// Normalize the provided value to the blueprint's exact model type.
 	useVal = normalizeUseValue(parentBP.ModelType, useVal)
 
-	usedNode := newProvidedNode(parentBP, relationNodeID(nodeID, rel.Name, 0, 1), useVal)
+	usedNodeID := relationNodeIdentity(nodeID, rel.Name, 0, 1)
+	usedNode := newProvidedNode(parentBP, usedNodeID.String(), useVal)
 	e.graph.AddNode(usedNode)
-	e.visited[usedNode.ID] = usedNode
+	e.visited[usedNodeID] = usedNode
 
 	return usedNode, true, nil
 }

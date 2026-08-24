@@ -406,7 +406,7 @@ const goldenGamma uint64 = 0x9e3779b97f4a7c15
 // WithInsertLog registers a callback that is invoked for each step in the
 // execution plan, including both inserted and provided (skipped) nodes.
 // The callback receives an [InsertLog] describing the operation, including
-// FK bindings that were resolved from parent PK values.
+// FK bindings that were resolved from referenced parent field values.
 //
 // This is useful for debugging the dependency resolution order and
 // understanding which FK values were assigned:

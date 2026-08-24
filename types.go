@@ -15,7 +15,7 @@ type InsertLog struct {
 	// Provided is true when the record was supplied via [Use] (no INSERT executed).
 	Provided bool
 
-	// FKBindings describes the FK fields that were populated from parent PKs
+	// FKBindings describes the FK fields that were populated from parent fields
 	// before this record was inserted.
 	FKBindings []FKBinding
 }
@@ -31,7 +31,7 @@ type FKBinding struct {
 	// ParentTable is the parent table name.
 	ParentTable string
 
-	// ParentField is the parent PK field name.
+	// ParentField is the referenced parent field name.
 	ParentField string
 
 	// Value is the PK value assigned to the FK field.
@@ -50,7 +50,7 @@ type RelationKind string
 
 const (
 	// BelongsTo indicates a foreign key relationship where the child holds
-	// a reference to the parent's primary key.
+	// a reference to a field on the parent (the primary key by default).
 	BelongsTo RelationKind = "belongs_to"
 
 	// HasMany indicates a one-to-many relationship where creating the parent

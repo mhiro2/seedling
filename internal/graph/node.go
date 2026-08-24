@@ -30,7 +30,7 @@ type Edge struct {
 	Bindings   []FieldBinding
 }
 
-// FieldBinding maps one parent PK field onto one child FK field.
+// FieldBinding maps one referenced parent field onto one child FK field.
 type FieldBinding struct {
 	ParentField string
 	ChildField  string

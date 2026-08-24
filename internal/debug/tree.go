@@ -139,7 +139,7 @@ func writeResultNode(b *strings.Builder, node *graph.Node, prefix, prevID string
 
 // DryRunString returns the planned INSERT execution order with FK assignments.
 // Each step shows which table will be inserted and how FK fields are populated
-// from parent PK values.
+// from referenced parent field values.
 func DryRunString(g *graph.Graph) string {
 	if g == nil {
 		return "(empty)"

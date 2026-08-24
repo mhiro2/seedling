@@ -66,6 +66,14 @@ func Exists(v any, name string) bool {
 	return ok && entry.Exported
 }
 
+// CanCopyType reports whether Copy can assign a source field type to a
+// destination field type. In addition to direct assignment, a value can be
+// wrapped in a newly allocated destination pointer.
+func CanCopyType(source, destination reflect.Type) bool {
+	return source.AssignableTo(destination) ||
+		destination.Kind() == reflect.Pointer && source.AssignableTo(destination.Elem())
+}
+
 // Copy reads srcName from src (struct or *struct) and assigns the value to
 // dstName on dstPtr (must be *struct). It avoids the boxing round-trip that
 // using GetField + SetField would incur, and reuses the cached field index
@@ -84,6 +92,9 @@ func Copy(src any, srcName string, dstPtr any, dstName string) error {
 	if !ok {
 		return fmt.Errorf("get field %q: %w", srcName, errx.FieldNotFoundWithHint(srcType.Name(), srcName, exportedFields(srcType)))
 	}
+	if !srcEntry.Exported {
+		return fmt.Errorf("%w: field %q is unexported", errx.ErrFieldNotFound, srcName)
+	}
 
 	dstRV := reflect.ValueOf(dstPtr)
 	if dstRV.Kind() != reflect.Pointer || dstRV.Elem().Kind() != reflect.Struct {
@@ -95,14 +106,32 @@ func Copy(src any, srcName string, dstPtr any, dstName string) error {
 	if !ok {
 		return fmt.Errorf("set field %q: %w", dstName, errx.FieldNotFoundWithHint(dstType.Name(), dstName, exportedFields(dstType)))
 	}
+	if !dstEntry.Exported {
+		return fmt.Errorf("%w: field %q is unexported", errx.ErrFieldNotFound, dstName)
+	}
 
-	srcField := srcVal.FieldByIndex(srcEntry.Index)
-	dstField := dstElem.FieldByIndex(dstEntry.Index)
+	srcField, err := srcVal.FieldByIndexErr(srcEntry.Index)
+	if err != nil {
+		return fmt.Errorf("get field %q: %w: %w", srcName, errx.ErrInvalidOption, err)
+	}
+	if !srcField.CanInterface() {
+		return fmt.Errorf("%w: field %q is unexported", errx.ErrFieldNotFound, srcName)
+	}
+	dstField, err := dstElem.FieldByIndexErr(dstEntry.Index)
+	if err != nil {
+		return fmt.Errorf("set field %q: %w: %w", dstName, errx.ErrInvalidOption, err)
+	}
 
 	if !dstField.CanSet() {
 		return fmt.Errorf("%w: field %q is unexported", errx.ErrFieldNotFound, dstName)
 	}
-	if !srcField.Type().AssignableTo(dstField.Type()) {
+	if dstField.Kind() == reflect.Pointer && srcField.Type().AssignableTo(dstField.Type().Elem()) {
+		wrapped := reflect.New(dstField.Type().Elem())
+		wrapped.Elem().Set(srcField)
+		dstField.Set(wrapped)
+		return nil
+	}
+	if !CanCopyType(srcField.Type(), dstField.Type()) {
 		return fmt.Errorf("set field %q: %w", dstName, errx.TypeMismatch(dstName, dstField.Type().String(), srcField.Type().String()))
 	}
 
