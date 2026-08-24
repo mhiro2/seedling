@@ -763,7 +763,14 @@ CREATE TABLE items (
 			{Name: "InsertItem", ReturnType: "Item", ParamType: "InsertItemParams", ParamFields: []SqlcField{{Name: "Code", Type: "string"}, {Name: "Region", Type: "string"}}},
 		},
 		DeleteQueries: []SqlcDeleteQuery{
-			{Name: "DeleteItem", ArgName: "", ArgType: "DeleteItemParams", ParamType: "DeleteItemParams"},
+			{
+				Name:      "DeleteItem",
+				ParamType: "DeleteItemParams",
+				ParamFields: []SqlcField{
+					{Name: "Code", Type: "string"},
+					{Name: "Region", Type: "string"},
+				},
+			},
 		},
 	}
 

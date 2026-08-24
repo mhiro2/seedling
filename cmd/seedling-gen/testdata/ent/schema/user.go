@@ -15,6 +15,7 @@ func (User) Fields() []ent.Field {
 		field.String("name"),
 		field.String("nickname").Optional().Nillable(),
 		field.Int("company_uuid").Nillable(),
+		field.String("oidc_url"),
 	}
 }
 

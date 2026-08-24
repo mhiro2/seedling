@@ -7,12 +7,10 @@ import (
 
 type DBTX any
 
-type Queries struct {
-	db DBTX
-}
+type Queries struct{}
 
-func New(db DBTX) *Queries {
-	return &Queries{db: db}
+func New() *Queries {
+	return &Queries{}
 }
 
 type Recorder struct {
@@ -39,8 +37,8 @@ type User struct {
 
 type InsertUserParams struct {
 	DisplayLabel      string
-	CreatedAt         time.Time
-	CompanySpotifyUrl string
+	RecordedAt        time.Time
+	CompanySpotifyURL string
 }
 
 type Membership struct {
@@ -58,48 +56,48 @@ type DeleteMembershipParams struct {
 	UserID         int64
 }
 
-func (q *Queries) InsertCompany(_ context.Context, spotifyUrl string) (Company, error) {
-	recorder := q.db.(*Recorder)
+func (*Queries) InsertCompany(_ context.Context, db DBTX, spotifyUrl string) (*Company, error) {
+	recorder := db.(*Recorder)
 	recorder.NextID++
 	company := Company{ID: recorder.NextID, SpotifyUrl: spotifyUrl}
 	recorder.InsertedCompanies = append(recorder.InsertedCompanies, company)
-	return company, nil
+	return &company, nil
 }
 
-func (q *Queries) InsertUser(_ context.Context, arg InsertUserParams) (User, error) {
-	recorder := q.db.(*Recorder)
+func (*Queries) InsertUser(_ context.Context, db DBTX, arg *InsertUserParams) (*User, error) {
+	recorder := db.(*Recorder)
 	recorder.NextID++
 	user := User{
 		ID:                recorder.NextID,
 		DisplayLabel:      arg.DisplayLabel,
-		CreatedAt:         arg.CreatedAt,
-		CompanySpotifyUrl: arg.CompanySpotifyUrl,
+		CreatedAt:         arg.RecordedAt,
+		CompanySpotifyUrl: arg.CompanySpotifyURL,
 	}
 	recorder.InsertedUsers = append(recorder.InsertedUsers, user)
-	return user, nil
+	return &user, nil
 }
 
-func (q *Queries) InsertMembership(_ context.Context, arg InsertMembershipParams) (Membership, error) {
-	membership := Membership(arg)
-	recorder := q.db.(*Recorder)
+func (*Queries) InsertMembership(_ context.Context, db DBTX, arg *InsertMembershipParams) (*Membership, error) {
+	membership := Membership(*arg)
+	recorder := db.(*Recorder)
 	recorder.InsertedMemberships = append(recorder.InsertedMemberships, membership)
-	return membership, nil
+	return &membership, nil
 }
 
-func (q *Queries) DeleteCompany(_ context.Context, id int64) error {
-	recorder := q.db.(*Recorder)
+func (*Queries) DeleteCompany(_ context.Context, db DBTX, id int64) error {
+	recorder := db.(*Recorder)
 	recorder.DeletedCompanyIDs = append(recorder.DeletedCompanyIDs, id)
 	return nil
 }
 
-func (q *Queries) DeleteUser(_ context.Context, id int64) error {
-	recorder := q.db.(*Recorder)
+func (*Queries) DeleteUser(_ context.Context, db DBTX, id int64) error {
+	recorder := db.(*Recorder)
 	recorder.DeletedUserIDs = append(recorder.DeletedUserIDs, id)
 	return nil
 }
 
-func (q *Queries) DeleteMembership(_ context.Context, arg DeleteMembershipParams) error {
-	recorder := q.db.(*Recorder)
-	recorder.DeletedMemberships = append(recorder.DeletedMemberships, arg)
+func (*Queries) DeleteMembership(_ context.Context, db DBTX, arg *DeleteMembershipParams) error {
+	recorder := db.(*Recorder)
+	recorder.DeletedMemberships = append(recorder.DeletedMemberships, *arg)
 	return nil
 }

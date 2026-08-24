@@ -221,6 +221,67 @@ func TestNormalizeTableRelations_DistinguishesCompositeForeignKeysToSameTable(t 
 	}
 }
 
+func TestNormalizeTableRelations_NamesUnqualifiedCompositeKeyAfterReferencedTable(t *testing.T) {
+	// Recording referenced columns must not rename a relation that a caller
+	// already addresses through Use()/Ref().
+	table := Table{
+		Name: "posts",
+		Columns: []Column{
+			{Name: "tenant_id", GoName: "TenantID"},
+			{Name: "user_id", GoName: "UserID"},
+		},
+		ForeignKeys: []ForeignKey{
+			{
+				Columns:    []string{"tenant_id", "user_id"},
+				RefTable:   "users",
+				RefColumns: []string{"tenant_id", "id"},
+			},
+		},
+	}
+
+	relations := normalizeTableRelations(table)
+	if len(relations) != 1 {
+		t.Fatalf("relations = %d, want 1", len(relations))
+	}
+	if relations[0].Name != "user" {
+		t.Fatalf("relation name = %q, want %q", relations[0].Name, "user")
+	}
+}
+
+func TestNormalizeTableRelations_FallsBackToColumnsOnlyOnCollision(t *testing.T) {
+	table := Table{
+		Name: "posts",
+		Columns: []Column{
+			{Name: "tenant_id", GoName: "TenantID"},
+			{Name: "user_id", GoName: "UserID"},
+			{Name: "reviewer_tenant", GoName: "ReviewerTenant"},
+			{Name: "reviewer_user", GoName: "ReviewerUser"},
+		},
+		ForeignKeys: []ForeignKey{
+			{
+				Columns:    []string{"tenant_id", "user_id"},
+				RefTable:   "users",
+				RefColumns: []string{"tenant_id", "id"},
+			},
+			{
+				// Neither key strips its referenced column names, so both want
+				// to be called "user" and both have to be disambiguated.
+				Columns:    []string{"reviewer_tenant", "reviewer_user"},
+				RefTable:   "users",
+				RefColumns: []string{"tenant_id", "id"},
+			},
+		},
+	}
+
+	relations := normalizeTableRelations(table)
+	if len(relations) != 2 {
+		t.Fatalf("relations = %d, want 2", len(relations))
+	}
+	if relations[0].Name != "tenant_id_user_id" || relations[1].Name != "reviewer" {
+		t.Fatalf("relation names = [%s %s], want [tenant_id_user_id reviewer]", relations[0].Name, relations[1].Name)
+	}
+}
+
 func TestGenerate_EmitsNonPrimaryReferencedField(t *testing.T) {
 	tables, err := ParseSchema(`
 CREATE TABLE countries (

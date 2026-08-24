@@ -357,7 +357,7 @@ func runEntCmd(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if diagnosticModeEnabled(*explain, *jsonOutput) {
-		report, err := buildEntReport(*dir)
+		report, err := buildEntReport(*dir, *importPath)
 		if err != nil {
 			_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
 			return 1
@@ -430,7 +430,7 @@ func runAtlas(w io.Writer, pkg, atlasPath string) error {
 }
 
 func runEnt(w io.Writer, pkg, dir, importPath string) error {
-	schemas, err := ParseEntSchemaDir(dir)
+	schemas, err := loadResolvedEntSchemas(dir, importPath)
 	if err != nil {
 		return err
 	}
@@ -487,12 +487,27 @@ func buildGormReport(dir, importPath string) (diagnosticReport, error) {
 	return buildGormDiagnosticReport(importPath, models), nil
 }
 
-func buildEntReport(dir string) (diagnosticReport, error) {
-	schemas, err := ParseEntSchemaDir(dir)
+// buildEntReport falls back to the parsed schemas when the generated package
+// cannot be resolved, so the report can still explain what seedling-gen saw.
+// The unresolved signatures are reported as warnings instead of aborting.
+func buildEntReport(dir, importPath string) (diagnosticReport, error) {
+	parsed, err := ParseEntSchemaDir(dir)
 	if err != nil {
 		return diagnosticReport{}, err
 	}
-	return buildEntDiagnosticReport(schemas), nil
+	resolved, err := ResolveEntSchemas(dir, importPath, parsed)
+	if err != nil {
+		return buildEntDiagnosticReport(parsed, []string{fmt.Sprintf("resolve generated Ent package: %v", err)}), nil
+	}
+	return buildEntDiagnosticReport(resolved, nil), nil
+}
+
+func loadResolvedEntSchemas(dir, importPath string) ([]EntSchema, error) {
+	schemas, err := ParseEntSchemaDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	return ResolveEntSchemas(dir, importPath, schemas)
 }
 
 func buildAtlasReport(atlasPath string) (diagnosticReport, error) {

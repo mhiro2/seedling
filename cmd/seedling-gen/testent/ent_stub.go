@@ -43,8 +43,8 @@ func (c *CompanyCreate) Save(context.Context) (*Company, error) {
 }
 
 type Company struct {
-	ID   int
-	Name string
+	ID   int    `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
 }
 
 type CompanyDelete struct {
@@ -93,6 +93,16 @@ func (c *UserCreate) SetNillableCompanyUUID(companyUUID *int) *UserCreate {
 	return c
 }
 
+func (c *UserCreate) SetOIDCURL(oidcURL string) *UserCreate {
+	c.value.OIDCURL = oidcURL
+	return c
+}
+
+func (c *UserCreate) SetCreatedAt(createdAt int64) *UserCreate {
+	c.value.CreatedAt = createdAt
+	return c
+}
+
 func (c *UserCreate) Save(context.Context) (*User, error) {
 	c.value.ID = 84
 	c.client.InsertCount++
@@ -102,10 +112,12 @@ func (c *UserCreate) Save(context.Context) (*User, error) {
 }
 
 type User struct {
-	ID          int
-	Name        string
-	Nickname    *string
-	CompanyUUID *int
+	ID          int     `json:"id,omitempty"`
+	Name        string  `json:"name,omitempty"`
+	Nickname    *string `json:"nickname,omitempty"`
+	CompanyUUID *int    `json:"company_uuid,omitempty"`
+	OIDCURL     string  `json:"oidc_url,omitempty"`
+	CreatedAt   int64   `json:"created_at,omitempty"`
 }
 
 type UserDelete struct {

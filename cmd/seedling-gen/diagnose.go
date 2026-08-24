@@ -24,6 +24,10 @@ type diagnosticReport struct {
 	EntSchemas []diagnosticEntSchema `json:"entSchemas,omitempty"`
 	SQLC       *diagnosticSQLC       `json:"sqlc,omitempty"`
 	Blueprints []diagnosticBlueprint `json:"blueprints"`
+	// Warnings records why a section could not be fully resolved. Diagnostic
+	// mode exists to explain resolution failures, so it reports what it did
+	// parse instead of aborting with only the error.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 type diagnosticTable struct {
@@ -86,11 +90,17 @@ type diagnosticEntSchema struct {
 }
 
 type diagnosticEntField struct {
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	GoType   string `json:"goType"`
-	Optional bool   `json:"optional"`
-	Nillable bool   `json:"nillable"`
+	Name         string `json:"name"`
+	GoName       string `json:"goName"`
+	JSONName     string `json:"jsonName,omitempty"`
+	Type         string `json:"type"`
+	GoType       string `json:"goType"`
+	Optional     bool   `json:"optional"`
+	Nillable     bool   `json:"nillable"`
+	CustomGoType bool   `json:"customGoType,omitempty"`
+	FromMixin    bool   `json:"fromMixin,omitempty"`
+	SetterName   string `json:"setterName,omitempty"`
+	SetterDeref  bool   `json:"setterDeref,omitempty"`
 }
 
 type diagnosticEntEdge struct {
@@ -117,20 +127,25 @@ type diagnosticSQLCModel struct {
 }
 
 type diagnosticSQLCQuery struct {
-	Name        string                `json:"name"`
-	ReturnType  string                `json:"returnType"`
-	ParamType   string                `json:"paramType,omitempty"`
-	ParamFields []diagnosticFieldType `json:"paramFields,omitempty"`
-	ArgName     string                `json:"argName,omitempty"`
-	ArgType     string                `json:"argType,omitempty"`
+	Name          string                `json:"name"`
+	ReturnType    string                `json:"returnType"`
+	ReturnPointer bool                  `json:"returnPointer,omitempty"`
+	DBArgument    bool                  `json:"dbArgument,omitempty"`
+	ParamType     string                `json:"paramType,omitempty"`
+	ParamPointer  bool                  `json:"paramPointer,omitempty"`
+	ParamFields   []diagnosticFieldType `json:"paramFields,omitempty"`
+	ArgName       string                `json:"argName,omitempty"`
+	ArgType       string                `json:"argType,omitempty"`
 }
 
 type diagnosticSQLCDeleteQuery struct {
-	Name        string                `json:"name"`
-	ParamType   string                `json:"paramType,omitempty"`
-	ParamFields []diagnosticFieldType `json:"paramFields,omitempty"`
-	ArgName     string                `json:"argName,omitempty"`
-	ArgType     string                `json:"argType,omitempty"`
+	Name         string                `json:"name"`
+	DBArgument   bool                  `json:"dbArgument,omitempty"`
+	ParamType    string                `json:"paramType,omitempty"`
+	ParamPointer bool                  `json:"paramPointer,omitempty"`
+	ParamFields  []diagnosticFieldType `json:"paramFields,omitempty"`
+	ArgName      string                `json:"argName,omitempty"`
+	ArgType      string                `json:"argType,omitempty"`
 }
 
 type diagnosticBlueprint struct {
@@ -168,10 +183,22 @@ func resolveDiagnosticFormat(json bool) diagnosticFormat {
 	return diagnosticFormatText
 }
 
+// writeDiagnosticOutput emits the report and then reports failure if anything
+// went unresolved. The report is written either way: it is what explains why
+// generation would refuse to run.
 func writeDiagnosticOutput(stdout, stderr io.Writer, out string, report diagnosticReport, format diagnosticFormat) int {
-	return writeOutput(stdout, stderr, out, func(w io.Writer) error {
+	if code := writeOutput(stdout, stderr, out, func(w io.Writer) error {
 		return renderDiagnosticReport(w, report, format)
-	})
+	}); code != 0 {
+		return code
+	}
+	if len(report.Warnings) == 0 {
+		return 0
+	}
+	for _, warning := range report.Warnings {
+		_, _ = fmt.Fprintf(stderr, "Error: %s\n", warning)
+	}
+	return 1
 }
 
 func renderDiagnosticReport(w io.Writer, report diagnosticReport, format diagnosticFormat) error {
@@ -201,6 +228,7 @@ func renderDiagnosticReport(w io.Writer, report diagnosticReport, format diagnos
 		writeGormSection(&buf, report.GormModels)
 		writeEntSection(&buf, report.EntSchemas)
 		writeBlueprintSection(&buf, report.Blueprints)
+		writeWarningSection(&buf, report.Warnings)
 
 		if _, err := io.WriteString(w, buf.String()); err != nil {
 			return fmt.Errorf("write diagnostic report: %w", err)
@@ -209,6 +237,19 @@ func renderDiagnosticReport(w io.Writer, report diagnosticReport, format diagnos
 	}
 
 	return fmt.Errorf("render diagnostic report: unsupported format %q", format)
+}
+
+func writeWarningSection(buf *strings.Builder, warnings []string) {
+	if len(warnings) == 0 {
+		return
+	}
+
+	buf.WriteString("\nUnresolved:\n")
+	for _, warning := range warnings {
+		buf.WriteString("- ")
+		buf.WriteString(warning)
+		buf.WriteString("\n")
+	}
 }
 
 func writeTableSection(buf *strings.Builder, tables []diagnosticTable) {
@@ -304,9 +345,18 @@ func writeSQLCSection(buf *strings.Builder, sqlc *diagnosticSQLC) {
 			buf.WriteString("  - ")
 			buf.WriteString(query.Name)
 			buf.WriteString(" -> ")
+			if query.ReturnPointer {
+				buf.WriteString("*")
+			}
 			buf.WriteString(query.ReturnType)
+			if query.DBArgument {
+				buf.WriteString(" with DB argument")
+			}
 			if query.ParamType != "" {
 				buf.WriteString(" using ")
+				if query.ParamPointer {
+					buf.WriteString("*")
+				}
 				buf.WriteString(query.ParamType)
 			}
 			if len(query.ParamFields) > 0 {
@@ -331,9 +381,15 @@ func writeSQLCSection(buf *strings.Builder, sqlc *diagnosticSQLC) {
 		for _, query := range sqlc.DeleteQueries {
 			buf.WriteString("  - ")
 			buf.WriteString(query.Name)
+			if query.DBArgument {
+				buf.WriteString(" with DB argument")
+			}
 			switch {
 			case query.ParamType != "":
 				buf.WriteString(" using ")
+				if query.ParamPointer {
+					buf.WriteString("*")
+				}
 				buf.WriteString(query.ParamType)
 				if len(query.ParamFields) > 0 {
 					buf.WriteString(" {")
@@ -414,7 +470,9 @@ func writeEntSection(buf *strings.Builder, schemas []diagnosticEntSchema) {
 			for _, field := range schema.Fields {
 				buf.WriteString("  - ")
 				buf.WriteString(field.Name)
-				buf.WriteString(": ent=")
+				buf.WriteString(": field=")
+				buf.WriteString(field.GoName)
+				buf.WriteString(" ent=")
 				buf.WriteString(field.Type)
 				buf.WriteString(" go=")
 				buf.WriteString(field.GoType)
@@ -514,22 +572,31 @@ func buildSQLDiagnosticReport(dialect string, tables []Table) diagnosticReport {
 	}
 }
 
+// buildSQLCDiagnosticReport reports what it managed to resolve. A query or model
+// that cannot be bound becomes a warning rather than an error, because the
+// report is what a user reads to find out why generation refused to run.
 func buildSQLCDiagnosticReport(dialect, importPath string, tables []Table, sqlcInfo *SqlcInfo) (diagnosticReport, error) {
+	var warnings []string
+
 	insertSources := make(map[string]string, len(tables))
 	deleteSources := make(map[string]string, len(tables))
+	bindings, err := resolveSqlcTableBindings(tables, sqlcInfo)
+	if err != nil {
+		warnings = append(warnings, fmt.Sprintf("resolve sqlc bindings: %v", err))
+	}
 	for _, table := range tables {
 		insertSources[table.Name] = "stub"
-		if query := sqlcInfo.FindQueryForTable(table); query != nil {
+		if query := bindings[table.Name].insert; query != nil {
 			insertSources[table.Name] = query.Name
 		}
-		if query := sqlcInfo.FindDeleteQueryForTable(table); query != nil {
+		if query := bindings[table.Name].delete; query != nil {
 			deleteSources[table.Name] = query.Name
 		}
 	}
 
 	models, err := normalizeSqlcModels(tables, sqlcInfo)
 	if err != nil {
-		return diagnosticReport{}, fmt.Errorf("normalize sqlc models: %w", err)
+		warnings = append(warnings, fmt.Sprintf("normalize sqlc models: %v", err))
 	}
 
 	return diagnosticReport{
@@ -538,6 +605,7 @@ func buildSQLCDiagnosticReport(dialect, importPath string, tables []Table, sqlcI
 		Tables:     buildTableDiagnostics(tables),
 		SQLC:       buildSQLCDiagnostics(sqlcInfo, importPath),
 		Blueprints: buildBlueprintDiagnostics(models, insertSources, deleteSources),
+		Warnings:   warnings,
 	}, nil
 }
 
@@ -556,7 +624,7 @@ func buildGormDiagnosticReport(importPath string, models []GormModel) diagnostic
 	}
 }
 
-func buildEntDiagnosticReport(schemas []EntSchema) diagnosticReport {
+func buildEntDiagnosticReport(schemas []EntSchema, warnings []string) diagnosticReport {
 	insertSources := make(map[string]string, len(schemas))
 	deleteSources := make(map[string]string, len(schemas))
 	for _, schema := range schemas {
@@ -569,6 +637,7 @@ func buildEntDiagnosticReport(schemas []EntSchema) diagnosticReport {
 		Adapter:    "ent",
 		EntSchemas: buildEntDiagnostics(schemas),
 		Blueprints: buildBlueprintDiagnostics(normalizeEntModels(schemas), insertSources, deleteSources),
+		Warnings:   warnings,
 	}
 }
 
@@ -598,7 +667,8 @@ func buildTableDiagnostics(tables []Table) []diagnosticTable {
 		}
 
 		foreignKeys := make([]diagnosticForeignKey, 0, len(table.ForeignKeys))
-		for _, foreignKey := range table.ForeignKeys {
+		relationNames := relationNamesForTable(table)
+		for foreignKeyIndex, foreignKey := range table.ForeignKeys {
 			localFields := make([]string, 0, len(foreignKey.Columns))
 			for _, columnName := range foreignKey.Columns {
 				for _, column := range table.Columns {
@@ -614,7 +684,7 @@ func buildTableDiagnostics(tables []Table) []diagnosticTable {
 				refFields = append(refFields, toGoFieldName(columnName))
 			}
 
-			relationName := relationNameForForeignKey(foreignKey)
+			relationName := relationNames[foreignKeyIndex]
 
 			foreignKeys = append(foreignKeys, diagnosticForeignKey{
 				Columns:      slices.Clone(foreignKey.Columns),
@@ -687,7 +757,19 @@ func buildEntDiagnostics(schemas []EntSchema) []diagnosticEntSchema {
 	for _, schema := range schemas {
 		fields := make([]diagnosticEntField, 0, len(schema.Fields))
 		for _, field := range schema.Fields {
-			fields = append(fields, diagnosticEntField(field))
+			fields = append(fields, diagnosticEntField{
+				Name:         field.Name,
+				GoName:       field.GoName,
+				JSONName:     field.JSONName,
+				Type:         field.Type,
+				GoType:       field.GoType,
+				Optional:     field.Optional,
+				Nillable:     field.Nillable,
+				CustomGoType: field.CustomGoType,
+				FromMixin:    field.FromMixin,
+				SetterName:   field.SetterName,
+				SetterDeref:  field.SetterDeref,
+			})
 		}
 
 		edges := make([]diagnosticEntEdge, 0, len(schema.Edges))
@@ -735,12 +817,15 @@ func buildSQLCDiagnostics(info *SqlcInfo, importPath string) *diagnosticSQLC {
 			fields = append(fields, diagnosticFieldType(field))
 		}
 		queries = append(queries, diagnosticSQLCQuery{
-			Name:        query.Name,
-			ReturnType:  query.ReturnType,
-			ParamType:   query.ParamType,
-			ParamFields: fields,
-			ArgName:     query.ArgName,
-			ArgType:     query.ArgType,
+			Name:          query.Name,
+			ReturnType:    query.ReturnType,
+			ReturnPointer: query.ReturnPointer,
+			DBArgument:    query.DBArgument,
+			ParamType:     query.ParamType,
+			ParamPointer:  query.ParamPointer,
+			ParamFields:   fields,
+			ArgName:       query.ArgName,
+			ArgType:       query.ArgType,
 		})
 	}
 	slices.SortFunc(queries, func(a, b diagnosticSQLCQuery) int {
@@ -754,11 +839,13 @@ func buildSQLCDiagnostics(info *SqlcInfo, importPath string) *diagnosticSQLC {
 			fields = append(fields, diagnosticFieldType(field))
 		}
 		deleteQueries = append(deleteQueries, diagnosticSQLCDeleteQuery{
-			Name:        query.Name,
-			ParamType:   query.ParamType,
-			ParamFields: fields,
-			ArgName:     query.ArgName,
-			ArgType:     query.ArgType,
+			Name:         query.Name,
+			DBArgument:   query.DBArgument,
+			ParamType:    query.ParamType,
+			ParamPointer: query.ParamPointer,
+			ParamFields:  fields,
+			ArgName:      query.ArgName,
+			ArgType:      query.ArgType,
 		})
 	}
 	slices.SortFunc(deleteQueries, func(a, b diagnosticSQLCDeleteQuery) int {

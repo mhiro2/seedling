@@ -157,6 +157,14 @@ func TestGeneratorOutputsCompile(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ParseEntSchemaDir: %v", err)
 		}
+		schemas, err = ResolveEntSchemas(
+			filepath.Join("testdata", "ent", "schema"),
+			"github.com/mhiro2/seedling/cmd/seedling-gen/testent",
+			schemas,
+		)
+		if err != nil {
+			t.Fatalf("ResolveEntSchemas: %v", err)
+		}
 
 		var buf strings.Builder
 		if err := GenerateEnt(&buf, "compile", "github.com/mhiro2/seedling/cmd/seedling-gen/testent", schemas); err != nil {
@@ -279,6 +287,9 @@ func TestGeneratedSQLCBlueprintLifecycle(t *testing.T) {
 	if root.DisplayLabel == "" || recorder.InsertedUsers[0].DisplayLabel != root.DisplayLabel {
 		t.Fatalf("inserted renamed profile field = %q, root = %q", recorder.InsertedUsers[0].DisplayLabel, root.DisplayLabel)
 	}
+	if root.CreatedAt.IsZero() || recorder.InsertedUsers[0].CreatedAt != root.CreatedAt {
+		t.Fatalf("inserted remapped timestamp = %v, root = %v", recorder.InsertedUsers[0].CreatedAt, root.CreatedAt)
+	}
 	if err := result.CleanupE(t.Context(), recorder); err != nil {
 		t.Fatalf("cleanup generated sqlc blueprint: %v", err)
 	}
@@ -349,6 +360,12 @@ func TestGeneratedEntBlueprintLifecycle(t *testing.T) {
 	}
 	if userClient.InsertedValue.CompanyUUID == nil || *userClient.InsertedValue.CompanyUUID != companyClient.InsertedValue.ID {
 		t.Fatalf("builder company UUID = %v, company ID = %d", userClient.InsertedValue.CompanyUUID, companyClient.InsertedValue.ID)
+	}
+	if root.OIDCURL == "" || userClient.InsertedValue.OIDCURL != root.OIDCURL {
+		t.Fatalf("builder OIDC URL = %q, root OIDC URL = %q", userClient.InsertedValue.OIDCURL, root.OIDCURL)
+	}
+	if root.CreatedAt != 1 || userClient.InsertedValue.CreatedAt != root.CreatedAt {
+		t.Fatalf("builder mixin CreatedAt = %d, root = %d, want 1", userClient.InsertedValue.CreatedAt, root.CreatedAt)
 	}
 	if root.ID == 0 {
 		t.Fatal("inserted root ID is zero")
