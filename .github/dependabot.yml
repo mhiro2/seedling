@@ -12,6 +12,7 @@ updates:
     directories:
       - "/"
       - "/integration"
+      - "/seedlingpgx"
     schedule:
       interval: "weekly"
     cooldown:

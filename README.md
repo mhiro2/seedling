@@ -75,13 +75,23 @@ For advanced features such as `InsertMany`, batch sharing, `Only`, `When`, and d
 
 ## 📦 Installation
 
-Add an import in your code, then let the toolchain record the dependency:
+Install the core module:
+
+```bash
+go get github.com/mhiro2/seedling@latest
+```
+
+Then add an import in your code:
 
 ```go
 import "github.com/mhiro2/seedling"
 ```
 
-Use the same pattern for companion packages when you need them, for example [`seedling/faker`](https://pkg.go.dev/github.com/mhiro2/seedling/faker) (`github.com/mhiro2/seedling/faker`) or [`seedlingpgx`](https://pkg.go.dev/github.com/mhiro2/seedling/seedlingpgx) (`github.com/mhiro2/seedling/seedlingpgx`).
+[`seedling/faker`](https://pkg.go.dev/github.com/mhiro2/seedling/faker) is included in the core module. The pgx companion is published as a separate Go module and must be installed separately:
+
+```bash
+go get github.com/mhiro2/seedling/seedlingpgx@latest
+```
 
 Install the `seedling-gen` CLI (pick one):
 

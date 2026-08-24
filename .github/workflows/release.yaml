@@ -24,14 +24,65 @@ jobs:
           cache-dependency-path: go.sum
       - name: Install Syft
         uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+      - name: Test seedlingpgx release candidate from an empty consumer
+        env:
+          GONOSUMDB: github.com/mhiro2/seedling*
+          GOPROXY: direct
+        run: |
+          candidate_root="$(mktemp -d)"
+          trap 'rm -rf -- "${candidate_root:?}"' EXIT
+          candidate_repo="${candidate_root}/seedling"
+          git clone --no-local "$GITHUB_WORKSPACE" "$candidate_repo"
+          git -C "$candidate_repo" tag --force "seedlingpgx/${GITHUB_REF_NAME}" "$GITHUB_SHA"
+          git config --file "${candidate_root}/gitconfig" \
+            url."file://${candidate_repo}".insteadOf \
+            https://github.com/mhiro2/seedling
+          GIT_ALLOW_PROTOCOL=file:https \
+          GIT_CONFIG_GLOBAL="${candidate_root}/gitconfig" \
+          GIT_CONFIG_NOSYSTEM=1 \
+            bash scripts/smoke-seedlingpgx-consumer.sh "$GITHUB_REF_NAME"
       - name: Create/update draft release and upload assets
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           version: '~> v2'
           args: release --clean
         env:
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+  seedlingpgx:
+    needs: goreleaser
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: seedlingpgx/go.mod
+          cache: true
+          cache-dependency-path: seedlingpgx/go.sum
+      - name: Publish matching seedlingpgx module tag
+        run: |
+          tag="seedlingpgx/${GITHUB_REF_NAME}"
+          remote_sha="$(
+            git ls-remote --tags origin "refs/tags/${tag}" "refs/tags/${tag}^{}" |
+              awk '/\^\{\}$/ { peeled = $1; next } { direct = $1 } END { print (peeled != "" ? peeled : direct) }'
+          )"
+          if [[ -n "$remote_sha" && "$remote_sha" != "$GITHUB_SHA" ]]; then
+            echo "${tag} already points to ${remote_sha}, expected ${GITHUB_SHA}" >&2
+            exit 1
+          fi
+          if [[ -z "$remote_sha" ]]; then
+            git tag "$tag" "$GITHUB_SHA"
+            git push origin "refs/tags/${tag}"
+          fi
+      - name: Test released module from an empty consumer
+        env:
+          GOPROXY: direct
+        run: bash scripts/smoke-seedlingpgx-consumer.sh "$GITHUB_REF_NAME"
       - name: Publish draft release
         run: gh release edit "${GITHUB_REF_NAME}" --draft=false
         env:

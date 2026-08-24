@@ -2,22 +2,25 @@ SHELL := /bin/bash
 
 GO := go
 GOLANGCI_LINT := golangci-lint
-GOTESTSUM := $(GO) tool gotest.tools/gotestsum --format=testdox --hide-summary=skipped
-GO_LICENSES := $(GO) tool github.com/google/go-licenses/v2
+ROOT_GO_MOD := $(abspath go.mod)
+GOLANGCI_LINT_CONFIG := $(abspath .golangci.yaml)
+GOTESTSUM := $(GO) tool -modfile=$(ROOT_GO_MOD) gotest.tools/gotestsum --format=testdox --hide-summary=skipped
+GO_LICENSES := $(GO) tool -modfile=$(ROOT_GO_MOD) github.com/google/go-licenses/v2
+GO_LICENSES_FLAGS := --include_tests --disallowed_types=unknown,restricted,forbidden
 
 COVERPROFILE := coverage.out
 
-.PHONY: help tools fmt fmt-check lint lint-root lint-integration check-licenses test test-integration-postgres test-integration-mysql test-integration-sqlite test-integration bench fuzz clean
+.PHONY: help tools fmt fmt-root fmt-integration fmt-seedlingpgx fmt-check fmt-check-root fmt-check-integration fmt-check-seedlingpgx lint lint-root lint-integration lint-seedlingpgx check-licenses check-licenses-root check-licenses-integration check-licenses-seedlingpgx test test-root test-seedlingpgx test-seedlingpgx-inrepo test-integration-postgres test-integration-mysql test-integration-sqlite test-integration bench fuzz clean
 
 help:
 	@printf '%s\n' \
 		'Available targets:' \
 		'  make tools            Install pinned local tooling' \
-		'  make fmt              Run golangci-lint fmt on all packages' \
-		'  make fmt-check        Check formatting (fails if unformatted)' \
-		'  make lint             Run golangci-lint' \
-		'  make check-licenses   Check dependency licenses' \
-		'  make test             Run unit tests with gotestsum' \
+		'  make fmt              Format all maintained modules' \
+		'  make fmt-check        Check formatting in all maintained modules' \
+		'  make lint             Lint all maintained modules' \
+		'  make check-licenses   Check licenses in all maintained modules' \
+		'  make test             Run root and seedlingpgx unit tests against published and in-repo dependencies' \
 		'  make test-integration-postgres Run PostgreSQL integration tests' \
 		'  make test-integration-mysql    Run MySQL integration tests' \
 		'  make test-integration-sqlite   Run SQLite integration tests' \
@@ -29,30 +32,81 @@ help:
 tools:
 	mise install
 
-fmt:
-	$(GOLANGCI_LINT) fmt ./...
+fmt: fmt-root fmt-integration fmt-seedlingpgx
 
-fmt-check:
-	@OUT=$$($(GOLANGCI_LINT) fmt ./... --diff 2>&1); \
+fmt-root:
+	$(GOLANGCI_LINT) fmt --config=$(GOLANGCI_LINT_CONFIG) ./...
+
+fmt-integration:
+	cd integration && $(GOLANGCI_LINT) fmt --config=$(GOLANGCI_LINT_CONFIG) ./...
+
+fmt-seedlingpgx:
+	cd seedlingpgx && $(GOLANGCI_LINT) fmt --config=$(GOLANGCI_LINT_CONFIG) ./...
+
+fmt-check: fmt-check-root fmt-check-integration fmt-check-seedlingpgx
+
+fmt-check-root:
+	@OUT=$$($(GOLANGCI_LINT) fmt --config=$(GOLANGCI_LINT_CONFIG) ./... --diff 2>&1); \
 	if [ -n "$$OUT" ]; then \
 		echo "$$OUT"; \
 		echo "Run 'make fmt'"; \
 		exit 1; \
 	fi
 
-lint: lint-root lint-integration
+fmt-check-integration:
+	@OUT=$$(cd integration && $(GOLANGCI_LINT) fmt --config=$(GOLANGCI_LINT_CONFIG) ./... --diff 2>&1); \
+	if [ -n "$$OUT" ]; then \
+		echo "$$OUT"; \
+		echo "Run 'make fmt'"; \
+		exit 1; \
+	fi
+
+fmt-check-seedlingpgx:
+	@OUT=$$(cd seedlingpgx && $(GOLANGCI_LINT) fmt --config=$(GOLANGCI_LINT_CONFIG) ./... --diff 2>&1); \
+	if [ -n "$$OUT" ]; then \
+		echo "$$OUT"; \
+		echo "Run 'make fmt'"; \
+		exit 1; \
+	fi
+
+lint: lint-root lint-integration lint-seedlingpgx
 
 lint-root:
-	$(GOLANGCI_LINT) run ./...
+	$(GOLANGCI_LINT) run --config=$(GOLANGCI_LINT_CONFIG) ./...
 
 lint-integration:
-	cd integration && $(GOLANGCI_LINT) run --build-tags=integration ./...
+	cd integration && $(GOLANGCI_LINT) run --config=$(GOLANGCI_LINT_CONFIG) --build-tags=integration ./...
 
-check-licenses:
-	$(GO_LICENSES) check ./... --include_tests --disallowed_types=unknown,restricted,forbidden
+lint-seedlingpgx:
+	cd seedlingpgx && $(GOLANGCI_LINT) run --config=$(GOLANGCI_LINT_CONFIG) ./...
 
-test:
+check-licenses: check-licenses-root check-licenses-integration check-licenses-seedlingpgx
+
+check-licenses-root:
+	$(GO_LICENSES) check ./... $(GO_LICENSES_FLAGS) --ignore=github.com/mhiro2/seedling
+
+check-licenses-integration:
+	cd integration && GOFLAGS=-tags=integration $(GO_LICENSES) check ./... $(GO_LICENSES_FLAGS) --ignore=github.com/mhiro2/seedling/integration
+
+check-licenses-seedlingpgx:
+	cd seedlingpgx && $(GO_LICENSES) check ./... $(GO_LICENSES_FLAGS) --ignore=github.com/mhiro2/seedling/seedlingpgx
+
+test: test-root test-seedlingpgx test-seedlingpgx-inrepo
+
+test-root:
 	$(GOTESTSUM) -- -race -shuffle=on -count=1 -covermode=atomic -coverprofile=$(COVERPROFILE) ./...
+
+test-seedlingpgx:
+	cd seedlingpgx && GOWORK=off $(GOTESTSUM) -- -race -shuffle=on -count=1 -covermode=atomic -coverprofile=$(COVERPROFILE) ./...
+
+test-seedlingpgx-inrepo:
+	@set -eu; \
+	SEEDLINGPGX_WORKSPACE=$$(mktemp -d); \
+	trap 'rm -rf -- "$${SEEDLINGPGX_WORKSPACE:?}"' EXIT; \
+	cd "$$SEEDLINGPGX_WORKSPACE"; \
+	GOWORK=off $(GO) work init "$(abspath .)" "$(abspath seedlingpgx)"; \
+	cd "$(abspath seedlingpgx)"; \
+	GOWORK="$$SEEDLINGPGX_WORKSPACE/go.work" $(GO) test -mod=readonly -race -shuffle=on -count=1 ./...
 
 test-integration-postgres:
 	cd integration && $(GOTESTSUM) -- -race --shuffle=on -tags=integration -count=1 ./postgres/...
@@ -76,4 +130,4 @@ fuzz:
 	$(GO) test -fuzz=FuzzLookupField -fuzztime=10s ./internal/field
 
 clean:
-	rm -f $(COVERPROFILE)
+	rm -f $(COVERPROFILE) seedlingpgx/$(COVERPROFILE)
