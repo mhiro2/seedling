@@ -6,7 +6,7 @@ require (
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/mhiro2/seedling v0.0.0
-	github.com/testcontainers/testcontainers-go/modules/mysql v0.43.0
+	github.com/testcontainers/testcontainers-go/modules/mysql v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
 	modernc.org/sqlite v1.55.0
 )
