@@ -109,9 +109,9 @@ seedling-gen atlas \
 
 - **GORM model parse failure** — Ensure `--import-path` points to the full Go import path of the models package. If unexported fields or custom types cause issues, check that the package compiles independently with `go build`.
 - **FK or relation not detected** — `seedling-gen` infers relations from foreign key constraints. If the schema lacks explicit FK definitions (common in MySQL or older DDL), add the missing `Relation` entries manually in the generated file.
-- **Composite key mismatch** — Verify that `LocalFields` and `RemoteFields` in the generated `Relation` list the columns in the same order as the schema's composite key.
+- **Composite key mismatch** — Verify that `LocalFields`, `RefFields`, and `RemoteFields` in the generated `Relation` list their columns in matching schema order.
 - **Generated defaults violate constraints** — Override generated `Defaults` when the schema expects unique values, enumerated business values, or non-scalar custom types that the generator intentionally leaves untouched.
-- **ent edge not mapped** — Only edges backed by a foreign key column are mapped. M2M edges via join tables require manual `ManyToManyRelation` definitions.
+- **ent edge not mapped** — Singular edges marked `Unique` or `Required` must expose their foreign key with `.Field(...)`; the named field must also appear in `Fields()`. M2M edges via join tables require manual `ManyToManyRelation` definitions.
 
 ## Verification checklist
 

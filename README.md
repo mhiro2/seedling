@@ -126,7 +126,7 @@ The shortest path is two steps: generate blueprints from your schema, then call 
    },
    ```
 
-   Generated `Defaults` intentionally skip primary keys, relation FK fields, and unsupported custom types. They are meant to make the first insert usable with zero setup, not to satisfy every unique or business constraint automatically.
+   Generated relations retain the referenced columns, so foreign keys targeting unique non-primary columns use `RefField`/`RefFields` instead of being treated as primary-key references. Generated `Defaults` intentionally skip primary keys, relation FK fields, and unsupported custom types. They are meant to make the first insert usable with zero setup, not to satisfy every unique or business constraint automatically.
 
    The snippets below assume the generated package is named `testutil`.
    For a runnable minimal version of this flow, see [examples/quickstart](./examples/quickstart).
@@ -239,6 +239,8 @@ If you cannot use `WithTx`, call `Result.Cleanup` to delete inserted rows in rev
 result := seedling.NewSession[testutil.User](reg).InsertOne(t, db)
 t.Cleanup(func() { result.Cleanup(t, db) })
 ```
+
+`Cleanup` uses a bounded context that remains active during `t.Cleanup`, even after the test context is canceled.
 
 The [Guide](./docs/guide.md#debugging-and-cleanup) lists the full set of debugging APIs, including `BatchResult.NodeAt` for `InsertMany` graphs.
 
