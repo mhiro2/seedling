@@ -49,6 +49,8 @@ type diagnosticForeignKey struct {
 	Columns      []string `json:"columns"`
 	LocalFields  []string `json:"localFields,omitempty"`
 	RefTable     string   `json:"refTable"`
+	RefColumns   []string `json:"refColumns,omitempty"`
+	RefFields    []string `json:"refFields,omitempty"`
 	RelationName string   `json:"relationName"`
 	RefBlueprint string   `json:"refBlueprint"`
 	Optional     bool     `json:"optional"`
@@ -72,6 +74,7 @@ type diagnosticGormField struct {
 type diagnosticGormRelation struct {
 	Kind       string `json:"kind"`
 	ForeignKey string `json:"foreignKey,omitempty"`
+	References string `json:"references,omitempty"`
 	JoinTable  string `json:"joinTable,omitempty"`
 	RefModel   string `json:"refModel"`
 }
@@ -87,6 +90,7 @@ type diagnosticEntField struct {
 	Type     string `json:"type"`
 	GoType   string `json:"goType"`
 	Optional bool   `json:"optional"`
+	Nillable bool   `json:"nillable"`
 }
 
 type diagnosticEntEdge struct {
@@ -94,6 +98,7 @@ type diagnosticEntEdge struct {
 	Type      string `json:"type"`
 	Direction string `json:"direction"`
 	Ref       string `json:"ref,omitempty"`
+	Field     string `json:"field,omitempty"`
 	Unique    bool   `json:"unique"`
 	Required  bool   `json:"required"`
 }
@@ -116,13 +121,16 @@ type diagnosticSQLCQuery struct {
 	ReturnType  string                `json:"returnType"`
 	ParamType   string                `json:"paramType,omitempty"`
 	ParamFields []diagnosticFieldType `json:"paramFields,omitempty"`
+	ArgName     string                `json:"argName,omitempty"`
+	ArgType     string                `json:"argType,omitempty"`
 }
 
 type diagnosticSQLCDeleteQuery struct {
-	Name      string `json:"name"`
-	ParamType string `json:"paramType,omitempty"`
-	ArgName   string `json:"argName,omitempty"`
-	ArgType   string `json:"argType,omitempty"`
+	Name        string                `json:"name"`
+	ParamType   string                `json:"paramType,omitempty"`
+	ParamFields []diagnosticFieldType `json:"paramFields,omitempty"`
+	ArgName     string                `json:"argName,omitempty"`
+	ArgType     string                `json:"argType,omitempty"`
 }
 
 type diagnosticBlueprint struct {
@@ -144,6 +152,7 @@ type diagnosticFieldType struct {
 type diagnosticBlueprintRelation struct {
 	Name         string   `json:"name"`
 	LocalFields  []string `json:"localFields"`
+	RefFields    []string `json:"refFields,omitempty"`
 	RefBlueprint string   `json:"refBlueprint"`
 	Optional     bool     `json:"optional"`
 }
@@ -252,6 +261,10 @@ func writeTableSection(buf *strings.Builder, tables []diagnosticTable) {
 			}
 			buf.WriteString(" refTable=")
 			buf.WriteString(foreignKey.RefTable)
+			if len(foreignKey.RefColumns) > 0 {
+				buf.WriteString(" refColumns=")
+				buf.WriteString(strings.Join(foreignKey.RefColumns, ","))
+			}
 			buf.WriteString(" relation=")
 			buf.WriteString(foreignKey.RelationName)
 			buf.WriteString(" refBlueprint=")
@@ -301,6 +314,15 @@ func writeSQLCSection(buf *strings.Builder, sqlc *diagnosticSQLC) {
 				buf.WriteString(joinFieldTypes(query.ParamFields))
 				buf.WriteString("}")
 			}
+			if query.ArgName != "" {
+				buf.WriteString(" arg ")
+				buf.WriteString(query.ArgName)
+				if query.ArgType != "" {
+					buf.WriteString("(")
+					buf.WriteString(query.ArgType)
+					buf.WriteString(")")
+				}
+			}
 			buf.WriteString("\n")
 		}
 	}
@@ -309,10 +331,16 @@ func writeSQLCSection(buf *strings.Builder, sqlc *diagnosticSQLC) {
 		for _, query := range sqlc.DeleteQueries {
 			buf.WriteString("  - ")
 			buf.WriteString(query.Name)
-			if query.ParamType != "" {
+			switch {
+			case query.ParamType != "":
 				buf.WriteString(" using ")
 				buf.WriteString(query.ParamType)
-			} else if query.ArgName != "" {
+				if len(query.ParamFields) > 0 {
+					buf.WriteString(" {")
+					buf.WriteString(joinFieldTypes(query.ParamFields))
+					buf.WriteString("}")
+				}
+			case query.ArgName != "":
 				buf.WriteString(" arg ")
 				buf.WriteString(query.ArgName)
 				if query.ArgType != "" {
@@ -320,6 +348,9 @@ func writeSQLCSection(buf *strings.Builder, sqlc *diagnosticSQLC) {
 					buf.WriteString(query.ArgType)
 					buf.WriteString(")")
 				}
+			case query.ArgType != "":
+				buf.WriteString(" using ")
+				buf.WriteString(query.ArgType)
 			}
 			buf.WriteString("\n")
 		}
@@ -389,6 +420,8 @@ func writeEntSection(buf *strings.Builder, schemas []diagnosticEntSchema) {
 				buf.WriteString(field.GoType)
 				buf.WriteString(" optional=")
 				buf.WriteString(boolString(field.Optional))
+				buf.WriteString(" nillable=")
+				buf.WriteString(boolString(field.Nillable))
 				buf.WriteString("\n")
 			}
 		}
@@ -404,6 +437,10 @@ func writeEntSection(buf *strings.Builder, schemas []diagnosticEntSchema) {
 				if edge.Ref != "" {
 					buf.WriteString(" ref=")
 					buf.WriteString(edge.Ref)
+				}
+				if edge.Field != "" {
+					buf.WriteString(" field=")
+					buf.WriteString(edge.Field)
 				}
 				buf.WriteString(" unique=")
 				buf.WriteString(boolString(edge.Unique))
@@ -457,6 +494,10 @@ func writeBlueprintSection(buf *strings.Builder, blueprints []diagnosticBlueprin
 			buf.WriteString(relation.RefBlueprint)
 			buf.WriteString(" localFields=")
 			buf.WriteString(strings.Join(relation.LocalFields, ","))
+			if len(relation.RefFields) > 0 {
+				buf.WriteString(" refFields=")
+				buf.WriteString(strings.Join(relation.RefFields, ","))
+			}
 			buf.WriteString(" optional=")
 			buf.WriteString(boolString(relation.Optional))
 			buf.WriteString("\n")
@@ -473,7 +514,7 @@ func buildSQLDiagnosticReport(dialect string, tables []Table) diagnosticReport {
 	}
 }
 
-func buildSQLCDiagnosticReport(dialect, importPath string, tables []Table, sqlcInfo *SqlcInfo) diagnosticReport {
+func buildSQLCDiagnosticReport(dialect, importPath string, tables []Table, sqlcInfo *SqlcInfo) (diagnosticReport, error) {
 	insertSources := make(map[string]string, len(tables))
 	deleteSources := make(map[string]string, len(tables))
 	for _, table := range tables {
@@ -486,13 +527,18 @@ func buildSQLCDiagnosticReport(dialect, importPath string, tables []Table, sqlcI
 		}
 	}
 
+	models, err := normalizeSqlcModels(tables, sqlcInfo)
+	if err != nil {
+		return diagnosticReport{}, fmt.Errorf("normalize sqlc models: %w", err)
+	}
+
 	return diagnosticReport{
 		Adapter:    "sqlc",
 		Dialect:    normalizeDialectName(dialect),
 		Tables:     buildTableDiagnostics(tables),
 		SQLC:       buildSQLCDiagnostics(sqlcInfo, importPath),
-		Blueprints: buildBlueprintDiagnostics(normalizeSqlcModels(tables, sqlcInfo), insertSources, deleteSources),
-	}
+		Blueprints: buildBlueprintDiagnostics(models, insertSources, deleteSources),
+	}, nil
 }
 
 func buildGormDiagnosticReport(importPath string, models []GormModel) diagnosticReport {
@@ -563,16 +609,19 @@ func buildTableDiagnostics(tables []Table) []diagnosticTable {
 					break
 				}
 			}
-
-			relationName := singularize(foreignKey.RefTable)
-			if len(foreignKey.Columns) == 1 {
-				relationName = relationNameForColumn(foreignKey.Columns[0], foreignKey.RefTable)
+			refFields := make([]string, 0, len(foreignKey.RefColumns))
+			for _, columnName := range foreignKey.RefColumns {
+				refFields = append(refFields, toGoFieldName(columnName))
 			}
+
+			relationName := relationNameForForeignKey(foreignKey)
 
 			foreignKeys = append(foreignKeys, diagnosticForeignKey{
 				Columns:      slices.Clone(foreignKey.Columns),
 				LocalFields:  localFields,
 				RefTable:     foreignKey.RefTable,
+				RefColumns:   slices.Clone(foreignKey.RefColumns),
+				RefFields:    refFields,
 				RelationName: relationName,
 				RefBlueprint: singularize(foreignKey.RefTable),
 				Optional:     !foreignKey.NotNull,
@@ -604,6 +653,7 @@ func buildGormDiagnostics(models []GormModel) []diagnosticGormModel {
 				relation = &diagnosticGormRelation{
 					Kind:       field.Relation.Kind,
 					ForeignKey: field.Relation.ForeignKey,
+					References: field.Relation.References,
 					JoinTable:  field.Relation.JoinTable,
 					RefModel:   field.Relation.RefModel,
 				}
@@ -689,6 +739,8 @@ func buildSQLCDiagnostics(info *SqlcInfo, importPath string) *diagnosticSQLC {
 			ReturnType:  query.ReturnType,
 			ParamType:   query.ParamType,
 			ParamFields: fields,
+			ArgName:     query.ArgName,
+			ArgType:     query.ArgType,
 		})
 	}
 	slices.SortFunc(queries, func(a, b diagnosticSQLCQuery) int {
@@ -697,7 +749,17 @@ func buildSQLCDiagnostics(info *SqlcInfo, importPath string) *diagnosticSQLC {
 
 	deleteQueries := make([]diagnosticSQLCDeleteQuery, 0, len(info.DeleteQueries))
 	for _, query := range info.DeleteQueries {
-		deleteQueries = append(deleteQueries, diagnosticSQLCDeleteQuery(query))
+		fields := make([]diagnosticFieldType, 0, len(query.ParamFields))
+		for _, field := range query.ParamFields {
+			fields = append(fields, diagnosticFieldType(field))
+		}
+		deleteQueries = append(deleteQueries, diagnosticSQLCDeleteQuery{
+			Name:        query.Name,
+			ParamType:   query.ParamType,
+			ParamFields: fields,
+			ArgName:     query.ArgName,
+			ArgType:     query.ArgType,
+		})
 	}
 	slices.SortFunc(deleteQueries, func(a, b diagnosticSQLCDeleteQuery) int {
 		return strings.Compare(a.Name, b.Name)
@@ -732,6 +794,7 @@ func buildBlueprintDiagnostics(models []normalizedModel, insertSources, deleteSo
 			relations = append(relations, diagnosticBlueprintRelation{
 				Name:         relation.Name,
 				LocalFields:  slices.Clone(localFields),
+				RefFields:    slices.Clone(relation.RefFields),
 				RefBlueprint: relation.RefBlueprint,
 				Optional:     relation.Optional,
 			})

@@ -126,8 +126,10 @@ func parseAtlasTable(block atlasTableBlock) (Table, error) {
 		}
 
 		var refTable string
+		var refColumns []string
 		if m := atlasFKRefRE.FindStringSubmatch(fkBody); m != nil {
 			refTable = extractAtlasRefTable(m[1])
+			refColumns = extractAtlasRefColumns(m[1])
 		}
 
 		if len(fkCols) > 0 && refTable != "" {
@@ -140,9 +142,10 @@ func parseAtlasTable(block atlasTableBlock) (Table, error) {
 				}
 			}
 			t.ForeignKeys = append(t.ForeignKeys, ForeignKey{
-				Columns:  fkCols,
-				RefTable: refTable,
-				NotNull:  notNull,
+				Columns:    fkCols,
+				RefTable:   refTable,
+				RefColumns: refColumns,
+				NotNull:    notNull,
 			})
 		}
 	}
@@ -302,4 +305,21 @@ func extractAtlasRefTable(s string) string {
 		}
 	}
 	return ""
+}
+
+// extractAtlasRefColumns extracts column names from Atlas references like
+// "table.companies.column.code".
+func extractAtlasRefColumns(s string) []string {
+	parts := strings.Split(s, ",")
+	columns := make([]string, 0, len(parts))
+	for _, ref := range parts {
+		segments := strings.Split(strings.TrimSpace(ref), ".")
+		for i, segment := range segments {
+			if segment == "column" && i+1 < len(segments) {
+				columns = append(columns, segments[i+1])
+				break
+			}
+		}
+	}
+	return columns
 }

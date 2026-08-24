@@ -9,28 +9,30 @@ import (
 var (
 	createTableStartRE = regexp.MustCompile(`(?is)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)\s*\(`)
 	createEnumRE       = regexp.MustCompile(`(?is)CREATE\s+TYPE\s+([^\s]+)\s+AS\s+ENUM\s*\(`)
-	inlineRefRE        = regexp.MustCompile(`(?i)REFERENCES\s+([^\s(]+)`)
+	inlineRefRE        = regexp.MustCompile(`(?i)REFERENCES\s+([^\s(]+)(?:\s*\(([^)]+)\))?`)
 	tablePKRE          = regexp.MustCompile(`(?i)(?:CONSTRAINT\s+[^\s]+\s+)?PRIMARY\s+KEY\s*\(([^)]+)\)`)
-	tableFKRE          = regexp.MustCompile(`(?i)(?:CONSTRAINT\s+[^\s]+\s+)?FOREIGN\s+KEY\s*\(([^)]+)\)\s+REFERENCES\s+([^\s(]+)`)
+	tableFKRE          = regexp.MustCompile(`(?i)(?:CONSTRAINT\s+[^\s]+\s+)?FOREIGN\s+KEY\s*\(([^)]+)\)\s+REFERENCES\s+([^\s(]+)(?:\s*\(([^)]+)\))?`)
 )
 
 // Column represents a parsed column from a CREATE TABLE statement.
 type Column struct {
-	Name       string
-	SQLType    string
-	GoName     string
-	GoType     string
-	IsPK       bool
-	IsFK       bool
-	FKRefTable string
-	NotNull    bool
+	Name         string
+	SQLType      string
+	GoName       string
+	GoType       string
+	IsPK         bool
+	IsFK         bool
+	FKRefTable   string
+	FKRefColumns []string
+	NotNull      bool
 }
 
 // ForeignKey represents a table-level or inline foreign key constraint.
 type ForeignKey struct {
-	Columns  []string
-	RefTable string
-	NotNull  bool
+	Columns    []string
+	RefTable   string
+	RefColumns []string
+	NotNull    bool
 }
 
 // Table represents a parsed CREATE TABLE statement.
@@ -220,9 +222,10 @@ func parseColumns(body string, enumTypes map[string]struct{}) ([]Column, []Forei
 		columns = append(columns, col)
 		if col.IsFK {
 			foreignKeys = append(foreignKeys, ForeignKey{
-				Columns:  []string{col.Name},
-				RefTable: col.FKRefTable,
-				NotNull:  col.NotNull,
+				Columns:    []string{col.Name},
+				RefTable:   col.FKRefTable,
+				RefColumns: append([]string(nil), col.FKRefColumns...),
+				NotNull:    col.NotNull,
 			})
 		}
 	}
@@ -268,6 +271,9 @@ func parseColumn(item string, enumTypes map[string]struct{}) (Column, bool) {
 	if loc := inlineRefRE.FindStringSubmatchIndex(masked); loc != nil {
 		col.IsFK = true
 		col.FKRefTable = normalizeIdent(item[loc[2]:loc[3]])
+		if loc[4] >= 0 {
+			col.FKRefColumns = splitIdentifierList(item[loc[4]:loc[5]])
+		}
 	}
 
 	return col, true
@@ -291,6 +297,10 @@ func applyTableConstraint(columns []Column, columnIndex map[string]int, constrai
 	if loc := tableFKRE.FindStringSubmatchIndex(masked); loc != nil {
 		refTable := normalizeIdent(constraint[loc[4]:loc[5]])
 		cols := splitIdentifierList(constraint[loc[2]:loc[3]])
+		var refColumns []string
+		if loc[6] >= 0 {
+			refColumns = splitIdentifierList(constraint[loc[6]:loc[7]])
+		}
 		notNull := true
 		for _, colName := range cols {
 			if idx, ok := columnIndex[colName]; ok {
@@ -299,7 +309,7 @@ func applyTableConstraint(columns []Column, columnIndex map[string]int, constrai
 				notNull = notNull && columns[idx].NotNull
 			}
 		}
-		return ForeignKey{Columns: cols, RefTable: refTable, NotNull: notNull}, true
+		return ForeignKey{Columns: cols, RefTable: refTable, RefColumns: refColumns, NotNull: notNull}, true
 	}
 
 	return ForeignKey{}, false

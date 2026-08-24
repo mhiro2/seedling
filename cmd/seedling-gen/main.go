@@ -468,7 +468,7 @@ func buildSQLCConfigReport(dialect, configPath string) (diagnosticReport, error)
 	if err != nil {
 		return diagnosticReport{}, err
 	}
-	return buildSQLCDiagnosticReport(dialect, cfg.SqlcImportPath, tables, sqlcInfo), nil
+	return buildSQLCDiagnosticReport(dialect, cfg.SqlcImportPath, tables, sqlcInfo)
 }
 
 func buildSQLCManualReport(dialect, schemaPath, sqlcDir, importPath string) (diagnosticReport, error) {
@@ -476,7 +476,7 @@ func buildSQLCManualReport(dialect, schemaPath, sqlcDir, importPath string) (dia
 	if err != nil {
 		return diagnosticReport{}, err
 	}
-	return buildSQLCDiagnosticReport(dialect, importPath, tables, sqlcInfo), nil
+	return buildSQLCDiagnosticReport(dialect, importPath, tables, sqlcInfo)
 }
 
 func buildGormReport(dir, importPath string) (diagnosticReport, error) {

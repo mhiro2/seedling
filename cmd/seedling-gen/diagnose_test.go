@@ -252,12 +252,13 @@ type User struct {
 func (User) Fields() []ent.Field {
 	return []ent.Field{
 		field.String("name"),
+		field.Int("company_id"),
 	}
 }
 
 func (User) Edges() []ent.Edge {
 	return []ent.Edge{
-		edge.From("company", Company.Type).Ref("users").Unique().Required(),
+		edge.From("company", Company.Type).Ref("users").Unique().Required().Field("company_id"),
 	}
 }
 `)
@@ -298,7 +299,7 @@ func (Company) Edges() []ent.Edge {
 		"Adapter: ent",
 		"Parsed ent schemas:",
 		"- User",
-		"direction=From type=Company ref=users unique=true required=true",
+		"direction=From type=Company ref=users field=company_id unique=true required=true",
 		"- user (table: users, type: *ent.User, pk: ID, insert: ent.Create, delete: ent.DeleteOneID)",
 	}
 	for _, check := range checks {

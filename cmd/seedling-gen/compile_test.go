@@ -71,82 +71,62 @@ func TestGeneratorOutputsCompile(t *testing.T) {
 	t.Run("sqlc", func(t *testing.T) {
 		tables := []Table{
 			{
+				Name:        "companies",
+				GoName:      "Company",
+				BlueprintID: "company",
+				Columns: []Column{
+					{Name: "id", GoName: "ID", GoType: "int64", IsPK: true, NotNull: true},
+					{Name: "spotify_url", GoName: "SpotifyURL", GoType: "string", NotNull: true},
+				},
+			},
+			{
 				Name:        "users",
 				GoName:      "User",
 				BlueprintID: "user",
 				Columns: []Column{
 					{Name: "id", GoName: "ID", GoType: "int64", IsPK: true, NotNull: true},
-					{Name: "name", GoName: "Name", GoType: "string", NotNull: true},
+					{Name: "profile_name", GoName: "ProfileName", GoType: "string", NotNull: true},
 					{Name: "created_at", GoName: "CreatedAt", GoType: "time.Time", NotNull: true},
-					{Name: "company_id", GoName: "CompanyID", GoType: "int64", NotNull: true, IsFK: true},
+					{Name: "company_spotify_url", GoName: "CompanySpotifyURL", GoType: "string", NotNull: true, IsFK: true},
 				},
 				ForeignKeys: []ForeignKey{
-					{Columns: []string{"company_id"}, RefTable: "companies", NotNull: true},
+					{Columns: []string{"company_spotify_url"}, RefTable: "companies", RefColumns: []string{"spotify_url"}, NotNull: true},
+				},
+			},
+			{
+				Name:        "memberships",
+				GoName:      "Membership",
+				BlueprintID: "membership",
+				Columns: []Column{
+					{Name: "organization_id", GoName: "OrganizationID", GoType: "int64", IsPK: true, NotNull: true},
+					{Name: "user_id", GoName: "UserID", GoType: "int64", IsPK: true, NotNull: true},
 				},
 			},
 		}
 
-		sqlcInfo := &SqlcInfo{
-			Package: "testsqlc",
-			Models: []SqlcModel{
-				{Name: "User", Fields: []SqlcField{
-					{Name: "ID", Type: "int64"},
-					{Name: "Name", Type: "string"},
-					{Name: "CreatedAt", Type: "time.Time"},
-					{Name: "CompanyID", Type: "int64"},
-				}},
-			},
-			Queries: []SqlcQuery{
-				{
-					Name:        "InsertUser",
-					ReturnType:  "User",
-					ParamType:   "InsertUserParams",
-					ParamFields: []SqlcField{{Name: "Name", Type: "string"}, {Name: "CreatedAt", Type: "time.Time"}, {Name: "CompanyID", Type: "int64"}},
-				},
-			},
-			DeleteQueries: []SqlcDeleteQuery{
-				{Name: "DeleteUser", ArgName: "id", ArgType: "int64"},
-			},
+		sqlcInfo, err := ParseSqlcDir("testsqlc")
+		if err != nil {
+			t.Fatalf("ParseSqlcDir: %v", err)
 		}
 
 		var buf strings.Builder
 		if err := GenerateSqlc(&buf, "compile", "github.com/mhiro2/seedling/cmd/seedling-gen/testsqlc", tables, sqlcInfo); err != nil {
 			t.Fatalf("GenerateSqlc: %v", err)
 		}
-		ensureCompiles(t, "sqlc", buf.String())
+		ensureCompilesAndRuns(t, "sqlc", buf.String(), sqlcLifecycleTest)
 	})
 
 	t.Run("gorm", func(t *testing.T) {
-		models := []GormModel{
-			{
-				Name:  "Company",
-				Table: "companies",
-				Fields: []GormField{
-					{Name: "ID", Type: "uint", IsPK: true},
-					{Name: "Name", Type: "string"},
-					{Name: "CreatedAt", Type: "time.Time"},
-				},
-			},
-			{
-				Name:  "User",
-				Table: "users",
-				Fields: []GormField{
-					{Name: "ID", Type: "uint", IsPK: true},
-					{Name: "Name", Type: "string"},
-					{Name: "CreatedAt", Type: "time.Time"},
-					{Name: "CompanyID", Type: "uint", NotNull: true, IsFK: true},
-					{Name: "Company", Type: "Company", Relation: &GormRelation{
-						Kind: "BelongsTo", ForeignKey: "CompanyID", RefModel: "Company",
-					}},
-				},
-			},
+		models, err := ParseGormDir("testmodels")
+		if err != nil {
+			t.Fatalf("ParseGormDir: %v", err)
 		}
 
 		var buf strings.Builder
 		if err := GenerateGorm(&buf, "compile", "github.com/mhiro2/seedling/cmd/seedling-gen/testmodels", models); err != nil {
 			t.Fatalf("GenerateGorm: %v", err)
 		}
-		ensureCompiles(t, "gorm", buf.String())
+		ensureCompilesAndRuns(t, "gorm", buf.String(), gormLifecycleTest)
 	})
 
 	t.Run("gorm composite pk", func(t *testing.T) {
@@ -173,14 +153,9 @@ func TestGeneratorOutputsCompile(t *testing.T) {
 	})
 
 	t.Run("ent", func(t *testing.T) {
-		schemas := []EntSchema{
-			{
-				Name: "Company",
-				Fields: []EntField{
-					{Name: "name", Type: "String", GoType: "string"},
-					{Name: "created_at", Type: "Time", GoType: "time.Time"},
-				},
-			},
+		schemas, err := ParseEntSchemaDir(filepath.Join("testdata", "ent", "schema"))
+		if err != nil {
+			t.Fatalf("ParseEntSchemaDir: %v", err)
 		}
 
 		var buf strings.Builder
@@ -236,6 +211,110 @@ replace gorm.io/gorm => %s
 	}
 }
 
+const gormLifecycleTest = `package compile
+
+import (
+	"testing"
+
+	"github.com/mhiro2/seedling"
+	testmodels "github.com/mhiro2/seedling/cmd/seedling-gen/testmodels"
+	"gorm.io/gorm"
+)
+
+func TestGeneratedGormBlueprintLifecycle(t *testing.T) {
+	db := &gorm.DB{}
+	reg := NewRegistry()
+	result, err := seedling.NewSession[testmodels.User](reg).InsertOneE(t.Context(), db)
+	if err != nil {
+		t.Fatalf("insert generated GORM blueprint: %v", err)
+	}
+	if len(db.Created) != 2 {
+		t.Fatalf("created records = %d, want 2", len(db.Created))
+	}
+	companyNode, ok := result.Node("company")
+	if !ok {
+		t.Fatal("company node not found")
+	}
+	company := companyNode.Value().(testmodels.Company)
+	if result.Root().CompanyID != company.ID || company.ID == 0 {
+		t.Fatalf("user company ID = %d, company ID = %d", result.Root().CompanyID, company.ID)
+	}
+	if err := result.CleanupE(t.Context(), db); err != nil {
+		t.Fatalf("cleanup generated GORM blueprint: %v", err)
+	}
+	if len(db.Deleted) != 2 {
+		t.Fatalf("deleted records = %d, want 2", len(db.Deleted))
+	}
+}
+`
+
+const sqlcLifecycleTest = `package compile
+
+import (
+	"testing"
+
+	"github.com/mhiro2/seedling"
+	testsqlc "github.com/mhiro2/seedling/cmd/seedling-gen/testsqlc"
+)
+
+func TestGeneratedSQLCBlueprintLifecycle(t *testing.T) {
+	recorder := &testsqlc.Recorder{}
+	reg := NewRegistry()
+	result, err := seedling.NewSession[testsqlc.User](reg).InsertOneE(t.Context(), recorder)
+	if err != nil {
+		t.Fatalf("insert generated sqlc blueprint: %v", err)
+	}
+	if len(recorder.InsertedCompanies) != 1 || len(recorder.InsertedUsers) != 1 {
+		t.Fatalf("insert counts = companies:%d users:%d, want 1 each", len(recorder.InsertedCompanies), len(recorder.InsertedUsers))
+	}
+	root := result.Root()
+	companyNode, ok := result.Node("company")
+	if !ok {
+		t.Fatal("company node not found")
+	}
+	company := companyNode.Value().(testsqlc.Company)
+	if root.CompanySpotifyUrl != company.SpotifyUrl || company.SpotifyUrl == "" {
+		t.Fatalf("user company Spotify URL = %q, company Spotify URL = %q", root.CompanySpotifyUrl, company.SpotifyUrl)
+	}
+	if root.DisplayLabel == "" || recorder.InsertedUsers[0].DisplayLabel != root.DisplayLabel {
+		t.Fatalf("inserted renamed profile field = %q, root = %q", recorder.InsertedUsers[0].DisplayLabel, root.DisplayLabel)
+	}
+	if err := result.CleanupE(t.Context(), recorder); err != nil {
+		t.Fatalf("cleanup generated sqlc blueprint: %v", err)
+	}
+	if len(recorder.DeletedUserIDs) != 1 || len(recorder.DeletedCompanyIDs) != 1 {
+		t.Fatalf("delete counts = companies:%d users:%d, want 1 each", len(recorder.DeletedCompanyIDs), len(recorder.DeletedUserIDs))
+	}
+
+	membershipResult, err := seedling.NewSession[testsqlc.Membership](reg).InsertOneE(
+		t.Context(),
+		recorder,
+		seedling.Set("OrganizationID", int64(7)),
+		seedling.Set("UserID", int64(9)),
+	)
+	if err != nil {
+		t.Fatalf("insert generated composite sqlc blueprint: %v", err)
+	}
+	if len(recorder.InsertedMemberships) != 1 {
+		t.Fatalf("composite inserts = %d, want 1", len(recorder.InsertedMemberships))
+	}
+	inserted := recorder.InsertedMemberships[0]
+	if inserted.OrganizationID != 7 || inserted.UserID != 9 {
+		t.Fatalf("inserted composite key = %+v, want organization=7 user=9", inserted)
+	}
+	if err := membershipResult.CleanupE(t.Context(), recorder); err != nil {
+		t.Fatalf("cleanup generated composite sqlc blueprint: %v", err)
+	}
+	if len(recorder.DeletedMemberships) != 1 {
+		t.Fatalf("composite deletes = %d, want 1", len(recorder.DeletedMemberships))
+	}
+	deleted := recorder.DeletedMemberships[0]
+	if deleted.OrganizationID != 7 || deleted.UserID != 9 {
+		t.Fatalf("deleted composite key = %+v, want organization=7 user=9", deleted)
+	}
+}
+`
+
 const entLifecycleTest = `package compile
 
 import (
@@ -246,15 +325,13 @@ import (
 )
 
 func TestGeneratedEntBlueprintLifecycle(t *testing.T) {
-	const wantName = "runtime-company"
-
 	companyClient := &testent.CompanyClient{}
-	client := &testent.Client{Company: companyClient}
+	userClient := &testent.UserClient{}
+	client := &testent.Client{Company: companyClient, User: userClient}
 	reg := NewRegistry()
-	result, err := seedling.NewSession[*testent.Company](reg).InsertOneE(
+	result, err := seedling.NewSession[*testent.User](reg).InsertOneE(
 		t.Context(),
 		client,
-		seedling.Set("Name", wantName),
 	)
 	if err != nil {
 		t.Fatalf("insert generated ent blueprint: %v", err)
@@ -264,14 +341,14 @@ func TestGeneratedEntBlueprintLifecycle(t *testing.T) {
 	if root == nil {
 		t.Fatal("inserted root is nil")
 	}
-	if got := companyClient.InsertCount; got != 1 {
-		t.Fatalf("insert count = %d, want 1", got)
+	if companyClient.InsertCount != 1 || userClient.InsertCount != 1 {
+		t.Fatalf("insert counts = companies:%d users:%d, want 1 each", companyClient.InsertCount, userClient.InsertCount)
 	}
-	if got := companyClient.InsertedValue.Name; got != wantName {
-		t.Fatalf("inserted name = %q, want %q", got, wantName)
+	if root.CompanyUUID == nil || *root.CompanyUUID != companyClient.InsertedValue.ID {
+		t.Fatalf("user company UUID = %v, company ID = %d", root.CompanyUUID, companyClient.InsertedValue.ID)
 	}
-	if got := root.Name; got != wantName {
-		t.Fatalf("root name = %q, want %q", got, wantName)
+	if userClient.InsertedValue.CompanyUUID == nil || *userClient.InsertedValue.CompanyUUID != companyClient.InsertedValue.ID {
+		t.Fatalf("builder company UUID = %v, company ID = %d", userClient.InsertedValue.CompanyUUID, companyClient.InsertedValue.ID)
 	}
 	if root.ID == 0 {
 		t.Fatal("inserted root ID is zero")
@@ -280,11 +357,11 @@ func TestGeneratedEntBlueprintLifecycle(t *testing.T) {
 	if err := result.CleanupE(t.Context(), client); err != nil {
 		t.Fatalf("cleanup generated ent blueprint: %v", err)
 	}
-	if got := companyClient.DeleteCount; got != 1 {
-		t.Fatalf("delete count = %d, want 1", got)
+	if companyClient.DeleteCount != 1 || userClient.DeleteCount != 1 {
+		t.Fatalf("delete counts = companies:%d users:%d, want 1 each", companyClient.DeleteCount, userClient.DeleteCount)
 	}
-	if got := companyClient.DeletedID; got != root.ID {
-		t.Fatalf("deleted ID = %d, want %d", got, root.ID)
+	if userClient.DeletedID != root.ID {
+		t.Fatalf("deleted user ID = %d, want %d", userClient.DeletedID, root.ID)
 	}
 }
 `

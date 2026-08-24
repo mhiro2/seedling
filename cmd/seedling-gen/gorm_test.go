@@ -263,6 +263,78 @@ func TestGenerateGorm_CompositePK(t *testing.T) {
 	}
 }
 
+func TestGenerateGorm_UsesForeignKeyNullabilityAndReferences(t *testing.T) {
+	models := []GormModel{
+		{
+			Name:  "Country",
+			Table: "countries",
+			Fields: []GormField{
+				{Name: "ID", Type: "uint", IsPK: true},
+				{Name: "Code", Type: "string", NotNull: true},
+			},
+		},
+		{
+			Name:  "City",
+			Table: "cities",
+			Fields: []GormField{
+				{Name: "ID", Type: "uint", IsPK: true},
+				{Name: "CountryCode", Type: "string", NotNull: true},
+				{Name: "Country", Type: "Country", NotNull: false, Relation: &GormRelation{
+					Kind: "BelongsTo", ForeignKey: "CountryCode", References: "Code", RefModel: "Country",
+				}},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := GenerateGorm(&buf, "testutil", "github.com/myapp/models", models); err != nil {
+		t.Fatal(err)
+	}
+	output := buf.String()
+	if !strings.Contains(output, `LocalField: "CountryCode", RefField: "Code"`) {
+		t.Fatalf("expected non-PK reference mapping, got:\n%s", output)
+	}
+	if strings.Contains(output, `RefBlueprint: "country", Optional: true`) {
+		t.Fatalf("relation should be required from the not-null FK scalar, got:\n%s", output)
+	}
+}
+
+func TestParseGormDir_RetainsReferencesTag(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "models.go", `package models
+
+type Country struct {
+	ID uint
+	Code string
+}
+
+type City struct {
+	ID uint
+	CountryCode string `+"`"+`gorm:"not null"`+"`"+`
+	Country Country `+"`"+`gorm:"foreignKey:CountryCode;references:Code"`+"`"+`
+}
+`)
+
+	models, err := ParseGormDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, model := range models {
+		if model.Name != "City" {
+			continue
+		}
+		for _, field := range model.Fields {
+			if field.Name == "Country" && field.Relation != nil {
+				if field.Relation.References != "Code" {
+					t.Fatalf("references = %q, want Code", field.Relation.References)
+				}
+				return
+			}
+		}
+	}
+	t.Fatal("Country relation not found")
+}
+
 func TestGenerateGorm_DefaultsAutofillSupportedFields(t *testing.T) {
 	// Arrange
 	models := []GormModel{

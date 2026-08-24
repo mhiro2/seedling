@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 )
 
 // EntSchema represents a parsed ent schema.
@@ -24,6 +25,7 @@ type EntField struct {
 	Type     string // ent type method name: "String", "Int", "Time", etc.
 	GoType   string
 	Optional bool
+	Nillable bool
 }
 
 // EntEdge represents an edge from ent's Edges() method.
@@ -32,6 +34,7 @@ type EntEdge struct {
 	Type      string // target schema name
 	Direction string // "To" or "From"
 	Ref       string // for edge.From: the inverse edge name
+	Field     string // exposed foreign-key field configured with edge.Field
 	Unique    bool
 	Required  bool
 }
@@ -81,6 +84,9 @@ func ParseEntSchemaDir(dir string) ([]EntSchema, error) {
 
 	if len(schemas) == 0 {
 		return nil, fmt.Errorf("no ent schemas found in %s", dir)
+	}
+	if err := validateEntSchemas(schemas); err != nil {
+		return nil, fmt.Errorf("validate ent schemas: %w", err)
 	}
 
 	return schemas, nil
@@ -190,10 +196,15 @@ func parseEntFieldExpr(expr ast.Expr) *EntField {
 	for _, call := range chain[1:] {
 		if methodSel, ok := call.Fun.(*ast.SelectorExpr); ok {
 			switch methodSel.Sel.Name {
-			case "Optional", "Nillable":
+			case "Optional":
 				f.Optional = true
+			case "Nillable":
+				f.Nillable = true
 			}
 		}
+	}
+	if f.Nillable {
+		f.GoType = "*" + f.GoType
 	}
 
 	return f
@@ -281,6 +292,12 @@ func parseEntEdgeExpr(expr ast.Expr) *EntEdge {
 				if len(call.Args) > 0 {
 					if lit, ok := call.Args[0].(*ast.BasicLit); ok && lit.Kind == token.STRING {
 						e.Ref = strings.Trim(lit.Value, `"`)
+					}
+				}
+			case "Field":
+				if len(call.Args) > 0 {
+					if lit, ok := call.Args[0].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+						e.Field = strings.Trim(lit.Value, `"`)
 					}
 				}
 			}
@@ -373,6 +390,9 @@ func entTypeToGoType(entType string) string {
 
 // GenerateEnt generates Blueprint registration code for ent schemas.
 func GenerateEnt(w io.Writer, pkg, entImportPath string, schemas []EntSchema) error {
+	if err := validateEntSchemas(schemas); err != nil {
+		return fmt.Errorf("validate ent schemas: %w", err)
+	}
 	models := normalizeEntModels(schemas)
 	spec, err := importSpec("ent", entImportPath)
 	if err != nil {
@@ -387,4 +407,52 @@ func GenerateEnt(w io.Writer, pkg, entImportPath string, schemas []EntSchema) er
 		imports = append(imports, `"time"`)
 	}
 	return generateNormalizedCode(w, "ent", pkg, imports, models, false)
+}
+
+func validateEntSchemas(schemas []EntSchema) error {
+	for _, schema := range schemas {
+		fields := make(map[string]struct{}, len(schema.Fields))
+		for _, field := range schema.Fields {
+			fields[field.Name] = struct{}{}
+		}
+		for _, edge := range schema.Edges {
+			if edge.Field == "" && (edge.Unique || edge.Required) {
+				return fmt.Errorf("schema %q edge %q requires .Field(...) to expose its foreign key", schema.Name, edge.Name)
+			}
+			if edge.Field == "" {
+				continue
+			}
+			if _, ok := fields[edge.Field]; !ok {
+				return fmt.Errorf("schema %q edge %q references unknown field %q", schema.Name, edge.Name, edge.Field)
+			}
+		}
+	}
+	return nil
+}
+
+// entGoName mirrors the acronym-aware PascalCase naming used by entc.
+func entGoName(name string) string {
+	words := strings.FieldsFunc(name, func(r rune) bool {
+		return r == '_' || r == '-' || unicode.IsSpace(r)
+	})
+	var result strings.Builder
+	for _, word := range words {
+		upper := strings.ToUpper(word)
+		if isEntAcronym(upper) {
+			result.WriteString(upper)
+			continue
+		}
+		result.WriteString(strings.ToUpper(word[:1]))
+		result.WriteString(word[1:])
+	}
+	return result.String()
+}
+
+func isEntAcronym(word string) bool {
+	switch word {
+	case "ACL", "API", "ASCII", "AWS", "CPU", "CSS", "DNS", "EOF", "GB", "GUID", "HCL", "HTML", "HTTP", "HTTPS", "ID", "IP", "JSON", "KB", "LHS", "MAC", "MB", "QPS", "RAM", "RHS", "RPC", "SLA", "SMTP", "SQL", "SSH", "SSO", "TCP", "TLS", "TTL", "UDP", "UI", "UID", "URI", "URL", "UTF8", "UUID", "VM", "XML", "XMPP", "XSRF", "XSS":
+		return true
+	default:
+		return false
+	}
 }

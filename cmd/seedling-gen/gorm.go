@@ -36,6 +36,7 @@ type GormField struct {
 type GormRelation struct {
 	Kind       string // "BelongsTo", "HasMany", "HasOne", "ManyToMany"
 	ForeignKey string
+	References string
 	JoinTable  string
 	RefModel   string
 }
@@ -183,6 +184,7 @@ func detectGormRelation(field *ast.Field, fieldType string, tagParts map[string]
 			Kind:       "ManyToMany",
 			JoinTable:  joinTable,
 			ForeignKey: tagParts["foreignKey"],
+			References: tagParts["references"],
 			RefModel:   refModel,
 		}
 	}
@@ -192,9 +194,9 @@ func detectGormRelation(field *ast.Field, fieldType string, tagParts map[string]
 		refModel := stripSlicePrefix(fieldType)
 		if _, isStruct := allStructs[refModel]; isStruct {
 			if strings.HasPrefix(fieldType, "[]") {
-				return &GormRelation{Kind: "HasMany", ForeignKey: fk, RefModel: refModel}
+				return &GormRelation{Kind: "HasMany", ForeignKey: fk, References: tagParts["references"], RefModel: refModel}
 			}
-			return &GormRelation{Kind: "BelongsTo", ForeignKey: fk, RefModel: refModel}
+			return &GormRelation{Kind: "BelongsTo", ForeignKey: fk, References: tagParts["references"], RefModel: refModel}
 		}
 	}
 

@@ -98,6 +98,9 @@ table "users" {
 	if fk.RefTable != "companies" {
 		t.Fatalf("expected ref table 'companies', got %q", fk.RefTable)
 	}
+	if len(fk.RefColumns) != 1 || fk.RefColumns[0] != "id" {
+		t.Fatalf("expected referenced column 'id', got %v", fk.RefColumns)
+	}
 	if len(fk.Columns) != 1 || fk.Columns[0] != "company_id" {
 		t.Fatalf("expected FK column 'company_id', got %v", fk.Columns)
 	}
@@ -546,6 +549,9 @@ table "deployments" {
 	}
 	if fk.Columns[0] != "region_country" || fk.Columns[1] != "region_code" {
 		t.Fatalf("unexpected FK columns: %v", fk.Columns)
+	}
+	if len(fk.RefColumns) != 2 || fk.RefColumns[0] != "country_code" || fk.RefColumns[1] != "region_code" {
+		t.Fatalf("unexpected referenced columns: %v", fk.RefColumns)
 	}
 }
 

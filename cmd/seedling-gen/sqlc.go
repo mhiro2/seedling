@@ -27,16 +27,19 @@ type SqlcField struct {
 type SqlcQuery struct {
 	Name        string      // function name (e.g., "InsertUser")
 	ReturnType  string      // return model type (e.g., "User")
-	ParamType   string      // params type name (e.g., "InsertUserParams"); empty if single arg
-	ParamFields []SqlcField // fields of the params struct; empty if single arg
+	ParamType   string      // params struct type name (e.g., "InsertUserParams")
+	ParamFields []SqlcField // fields of the params struct
+	ArgName     string      // scalar argument name (e.g., "name")
+	ArgType     string      // scalar argument type (e.g., "string")
 }
 
 // SqlcDeleteQuery represents a delete query function from sqlc-generated code.
 type SqlcDeleteQuery struct {
-	Name      string // function name (e.g., "DeleteUser")
-	ParamType string // params type name or empty for single arg
-	ArgName   string // single arg name (e.g., "id")
-	ArgType   string // single arg type (e.g., "int64")
+	Name        string      // function name (e.g., "DeleteUser")
+	ParamType   string      // params struct type name (e.g., "DeleteMembershipParams")
+	ParamFields []SqlcField // fields of the params struct
+	ArgName     string      // scalar argument name (e.g., "id")
+	ArgType     string      // scalar argument type (e.g., "int64")
 }
 
 // SqlcInfo holds information extracted from sqlc-generated Go files.
@@ -147,7 +150,7 @@ func ParseSqlcDir(dir string) (*SqlcInfo, error) {
 					info.Queries = append(info.Queries, *q)
 				}
 			case strings.HasPrefix(lowerName, "delete"):
-				dq := parseDeleteQuery(funcDecl)
+				dq := parseDeleteQuery(funcDecl, structTypes)
 				if dq != nil {
 					info.DeleteQueries = append(info.DeleteQueries, *dq)
 				}
@@ -174,9 +177,9 @@ func parseInsertQuery(funcDecl *ast.FuncDecl, structTypes map[string]*ast.Struct
 
 	paramExpr := params.List[1].Type
 	paramType := exprToString(paramExpr)
-	q.ParamType = paramType
 
 	if st, ok := structTypes[paramType]; ok {
+		q.ParamType = paramType
 		for _, field := range st.Fields.List {
 			if len(field.Names) == 0 {
 				continue
@@ -186,12 +189,19 @@ func parseInsertQuery(funcDecl *ast.FuncDecl, structTypes map[string]*ast.Struct
 				Type: exprToString(field.Type),
 			})
 		}
+		return q
 	}
+
+	paramField := params.List[1]
+	if len(paramField.Names) > 0 {
+		q.ArgName = paramField.Names[0].Name
+	}
+	q.ArgType = paramType
 
 	return q
 }
 
-func parseDeleteQuery(funcDecl *ast.FuncDecl) *SqlcDeleteQuery {
+func parseDeleteQuery(funcDecl *ast.FuncDecl, structTypes map[string]*ast.StructType) *SqlcDeleteQuery {
 	dq := &SqlcDeleteQuery{Name: funcDecl.Name.Name}
 
 	params := funcDecl.Type.Params
@@ -201,13 +211,24 @@ func parseDeleteQuery(funcDecl *ast.FuncDecl) *SqlcDeleteQuery {
 
 	paramField := params.List[1]
 	paramType := exprToString(paramField.Type)
+	if st, ok := structTypes[paramType]; ok {
+		dq.ParamType = paramType
+		for _, field := range st.Fields.List {
+			if len(field.Names) == 0 {
+				continue
+			}
+			dq.ParamFields = append(dq.ParamFields, SqlcField{
+				Name: field.Names[0].Name,
+				Type: exprToString(field.Type),
+			})
+		}
+		return dq
+	}
 
 	if len(paramField.Names) > 0 {
 		dq.ArgName = paramField.Names[0].Name
-		dq.ArgType = paramType
-	} else {
-		dq.ParamType = paramType
 	}
+	dq.ArgType = paramType
 
 	return dq
 }

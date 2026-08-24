@@ -102,6 +102,25 @@ func TestValidateNormalizedModels_RejectsInvalidPositions(t *testing.T) {
 				Fields:     []normalizedField{{GoName: "ID", GoType: "int64) struct{}; var _ = func("}},
 			},
 		},
+		{
+			name: "duplicate relation names",
+			model: normalizedModel{
+				TypeExpr: "User",
+				Relations: []normalizedRelation{
+					{Name: "company", LocalFields: []string{"CompanyID"}},
+					{Name: "company", LocalFields: []string{"BillingCompanyID"}},
+				},
+			},
+		},
+		{
+			name: "empty relation name",
+			model: normalizedModel{
+				TypeExpr: "User",
+				Relations: []normalizedRelation{
+					{LocalFields: []string{"CompanyID"}},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -167,5 +186,60 @@ func TestValidateNormalizedModels_AcceptsValidModels(t *testing.T) {
 
 	if err := validateNormalizedModels(models, true); err != nil {
 		t.Fatalf("unexpected validation error: %v", err)
+	}
+}
+
+func TestNormalizeTableRelations_DistinguishesCompositeForeignKeysToSameTable(t *testing.T) {
+	table := Table{
+		Name: "routes",
+		Columns: []Column{
+			{Name: "billing_country_code", GoName: "BillingCountryCode"},
+			{Name: "billing_region_code", GoName: "BillingRegionCode"},
+			{Name: "shipping_country_code", GoName: "ShippingCountryCode"},
+			{Name: "shipping_region_code", GoName: "ShippingRegionCode"},
+		},
+		ForeignKeys: []ForeignKey{
+			{
+				Columns:    []string{"billing_country_code", "billing_region_code"},
+				RefTable:   "regions",
+				RefColumns: []string{"country_code", "region_code"},
+			},
+			{
+				Columns:    []string{"shipping_country_code", "shipping_region_code"},
+				RefTable:   "regions",
+				RefColumns: []string{"country_code", "region_code"},
+			},
+		},
+	}
+
+	relations := normalizeTableRelations(table)
+	if len(relations) != 2 {
+		t.Fatalf("relations = %d, want 2", len(relations))
+	}
+	if relations[0].Name != "billing" || relations[1].Name != "shipping" {
+		t.Fatalf("relation names = [%s %s], want [billing shipping]", relations[0].Name, relations[1].Name)
+	}
+}
+
+func TestGenerate_EmitsNonPrimaryReferencedField(t *testing.T) {
+	tables, err := ParseSchema(`
+CREATE TABLE countries (
+  id INT PRIMARY KEY,
+  code TEXT UNIQUE NOT NULL
+);
+CREATE TABLE cities (
+  id INT PRIMARY KEY,
+  country_code TEXT NOT NULL REFERENCES countries(code)
+);`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if err := Generate(&buf, "testutil", tables); err != nil {
+		t.Fatal(err)
+	}
+	if output := buf.String(); !strings.Contains(output, `LocalField: "CountryCode", RefField: "Code"`) {
+		t.Fatalf("expected non-primary reference mapping, got:\n%s", output)
 	}
 }

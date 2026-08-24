@@ -185,6 +185,247 @@ func (q *Queries) CreateItem(ctx context.Context, arg CreateItemParams) (Item, e
 	}
 }
 
+func TestParseSqlcDir_ScalarInsertAndCompositeDeleteParams(t *testing.T) {
+	dir := t.TempDir()
+	writeSqlcFiles(t, dir, map[string]string{
+		"models.go": `package db
+
+type Country struct {
+	Code string
+}
+
+type Membership struct {
+	OrganizationID int64
+	UserID int64
+}
+`,
+		"query.sql.go": `package db
+
+import "context"
+
+type Queries struct{}
+
+func (*Queries) InsertCountry(ctx context.Context, code string) (Country, error) {
+	return Country{}, nil
+}
+
+type DeleteMembershipParams struct {
+	OrganizationID int64
+	UserID int64
+}
+
+func (*Queries) DeleteMembership(ctx context.Context, arg DeleteMembershipParams) error {
+	return nil
+}
+`,
+	})
+
+	info, err := ParseSqlcDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(info.Queries) != 1 {
+		t.Fatalf("insert queries = %d, want 1", len(info.Queries))
+	}
+	insert := info.Queries[0]
+	if insert.ParamType != "" || insert.ArgName != "code" || insert.ArgType != "string" {
+		t.Fatalf("unexpected scalar insert metadata: %+v", insert)
+	}
+	if len(info.DeleteQueries) != 1 {
+		t.Fatalf("delete queries = %d, want 1", len(info.DeleteQueries))
+	}
+	deleteQuery := info.DeleteQueries[0]
+	if deleteQuery.ParamType != "DeleteMembershipParams" || len(deleteQuery.ParamFields) != 2 {
+		t.Fatalf("unexpected composite delete metadata: %+v", deleteQuery)
+	}
+}
+
+func TestGenerateSqlc_ScalarInsertAndCompositeDeleteParams(t *testing.T) {
+	tables := []Table{
+		{
+			Name: "countries", GoName: "Country", BlueprintID: "country",
+			Columns: []Column{
+				{Name: "code", GoName: "Code", GoType: "string", IsPK: true, NotNull: true},
+			},
+		},
+		{
+			Name: "memberships", GoName: "Membership", BlueprintID: "membership",
+			Columns: []Column{
+				{Name: "organization_id", GoName: "OrganizationID", GoType: "int64", IsPK: true, NotNull: true},
+				{Name: "user_id", GoName: "UserID", GoType: "int64", IsPK: true, NotNull: true},
+			},
+		},
+	}
+	info := &SqlcInfo{
+		Package: "db",
+		Models: []SqlcModel{
+			{Name: "Country", Fields: []SqlcField{{Name: "Code", Type: "string"}}},
+			{Name: "Membership", Fields: []SqlcField{
+				{Name: "OrganizationID", Type: "int64"},
+				{Name: "UserID", Type: "int64"},
+			}},
+		},
+		Queries: []SqlcQuery{
+			{Name: "InsertCountry", ReturnType: "Country", ArgName: "column_1", ArgType: "string"},
+		},
+		DeleteQueries: []SqlcDeleteQuery{
+			{
+				Name:      "DeleteMembership",
+				ParamType: "DeleteMembershipParams",
+				ParamFields: []SqlcField{
+					{Name: "OrganizationID", Type: "int64"},
+					{Name: "UserID", Type: "int64"},
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := GenerateSqlc(&buf, "testutil", "github.com/myapp/internal/db", tables, info); err != nil {
+		t.Fatal(err)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "InsertCountry(ctx, v.Code)") {
+		t.Fatalf("expected scalar insert argument, got:\n%s", output)
+	}
+	if !strings.Contains(output, "DeleteMembership(ctx, db.DeleteMembershipParams{") ||
+		!strings.Contains(output, "OrganizationID: v.OrganizationID") ||
+		!strings.Contains(output, "UserID:         v.UserID") {
+		t.Fatalf("expected composite delete params, got:\n%s", output)
+	}
+}
+
+func TestGenerateSqlc_RejectsAmbiguousScalarInsertArgument(t *testing.T) {
+	tables := []Table{
+		{
+			Name: "countries", GoName: "Country", BlueprintID: "country",
+			Columns: []Column{
+				{Name: "id", GoName: "ID", GoType: "int64", IsPK: true},
+				{Name: "code", GoName: "Code", GoType: "string"},
+				{Name: "name", GoName: "Name", GoType: "string"},
+			},
+		},
+	}
+	info := &SqlcInfo{
+		Package: "db",
+		Models: []SqlcModel{
+			{Name: "Country", Fields: []SqlcField{
+				{Name: "ID", Type: "int64"},
+				{Name: "Code", Type: "string"},
+				{Name: "Name", Type: "string"},
+			}},
+		},
+		Queries: []SqlcQuery{
+			{Name: "InsertCountry", ReturnType: "Country", ArgName: "column_1", ArgType: "string"},
+		},
+	}
+
+	var buf bytes.Buffer
+	err := GenerateSqlc(&buf, "testutil", "github.com/myapp/internal/db", tables, info)
+	if err == nil || !strings.Contains(err.Error(), "cannot map scalar argument") {
+		t.Fatalf("expected ambiguous scalar mapping error, got %v", err)
+	}
+}
+
+func TestGenerateSqlc_UsesParsedModelFieldNames(t *testing.T) {
+	tables := mustParseSchema(t, `
+CREATE TABLE companies (
+    id BIGINT PRIMARY KEY,
+    spotify_url TEXT UNIQUE NOT NULL
+);
+CREATE TABLE users (
+    id BIGINT PRIMARY KEY,
+    profile_name TEXT NOT NULL,
+    company_spotify_url TEXT NOT NULL REFERENCES companies(spotify_url)
+);
+`)
+	info := &SqlcInfo{
+		Package: "db",
+		Models: []SqlcModel{
+			{Name: "Company", Fields: []SqlcField{
+				{Name: "ID", Type: "int64"},
+				{Name: "SpotifyUrl", Type: "string"},
+			}},
+			{Name: "User", Fields: []SqlcField{
+				{Name: "ID", Type: "int64"},
+				{Name: "DisplayLabel", Type: "string"},
+				{Name: "CompanySpotifyUrl", Type: "string"},
+			}},
+		},
+		Queries: []SqlcQuery{
+			{Name: "InsertCompany", ReturnType: "Company", ArgName: "spotifyUrl", ArgType: "string"},
+			{
+				Name:       "InsertUser",
+				ReturnType: "User",
+				ParamType:  "InsertUserParams",
+				ParamFields: []SqlcField{
+					{Name: "DisplayLabel", Type: "string"},
+					{Name: "CompanySpotifyUrl", Type: "string"},
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := GenerateSqlc(&buf, "testutil", "github.com/myapp/internal/db", tables, info); err != nil {
+		t.Fatal(err)
+	}
+	output := buf.String()
+	for _, want := range []string{
+		`SpotifyUrl: "company-spotify_url"`,
+		`DisplayLabel: "user-display_label"`,
+		`LocalField: "CompanySpotifyUrl"`,
+		`RefField: "SpotifyUrl"`,
+		`InsertCompany(ctx, v.SpotifyUrl)`,
+		`DisplayLabel:      v.DisplayLabel`,
+		`CompanySpotifyUrl: v.CompanySpotifyUrl`,
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected generated output to contain %q:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, `LocalField: "CompanySpotifyURL"`) || strings.Contains(output, `RefField: "SpotifyURL"`) {
+		t.Fatalf("generated output used schema-derived initialism spelling:\n%s", output)
+	}
+}
+
+func TestGenerateSqlc_RejectsUnmappableModelFields(t *testing.T) {
+	tables := mustParseSchema(t, `
+CREATE TABLE users (
+    id BIGINT PRIMARY KEY,
+    display_name TEXT NOT NULL
+);
+`)
+	info := &SqlcInfo{
+		Package: "db",
+		Models: []SqlcModel{
+			{Name: "User", Fields: []SqlcField{{Name: "ID", Type: "int64"}}},
+		},
+	}
+
+	var buf bytes.Buffer
+	err := GenerateSqlc(&buf, "testutil", "github.com/myapp/internal/db", tables, info)
+	if err == nil || !strings.Contains(err.Error(), "has 1 fields but schema table has 2 columns") {
+		t.Fatalf("expected explicit field mapping error, got %v", err)
+	}
+}
+
+func TestGenerateSqlc_RejectsMissingRenamedModel(t *testing.T) {
+	tables := mustParseSchema(t, `CREATE TABLE users (id BIGINT PRIMARY KEY);`)
+	info := &SqlcInfo{
+		Package: "db",
+		Models: []SqlcModel{
+			{Name: "AccountRecord", Fields: []SqlcField{{Name: "ID", Type: "int64"}}},
+		},
+	}
+
+	var buf bytes.Buffer
+	err := GenerateSqlc(&buf, "testutil", "github.com/myapp/internal/db", tables, info)
+	if err == nil || !strings.Contains(err.Error(), `sqlc model "User" not found`) {
+		t.Fatalf("expected explicit renamed model mapping error, got %v", err)
+	}
+}
+
 func TestParseSqlcDir_SkipsTestFiles(t *testing.T) {
 	dir := t.TempDir()
 	writeSqlcFiles(t, dir, map[string]string{

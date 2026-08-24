@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"text/template"
@@ -23,6 +24,8 @@ type normalizedRelation struct {
 	Name         string
 	LocalField   string
 	LocalFields  []string
+	RefField     string
+	RefFields    []string
 	RefBlueprint string
 	Optional     bool
 }
@@ -79,7 +82,7 @@ func RegisterBlueprints(reg *seedling.Registry) {
 {{- if $model.Relations}}
 		Relations: []seedling.Relation{
 {{- range $model.Relations}}
-			{Name: {{quote .Name}}, Kind: seedling.BelongsTo, {{- if isCompositeRelation .}} LocalFields: []string{ {{- range $i, $field := .LocalFields}}{{if $i}}, {{end}}{{quote $field}}{{end}} }, {{- else}} LocalField: {{quote .LocalField}}, {{- end}} RefBlueprint: {{quote .RefBlueprint}}{{- if .Optional}}, Optional: true{{- end}}},
+			{Name: {{quote .Name}}, Kind: seedling.BelongsTo, {{- if isCompositeRelation .}} LocalFields: []string{ {{- range $i, $field := .LocalFields}}{{if $i}}, {{end}}{{quote $field}}{{end}} }, {{- else}} LocalField: {{quote .LocalField}}, {{- end}}{{- if .RefFields}}{{- if isCompositeReference .}} RefFields: []string{ {{- range $i, $field := .RefFields}}{{if $i}}, {{end}}{{quote $field}}{{end}} }, {{- else}} RefField: {{quote .RefField}}, {{- end}}{{- end}} RefBlueprint: {{quote .RefBlueprint}}{{- if .Optional}}, Optional: true{{- end}}},
 {{- end}}
 		},
 {{- end}}
@@ -129,6 +132,9 @@ func generateNormalizedCode(w io.Writer, kind, pkg string, imports []string, mod
 		},
 		"isCompositeRelation": func(rel normalizedRelation) bool {
 			return len(rel.LocalFields) > 1
+		},
+		"isCompositeReference": func(rel normalizedRelation) bool {
+			return len(rel.RefFields) > 1
 		},
 		"defaultLiteral": buildDefaultLiteral,
 		"indent":         indentBlock,
@@ -188,6 +194,19 @@ func validateNormalizedModels(models []normalizedModel, emitStructs bool) error 
 				if err := validateGoExpr("field type", field.GoType); err != nil {
 					return fmt.Errorf("model %q field %q: %w", name, field.GoName, err)
 				}
+			}
+		}
+		relationNames := make(map[string]struct{}, len(model.Relations))
+		for _, relation := range model.Relations {
+			if relation.Name == "" {
+				return fmt.Errorf("model %q: relation name must not be empty", name)
+			}
+			if _, exists := relationNames[relation.Name]; exists {
+				return fmt.Errorf("model %q: duplicate relation name %q", name, relation.Name)
+			}
+			relationNames[relation.Name] = struct{}{}
+			if len(relation.RefFields) > 0 && len(relation.RefFields) != len(relation.LocalFields) {
+				return fmt.Errorf("model %q relation %q: %d local fields do not match %d referenced fields", name, relation.Name, len(relation.LocalFields), len(relation.RefFields))
 			}
 		}
 	}
@@ -311,22 +330,53 @@ func normalizeTableModels(tables []Table) []normalizedModel {
 	return models
 }
 
-func normalizeSqlcModels(tables []Table, sqlcInfo *SqlcInfo) []normalizedModel {
-	models := make([]normalizedModel, 0, len(tables))
+func normalizeSqlcModels(tables []Table, sqlcInfo *SqlcInfo) ([]normalizedModel, error) {
+	fieldMappings := make(map[string]map[string]SqlcField, len(tables))
+	modelsByTable := make(map[string]*SqlcModel, len(tables))
 	for _, table := range tables {
-		model := normalizedModel{
-			TypeExpr:      sqlcInfo.Package + "." + table.GoName,
-			ZeroValueExpr: sqlcInfo.Package + "." + table.GoName + "{}",
-			BlueprintID:   table.BlueprintID,
-			TableName:     table.Name,
-			PKFields:      normalizedPKFields(table.Columns),
-			Fields:        normalizedTableFields(table),
-			Relations:     normalizeTableRelations(table),
+		sqlcModel := sqlcInfo.FindModelForTable(table)
+		if sqlcModel == nil {
+			return nil, fmt.Errorf("table %q: sqlc model %q not found", table.Name, table.GoName)
 		}
 
-		if query := sqlcInfo.FindQueryForTable(table); query != nil && query.ParamType != "" {
+		fieldsByColumn, err := mapSqlcModelFields(table, sqlcModel)
+		if err != nil {
+			return nil, fmt.Errorf("table %q model %q: %w", table.Name, sqlcModel.Name, err)
+		}
+		fieldMappings[table.Name] = fieldsByColumn
+		modelsByTable[table.Name] = sqlcModel
+	}
+
+	models := make([]normalizedModel, 0, len(tables))
+	for _, table := range tables {
+		fieldsByColumn := fieldMappings[table.Name]
+		sqlcModel := modelsByTable[table.Name]
+		pkFields, err := normalizedSqlcPKFields(table, fieldsByColumn)
+		if err != nil {
+			return nil, fmt.Errorf("table %q model %q: %w", table.Name, sqlcModel.Name, err)
+		}
+		relations, err := normalizeSqlcRelations(table, fieldMappings)
+		if err != nil {
+			return nil, fmt.Errorf("table %q model %q: %w", table.Name, sqlcModel.Name, err)
+		}
+
+		model := normalizedModel{
+			TypeExpr:      sqlcInfo.Package + "." + sqlcModel.Name,
+			ZeroValueExpr: sqlcInfo.Package + "." + sqlcModel.Name + "{}",
+			BlueprintID:   table.BlueprintID,
+			TableName:     table.Name,
+			PKFields:      pkFields,
+			Fields:        normalizedSqlcFields(table, fieldsByColumn),
+			Relations:     relations,
+		}
+
+		if query := sqlcInfo.FindQueryForTable(table); query != nil {
+			scalarField, err := resolveSqlcScalarInsertField(sqlcModel, *query, pkFields)
+			if err != nil {
+				return nil, fmt.Errorf("table %q query %q: %w", table.Name, query.Name, err)
+			}
 			model.InsertHook = &normalizedMutationHook{
-				Body: buildSqlcInsertHook(sqlcInfo.Package, *query),
+				Body: buildSqlcInsertHook(sqlcInfo.Package, *query, scalarField),
 			}
 		} else {
 			model.InsertHook = &normalizedMutationHook{
@@ -342,7 +392,7 @@ func normalizeSqlcModels(tables []Table, sqlcInfo *SqlcInfo) []normalizedModel {
 
 		models = append(models, model)
 	}
-	return models
+	return models, nil
 }
 
 func normalizeGormModels(models []GormModel, alias string) []normalizedModel {
@@ -360,24 +410,47 @@ func normalizeGormModels(models []GormModel, alias string) []normalizedModel {
 
 		relations := make([]normalizedRelation, 0, len(model.Fields))
 		relationLocalFields := make(map[string]struct{})
+		fieldsByName := make(map[string]GormField, len(model.Fields))
+		for _, field := range model.Fields {
+			fieldsByName[field.Name] = field
+		}
 		for _, field := range model.Fields {
 			if field.Relation == nil || field.Relation.Kind != "BelongsTo" {
 				continue
 			}
 
-			localField := field.Relation.ForeignKey
-			if localField == "" {
-				localField = field.Name + "ID"
+			localFields := splitCommaSeparatedFields(field.Relation.ForeignKey)
+			if len(localFields) == 0 {
+				localFields = []string{field.Name + "ID"}
+			}
+			refFields := splitCommaSeparatedFields(field.Relation.References)
+
+			required := true
+			for _, localField := range localFields {
+				fkField, ok := fieldsByName[localField]
+				if !ok || !fkField.NotNull {
+					required = false
+					break
+				}
 			}
 
-			relations = append(relations, normalizedRelation{
+			relation := normalizedRelation{
 				Name:         strings.ToLower(field.Name[:1]) + field.Name[1:],
-				LocalField:   localField,
-				LocalFields:  []string{localField},
+				LocalFields:  localFields,
+				RefFields:    refFields,
 				RefBlueprint: singularize(strings.ToLower(field.Relation.RefModel)),
-				Optional:     !field.NotNull,
-			})
-			relationLocalFields[localField] = struct{}{}
+				Optional:     !required,
+			}
+			if len(localFields) == 1 {
+				relation.LocalField = localFields[0]
+			}
+			if len(refFields) == 1 {
+				relation.RefField = refFields[0]
+			}
+			relations = append(relations, relation)
+			for _, localField := range localFields {
+				relationLocalFields[localField] = struct{}{}
+			}
 		}
 
 		fields := make([]normalizedField, 0, len(model.Fields))
@@ -411,6 +484,16 @@ func normalizeGormModels(models []GormModel, alias string) []normalizedModel {
 	return normalized
 }
 
+func splitCommaSeparatedFields(value string) []string {
+	fields := make([]string, 0, strings.Count(value, ",")+1)
+	for field := range strings.SplitSeq(value, ",") {
+		if field = strings.TrimSpace(field); field != "" {
+			fields = append(fields, field)
+		}
+	}
+	return fields
+}
+
 func normalizeEntModels(schemas []EntSchema) []normalizedModel {
 	models := make([]normalizedModel, 0, len(schemas))
 	for _, schema := range schemas {
@@ -424,11 +507,17 @@ func normalizeEntModels(schemas []EntSchema) []normalizedModel {
 		}
 
 		for _, edge := range schema.Edges {
-			if edge.Direction != "From" {
+			if edge.Field == "" {
 				continue
 			}
 
-			localField := toGoFieldName(edge.Name) + "ID"
+			localField := entGoName(edge.Field)
+			for i := range model.Fields {
+				if model.Fields[i].GoName == localField {
+					model.Fields[i].IsRelationFK = true
+					break
+				}
+			}
 			model.Relations = append(model.Relations, normalizedRelation{
 				Name:         edge.Name,
 				LocalField:   localField,
@@ -470,12 +559,55 @@ func normalizedPKField(fields []string) string {
 	return fields[0]
 }
 
-func normalizedTableFields(table Table) []normalizedField {
+func mapSqlcModelFields(table Table, model *SqlcModel) (map[string]SqlcField, error) {
+	if len(model.Fields) != len(table.Columns) {
+		return nil, fmt.Errorf("has %d fields but schema table has %d columns", len(model.Fields), len(table.Columns))
+	}
+
+	fieldsByColumn := make(map[string]SqlcField, len(table.Columns))
+	usedFields := make([]bool, len(model.Fields))
+	for _, column := range table.Columns {
+		matchIndex := -1
+		for i, field := range model.Fields {
+			if usedFields[i] || normalizeSQLCIdentifier(field.Name) != normalizeSQLCIdentifier(column.Name) {
+				continue
+			}
+			if matchIndex != -1 {
+				return nil, fmt.Errorf("column %q matches multiple Go fields", column.Name)
+			}
+			matchIndex = i
+		}
+		if matchIndex == -1 {
+			continue
+		}
+		fieldsByColumn[column.Name] = model.Fields[matchIndex]
+		usedFields[matchIndex] = true
+	}
+
+	// sqlc preserves table column order in generated model structs. Use that
+	// ordering only for fields whose configured rename no longer resembles the
+	// SQL column, after all unambiguous name matches have been consumed.
+	for i, column := range table.Columns {
+		if _, ok := fieldsByColumn[column.Name]; ok {
+			continue
+		}
+		if usedFields[i] {
+			return nil, fmt.Errorf("cannot map column %q to a Go field without ambiguity", column.Name)
+		}
+		fieldsByColumn[column.Name] = model.Fields[i]
+		usedFields[i] = true
+	}
+
+	return fieldsByColumn, nil
+}
+
+func normalizedSqlcFields(table Table, fieldsByColumn map[string]SqlcField) []normalizedField {
 	fields := make([]normalizedField, 0, len(table.Columns))
 	for _, column := range table.Columns {
+		field := fieldsByColumn[column.Name]
 		fields = append(fields, normalizedField{
-			GoName:       column.GoName,
-			GoType:       column.GoType,
+			GoName:       field.Name,
+			GoType:       field.Type,
 			IsPK:         column.IsPK,
 			IsRelationFK: column.IsFK,
 			IsOptional:   !column.NotNull,
@@ -484,13 +616,81 @@ func normalizedTableFields(table Table) []normalizedField {
 	return fields
 }
 
+func normalizedSqlcPKFields(table Table, fieldsByColumn map[string]SqlcField) ([]string, error) {
+	fields := make([]string, 0, len(table.Columns))
+	for _, column := range table.Columns {
+		if column.IsPK {
+			fields = append(fields, fieldsByColumn[column.Name].Name)
+		}
+	}
+	if len(fields) > 0 {
+		return fields, nil
+	}
+
+	for _, column := range table.Columns {
+		if normalizeSQLCIdentifier(column.Name) == "id" {
+			return []string{fieldsByColumn[column.Name].Name}, nil
+		}
+	}
+	return nil, fmt.Errorf("has no primary key and no conventional id field")
+}
+
+func normalizeSqlcRelations(table Table, fieldMappings map[string]map[string]SqlcField) ([]normalizedRelation, error) {
+	relations := make([]normalizedRelation, 0, len(table.ForeignKeys))
+	for _, foreignKey := range table.ForeignKeys {
+		if len(foreignKey.Columns) == 0 {
+			continue
+		}
+
+		localFields := make([]string, 0, len(foreignKey.Columns))
+		for _, columnName := range foreignKey.Columns {
+			field, ok := fieldMappings[table.Name][columnName]
+			if !ok {
+				return nil, fmt.Errorf("relation %q: local column %q not found", relationNameForForeignKey(foreignKey), columnName)
+			}
+			localFields = append(localFields, field.Name)
+		}
+
+		refFields := make([]string, 0, len(foreignKey.RefColumns))
+		if len(foreignKey.RefColumns) > 0 {
+			refMapping, ok := fieldMappings[foreignKey.RefTable]
+			if !ok {
+				return nil, fmt.Errorf("relation %q: referenced table %q is not present in sqlc models", relationNameForForeignKey(foreignKey), foreignKey.RefTable)
+			}
+			for _, columnName := range foreignKey.RefColumns {
+				field, ok := refMapping[columnName]
+				if !ok {
+					return nil, fmt.Errorf("relation %q: referenced column %q.%s not found", relationNameForForeignKey(foreignKey), foreignKey.RefTable, columnName)
+				}
+				refFields = append(refFields, field.Name)
+			}
+		}
+
+		relation := normalizedRelation{
+			Name:         relationNameForForeignKey(foreignKey),
+			LocalFields:  localFields,
+			RefFields:    refFields,
+			RefBlueprint: singularize(foreignKey.RefTable),
+			Optional:     !foreignKey.NotNull,
+		}
+		if len(localFields) == 1 {
+			relation.LocalField = localFields[0]
+		}
+		if len(refFields) == 1 {
+			relation.RefField = refFields[0]
+		}
+		relations = append(relations, relation)
+	}
+	return relations, nil
+}
+
 func normalizeEntFields(fields []EntField) []normalizedField {
 	normalized := make([]normalizedField, 0, len(fields))
 	for _, field := range fields {
 		normalized = append(normalized, normalizedField{
-			GoName:     toGoFieldName(field.Name),
+			GoName:     entGoName(field.Name),
 			GoType:     field.GoType,
-			IsOptional: field.Optional,
+			IsOptional: field.Optional || field.Nillable,
 		})
 	}
 	return normalized
@@ -517,19 +717,25 @@ func normalizeTableRelations(table Table) []normalizedRelation {
 			continue
 		}
 
-		name := singularize(foreignKey.RefTable)
-		if len(foreignKey.Columns) == 1 {
-			name = relationNameForColumn(foreignKey.Columns[0], foreignKey.RefTable)
+		refFields := make([]string, 0, len(foreignKey.RefColumns))
+		for _, columnName := range foreignKey.RefColumns {
+			refFields = append(refFields, toGoFieldName(columnName))
 		}
+
+		name := relationNameForForeignKey(foreignKey)
 
 		relation := normalizedRelation{
 			Name:         name,
 			LocalFields:  localFields,
+			RefFields:    refFields,
 			RefBlueprint: singularize(foreignKey.RefTable),
 			Optional:     !foreignKey.NotNull,
 		}
 		if len(localFields) == 1 {
 			relation.LocalField = localFields[0]
+		}
+		if len(refFields) == 1 {
+			relation.RefField = refFields[0]
 		}
 
 		relations = append(relations, relation)
@@ -592,7 +798,7 @@ func normalizedModelsNeedTimeImport(models []normalizedModel) bool {
 	return false
 }
 
-func buildSqlcInsertHook(alias string, query SqlcQuery) string {
+func buildSqlcInsertHook(alias string, query SqlcQuery, scalarField string) string {
 	var body strings.Builder
 	body.WriteString("return ")
 	body.WriteString(alias)
@@ -600,20 +806,85 @@ func buildSqlcInsertHook(alias string, query SqlcQuery) string {
 	body.WriteString(alias)
 	body.WriteString(".DBTX)).")
 	body.WriteString(query.Name)
-	body.WriteString("(ctx, ")
-	body.WriteString(alias)
-	body.WriteString(".")
-	body.WriteString(query.ParamType)
-	body.WriteString("{\n")
-	for _, field := range query.ParamFields {
-		body.WriteString("\t")
-		body.WriteString(field.Name)
-		body.WriteString(": v.")
-		body.WriteString(field.Name)
-		body.WriteString(",\n")
+	body.WriteString("(ctx")
+	switch {
+	case query.ParamType != "":
+		body.WriteString(", ")
+		body.WriteString(alias)
+		body.WriteString(".")
+		body.WriteString(query.ParamType)
+		body.WriteString("{\n")
+		for _, field := range query.ParamFields {
+			body.WriteString("\t")
+			body.WriteString(field.Name)
+			body.WriteString(": v.")
+			body.WriteString(field.Name)
+			body.WriteString(",\n")
+		}
+		body.WriteString("}")
+	case query.ArgType != "":
+		body.WriteString(", v.")
+		body.WriteString(scalarField)
 	}
-	body.WriteString("})")
+	body.WriteString(")")
 	return body.String()
+}
+
+func resolveSqlcScalarInsertField(model *SqlcModel, query SqlcQuery, pkFields []string) (string, error) {
+	if query.ParamType != "" || query.ArgType == "" {
+		return "", nil
+	}
+
+	type candidate struct {
+		name       string
+		typeName   string
+		primaryKey bool
+	}
+	isPrimaryKey := func(name string) bool {
+		return slices.Contains(pkFields, name)
+	}
+
+	candidates := make([]candidate, 0, len(model.Fields))
+	for _, field := range model.Fields {
+		candidates = append(candidates, candidate{
+			name:       field.Name,
+			typeName:   field.Type,
+			primaryKey: isPrimaryKey(field.Name),
+		})
+	}
+
+	if query.ArgName != "" && query.ArgName != "_" {
+		normalizedArgument := normalizeSQLCIdentifier(query.ArgName)
+		for _, candidate := range candidates {
+			if normalizeSQLCIdentifier(candidate.name) == normalizedArgument {
+				return candidate.name, nil
+			}
+		}
+	}
+
+	typeMatches := make([]candidate, 0, len(candidates))
+	nonPKMatches := make([]candidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.typeName != query.ArgType {
+			continue
+		}
+		typeMatches = append(typeMatches, candidate)
+		if !candidate.primaryKey {
+			nonPKMatches = append(nonPKMatches, candidate)
+		}
+	}
+	if len(nonPKMatches) == 1 {
+		return nonPKMatches[0].name, nil
+	}
+	if len(typeMatches) == 1 {
+		return typeMatches[0].name, nil
+	}
+
+	return "", fmt.Errorf("cannot map scalar argument %q (%s) to exactly one model field", query.ArgName, query.ArgType)
+}
+
+func normalizeSQLCIdentifier(value string) string {
+	return strings.ToLower(strings.ReplaceAll(value, "_", ""))
 }
 
 func buildSqlcDeleteHook(alias string, deleteQuery SqlcDeleteQuery, pkFields []string) string {
@@ -624,12 +895,24 @@ func buildSqlcDeleteHook(alias string, deleteQuery SqlcDeleteQuery, pkFields []s
 	body.WriteString(alias)
 	body.WriteString(".DBTX)).")
 	body.WriteString(deleteQuery.Name)
-	body.WriteString("(ctx, ")
-	if deleteQuery.ArgName != "" {
-		body.WriteString("v.")
+	body.WriteString("(ctx")
+	if deleteQuery.ParamType != "" {
+		body.WriteString(", ")
+		body.WriteString(alias)
+		body.WriteString(".")
+		body.WriteString(deleteQuery.ParamType)
+		body.WriteString("{\n")
+		for _, field := range deleteQuery.ParamFields {
+			body.WriteString("\t")
+			body.WriteString(field.Name)
+			body.WriteString(": v.")
+			body.WriteString(field.Name)
+			body.WriteString(",\n")
+		}
+		body.WriteString("}")
+	} else if deleteQuery.ArgType != "" {
+		body.WriteString(", v.")
 		body.WriteString(pkFieldForDeleteArg(deleteQuery.ArgName, pkFields))
-	} else {
-		body.WriteString("v")
 	}
 	body.WriteString(")")
 	return body.String()
@@ -642,9 +925,12 @@ func buildEntInsertHook(schema EntSchema) string {
 	body.WriteString(".Create()\n")
 	for _, field := range schema.Fields {
 		body.WriteString("builder.Set")
-		body.WriteString(toGoFieldName(field.Name))
+		if field.Nillable {
+			body.WriteString("Nillable")
+		}
+		body.WriteString(entGoName(field.Name))
 		body.WriteString("(v.")
-		body.WriteString(toGoFieldName(field.Name))
+		body.WriteString(entGoName(field.Name))
 		body.WriteString(")\n")
 	}
 	body.WriteString("return builder.Save(ctx)")
