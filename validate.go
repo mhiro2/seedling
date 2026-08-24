@@ -35,13 +35,13 @@ func validatePlan(g *graph.Graph) error {
 		}
 	}
 
-	// 3. For each edge, validate FK field exists and types are compatible.
+	// 3. For each edge, validate FK and referenced fields and their types.
 	for _, node := range nodes {
 		for _, edge := range node.Dependencies() {
 			parent := edge.Parent
 			child := edge.Child
 
-			// Check type compatibility between parent PK and child FK.
+			// Check type compatibility between the referenced parent field and child FK.
 			parentType := reflect.TypeOf(parent.Value)
 			childType := reflect.TypeOf(child.Value)
 
@@ -58,9 +58,9 @@ func validatePlan(g *graph.Graph) error {
 						binding.ChildField, reflect.TypeOf(child.Value), child.ID)
 				}
 
-				pkField, ok := parentType.FieldByName(binding.ParentField)
+				refField, ok := parentType.FieldByName(binding.ParentField)
 				if !ok {
-					return fmt.Errorf("validate plan: PKField %q not found on %s (node %s)",
+					return fmt.Errorf("validate plan: referenced field %q not found on %s (node %s)",
 						binding.ParentField, parentType, parent.ID)
 				}
 
@@ -70,9 +70,9 @@ func validatePlan(g *graph.Graph) error {
 						binding.ChildField, childType, child.ID)
 				}
 
-				if !pkField.Type.AssignableTo(fkField.Type) {
+				if !field.CanCopyType(refField.Type, fkField.Type) {
 					return fmt.Errorf("validate plan: type mismatch: parent %s.%s (%s) is not assignable to child %s.%s (%s)",
-						parent.BlueprintName, binding.ParentField, pkField.Type,
+						parent.BlueprintName, binding.ParentField, refField.Type,
 						child.BlueprintName, binding.ChildField, fkField.Type)
 				}
 			}

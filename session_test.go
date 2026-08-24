@@ -131,9 +131,17 @@ func TestNewTestSession_RollsBackTransactionOnCleanup(t *testing.T) {
 	t.Run("transactional insert", func(t *testing.T) {
 		// Arrange
 		sess := seedling.NewTestSession[Company](t, reg, db, nil)
+		plan, err := sess.BuildE()
+		if err != nil {
+			t.Fatal(err)
+		}
 
 		// Act
-		company := sess.InsertOne(t, nil).Root()
+		result, err := plan.InsertE(t.Context(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		company := result.Root()
 
 		// Assert
 		if company.ID == 0 {
@@ -146,7 +154,7 @@ func TestNewTestSession_RollsBackTransactionOnCleanup(t *testing.T) {
 		}
 
 		var count int
-		err := tx.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM companies`).Scan(&count)
+		err = tx.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM companies`).Scan(&count)
 		if err != nil {
 			t.Fatal(err)
 		}

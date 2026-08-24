@@ -4,11 +4,16 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/mhiro2/seedling"
 )
+
+// minRollbackTimeout is the floor for the rollback budget. Tests run without a
+// deadline (`go test -timeout 0`) get exactly this.
+const minRollbackTimeout = 5 * time.Second
 
 // Beginner begins pgx transactions for [WithTx].
 type Beginner interface {
@@ -31,7 +36,10 @@ func NewTestSession[T any](tb testing.TB, reg *seedling.Registry, db TxBeginner,
 	}
 
 	tb.Cleanup(func() {
-		if err := tx.Rollback(tb.Context()); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+		ctx, cancel := rollbackContext(tb)
+		defer cancel()
+
+		if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
 			tb.Errorf("seedlingpgx: rollback test transaction: %v", err)
 		}
 	})
@@ -49,10 +57,40 @@ func WithTx(tb testing.TB, db Beginner) pgx.Tx {
 	}
 
 	tb.Cleanup(func() {
-		if err := tx.Rollback(tb.Context()); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+		ctx, cancel := rollbackContext(tb)
+		defer cancel()
+
+		if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
 			tb.Errorf("seedlingpgx: rollback test transaction: %v", err)
 		}
 	})
 
 	return tx
+}
+
+// rollbackContext derives a context that stays active while test cleanup runs.
+// tb.Context() is already canceled by the time tb.Cleanup callbacks execute, so
+// the deadline has to be rebuilt rather than inherited. It follows the test
+// binary's own remaining deadline so a slow connection is not cut short by an
+// unrelated constant.
+func rollbackContext(tb testing.TB) (context.Context, context.CancelFunc) {
+	tb.Helper()
+	return context.WithTimeout(context.WithoutCancel(tb.Context()), rollbackTimeout(tb))
+}
+
+func rollbackTimeout(tb testing.TB) time.Duration {
+	tb.Helper()
+
+	deadliner, ok := tb.(interface{ Deadline() (time.Time, bool) })
+	if !ok {
+		return minRollbackTimeout
+	}
+	deadline, ok := deadliner.Deadline()
+	if !ok {
+		return minRollbackTimeout
+	}
+	if remaining := time.Until(deadline); remaining > minRollbackTimeout {
+		return remaining
+	}
+	return minRollbackTimeout
 }

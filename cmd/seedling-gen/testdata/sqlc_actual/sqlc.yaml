@@ -1,0 +1,16 @@
+version: "2"
+sql:
+  - engine: sqlite
+    schema: schema.sql
+    queries: queries.sql
+    gen:
+      go:
+        package: actualsqlc
+        out: generated
+        emit_db_tags: true
+        emit_methods_with_db_argument: true
+        emit_params_struct_pointers: true
+        emit_result_struct_pointers: true
+        rename:
+          spotify_url: SpotifyURL
+          user: AccountRecord

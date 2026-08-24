@@ -25,18 +25,26 @@ type SqlcField struct {
 
 // SqlcQuery represents an insert/create query function from sqlc-generated code.
 type SqlcQuery struct {
-	Name        string      // function name (e.g., "InsertUser")
-	ReturnType  string      // return model type (e.g., "User")
-	ParamType   string      // params type name (e.g., "InsertUserParams"); empty if single arg
-	ParamFields []SqlcField // fields of the params struct; empty if single arg
+	Name          string      // function name (e.g., "InsertUser")
+	ReturnType    string      // return model type (e.g., "User")
+	ReturnPointer bool        // whether the query returns a pointer to the model
+	DBArgument    bool        // whether the method accepts a DBTX argument after context
+	ParamType     string      // params struct type name (e.g., "InsertUserParams")
+	ParamPointer  bool        // whether the query accepts a pointer to the params struct
+	ParamFields   []SqlcField // fields of the params struct
+	ArgName       string      // scalar argument name (e.g., "name")
+	ArgType       string      // scalar argument type (e.g., "string")
 }
 
 // SqlcDeleteQuery represents a delete query function from sqlc-generated code.
 type SqlcDeleteQuery struct {
-	Name      string // function name (e.g., "DeleteUser")
-	ParamType string // params type name or empty for single arg
-	ArgName   string // single arg name (e.g., "id")
-	ArgType   string // single arg type (e.g., "int64")
+	Name         string      // function name (e.g., "DeleteUser")
+	DBArgument   bool        // whether the method accepts a DBTX argument after context
+	ParamType    string      // params struct type name (e.g., "DeleteMembershipParams")
+	ParamPointer bool        // whether the query accepts a pointer to the params struct
+	ParamFields  []SqlcField // fields of the params struct
+	ArgName      string      // scalar argument name (e.g., "id")
+	ArgType      string      // scalar argument type (e.g., "int64")
 }
 
 // SqlcInfo holds information extracted from sqlc-generated Go files.
@@ -147,7 +155,7 @@ func ParseSqlcDir(dir string) (*SqlcInfo, error) {
 					info.Queries = append(info.Queries, *q)
 				}
 			case strings.HasPrefix(lowerName, "delete"):
-				dq := parseDeleteQuery(funcDecl)
+				dq := parseDeleteQuery(funcDecl, structTypes)
 				if dq != nil {
 					info.DeleteQueries = append(info.DeleteQueries, *dq)
 				}
@@ -163,20 +171,27 @@ func parseInsertQuery(funcDecl *ast.FuncDecl, structTypes map[string]*ast.Struct
 
 	// Get return type (first return value).
 	if funcDecl.Type.Results != nil && len(funcDecl.Type.Results.List) > 0 {
-		q.ReturnType = exprToString(funcDecl.Type.Results.List[0].Type)
+		q.ReturnType, q.ReturnPointer = sqlcNamedType(funcDecl.Type.Results.List[0].Type)
 	}
 
-	// Get param type (second parameter after ctx).
-	params := funcDecl.Type.Params
-	if params == nil || len(params.List) < 2 {
+	paramField, dbArgument := sqlcMethodParam(funcDecl.Type.Params)
+	q.DBArgument = dbArgument
+	if paramField == nil {
 		return q
 	}
 
-	paramExpr := params.List[1].Type
+	paramExpr := paramField.Type
 	paramType := exprToString(paramExpr)
-	q.ParamType = paramType
+	structType := paramType
+	paramPointer := false
+	if pointedType, ok := strings.CutPrefix(structType, "*"); ok {
+		structType = pointedType
+		paramPointer = true
+	}
 
-	if st, ok := structTypes[paramType]; ok {
+	if st, ok := structTypes[structType]; ok {
+		q.ParamType = structType
+		q.ParamPointer = paramPointer
 		for _, field := range st.Fields.List {
 			if len(field.Names) == 0 {
 				continue
@@ -186,30 +201,78 @@ func parseInsertQuery(funcDecl *ast.FuncDecl, structTypes map[string]*ast.Struct
 				Type: exprToString(field.Type),
 			})
 		}
+		return q
 	}
+
+	if len(paramField.Names) > 0 {
+		q.ArgName = paramField.Names[0].Name
+	}
+	q.ArgType = paramType
 
 	return q
 }
 
-func parseDeleteQuery(funcDecl *ast.FuncDecl) *SqlcDeleteQuery {
+func parseDeleteQuery(funcDecl *ast.FuncDecl, structTypes map[string]*ast.StructType) *SqlcDeleteQuery {
 	dq := &SqlcDeleteQuery{Name: funcDecl.Name.Name}
 
-	params := funcDecl.Type.Params
-	if params == nil || len(params.List) < 2 {
+	paramField, dbArgument := sqlcMethodParam(funcDecl.Type.Params)
+	dq.DBArgument = dbArgument
+	if paramField == nil {
 		return dq
 	}
 
-	paramField := params.List[1]
 	paramType := exprToString(paramField.Type)
+	structType := paramType
+	paramPointer := false
+	if pointedType, ok := strings.CutPrefix(structType, "*"); ok {
+		structType = pointedType
+		paramPointer = true
+	}
+	if st, ok := structTypes[structType]; ok {
+		dq.ParamType = structType
+		dq.ParamPointer = paramPointer
+		for _, field := range st.Fields.List {
+			if len(field.Names) == 0 {
+				continue
+			}
+			dq.ParamFields = append(dq.ParamFields, SqlcField{
+				Name: field.Names[0].Name,
+				Type: exprToString(field.Type),
+			})
+		}
+		return dq
+	}
 
 	if len(paramField.Names) > 0 {
 		dq.ArgName = paramField.Names[0].Name
-		dq.ArgType = paramType
-	} else {
-		dq.ParamType = paramType
 	}
+	dq.ArgType = paramType
 
 	return dq
+}
+
+func sqlcMethodParam(params *ast.FieldList) (*ast.Field, bool) {
+	if params == nil || len(params.List) < 2 {
+		return nil, false
+	}
+
+	index := 1
+	dbArgument := exprToString(params.List[index].Type) == "DBTX"
+	if dbArgument {
+		index++
+	}
+	if index >= len(params.List) {
+		return nil, dbArgument
+	}
+	return params.List[index], dbArgument
+}
+
+func sqlcNamedType(expr ast.Expr) (string, bool) {
+	typeName := exprToString(expr)
+	if pointedType, ok := strings.CutPrefix(typeName, "*"); ok {
+		return pointedType, true
+	}
+	return typeName, false
 }
 
 func isQueriesReceiver(recv *ast.FieldList) bool {
@@ -247,39 +310,4 @@ func exprToString(expr ast.Expr) string {
 	default:
 		return "any"
 	}
-}
-
-// FindQueryForTable finds the sqlc insert/create query function for the given table.
-func (info *SqlcInfo) FindQueryForTable(table Table) *SqlcQuery {
-	for i, q := range info.Queries {
-		if q.ReturnType == table.GoName {
-			return &info.Queries[i]
-		}
-	}
-	return nil
-}
-
-// FindDeleteQueryForTable finds the sqlc delete query function for the given table.
-// Delete queries are parsed from functions whose name starts with "delete", so a
-// query matches a table only when its name is exactly Delete<GoName>. A substring
-// match would wrongly bind, say, DeleteUserProfile to the User table, mirroring the
-// exact matching used by FindQueryForTable.
-func (info *SqlcInfo) FindDeleteQueryForTable(table Table) *SqlcDeleteQuery {
-	target := "delete" + strings.ToLower(table.GoName)
-	for i, dq := range info.DeleteQueries {
-		if strings.ToLower(dq.Name) == target {
-			return &info.DeleteQueries[i]
-		}
-	}
-	return nil
-}
-
-// FindModelForTable finds the sqlc model struct for the given table.
-func (info *SqlcInfo) FindModelForTable(table Table) *SqlcModel {
-	for i, m := range info.Models {
-		if m.Name == table.GoName {
-			return &info.Models[i]
-		}
-	}
-	return nil
 }

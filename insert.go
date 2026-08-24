@@ -71,6 +71,8 @@ func (s Session[T]) InsertMany(tb testing.TB, db DBTX, n int, opts ...Option) []
 // When Seq options are present, the sequence function is called with the 0-based
 // index for each record. Shared belongs-to dependencies are inserted once when
 // their resolved options are identical across records.
+// If execution fails after inserting some nodes, the returned BatchResult
+// contains every successful node and only the roots that completed successfully.
 func InsertManyE[T any](ctx context.Context, db DBTX, n int, opts ...Option) (BatchResult[T], error) {
 	return NewSession[T](nil).InsertManyE(ctx, db, n, opts...)
 }
@@ -80,6 +82,8 @@ func InsertManyE[T any](ctx context.Context, db DBTX, n int, opts ...Option) (Ba
 // When Seq options are present, the sequence function is called with the 0-based
 // index for each record. Shared belongs-to dependencies are inserted once when
 // their resolved options are identical across records.
+// If execution fails after inserting some nodes, the returned BatchResult
+// contains every successful node and only the roots that completed successfully.
 func (s Session[T]) InsertManyE(ctx context.Context, db DBTX, n int, opts ...Option) (BatchResult[T], error) {
 	ctx, opts = extractContext(ctx, opts)
 	var zero BatchResult[T]
@@ -111,47 +115,69 @@ func (s Session[T]) InsertManyE(ctx context.Context, db DBTX, n int, opts ...Opt
 		return zero, fmt.Errorf("build plan: %w", err)
 	}
 
-	execResult, err := executor.Execute(ctx, s.resolveDB(db), plan.Graph, adapter, toExecutorLogFn(collected[0].logFn))
+	effectiveDB := s.resolveDB(db)
+	execResult, err := executor.Execute(ctx, effectiveDB, plan.Graph, adapter, toExecutorLogFn(collected[0].logFn))
+	result, resultErr := batchResultFromExecutor[T](s.registry, plan.RootIDs, execResult, err == nil)
+	if resultErr != nil {
+		return result, resultErr
+	}
 	if err != nil {
-		return zero, fmt.Errorf("execute plan: %w", err)
+		return result, fmt.Errorf("execute plan: %w", err)
 	}
 
-	roots := make([]T, len(plan.RootIDs))
 	for i, rootID := range plan.RootIDs {
 		node, ok := execResult.Nodes[rootID]
 		if !ok {
-			return zero, fmt.Errorf("seedling: root node %q not found in batch result", rootID)
+			continue
 		}
-
-		root, ok := node.Value.(T)
-		if !ok {
-			return zero, fmt.Errorf("%w: root node %q has value %T, want %s", ErrTypeMismatch, rootID, node.Value, rootType)
-		}
-
-		roots[i] = root
-	}
-
-	result := BatchResult[T]{
-		roots:         roots,
-		rootIDs:       plan.RootIDs,
-		nodes:         execResult.Nodes,
-		graph:         execResult.Graph,
-		registry:      s.registry,
-		deleteFns:     snapshotDeleteFns(s.registry, execResult.Nodes),
-		cleanupValues: snapshotCleanupValues(execResult.Graph),
-	}
-
-	for i, root := range roots {
+		root := node.Value.(T)
 		for _, fn := range collected[i].afterInserts {
 			switch cb := fn.(type) {
 			case func(T, DBTX):
-				cb(root, s.resolveDB(db))
+				cb(root, effectiveDB)
 			case func(T, DBTX) error:
-				if err := cb(root, s.resolveDB(db)); err != nil {
+				if err := cb(root, effectiveDB); err != nil {
 					return result, fmt.Errorf("run after-insert callback: %w", err)
 				}
 			}
 		}
+	}
+
+	return result, nil
+}
+
+func batchResultFromExecutor[T any](reg *Registry, rootIDs []string, execResult *executor.Result, requireAllRoots bool) (BatchResult[T], error) {
+	if execResult == nil {
+		var zero BatchResult[T]
+		return zero, fmt.Errorf("%w: executor returned a nil result", ErrInvalidOption)
+	}
+
+	result := BatchResult[T]{
+		roots:         make([]T, 0, len(rootIDs)),
+		rootIndices:   make([]int, 0, len(rootIDs)),
+		rootIDs:       append([]string(nil), rootIDs...),
+		nodes:         execResult.Nodes,
+		graph:         execResult.Graph,
+		registry:      reg,
+		deleteFns:     snapshotDeleteFns(reg, execResult.Nodes),
+		cleanupValues: snapshotCleanupValues(execResult.Graph),
+	}
+	rootType := reflect.TypeFor[T]()
+	for rootIndex, rootID := range rootIDs {
+		node, ok := execResult.Nodes[rootID]
+		if !ok {
+			if requireAllRoots {
+				return result, fmt.Errorf("seedling: root node %q not found in batch result", rootID)
+			}
+			continue
+		}
+
+		root, ok := node.Value.(T)
+		if !ok {
+			return result, fmt.Errorf("%w: root node %q has value %T, want %s", ErrTypeMismatch, rootID, node.Value, rootType)
+		}
+		result.roots = append(result.roots, root)
+		result.rootIndices = append(result.rootIndices, rootIndex)
 	}
 
 	return result, nil

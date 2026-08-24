@@ -23,15 +23,16 @@ type User struct {
 
 func (User) Fields() []ent.Field {
 	return []ent.Field{
-		field.String("name"),
-		field.Int("age").Optional(),
-		field.String("email"),
+		field.String("name").StructTag("json:\"display_name,omitempty\""),
+		field.Int("age").Optional().Nillable(),
+		field.String("email").Sensitive(),
+		field.Int("company_uuid"),
 	}
 }
 
 func (User) Edges() []ent.Edge {
 	return []ent.Edge{
-		edge.From("company", Company.Type).Ref("users").Unique().Required(),
+		edge.From("company", Company.Type).Ref("users").Unique().Required().Field("company_uuid"),
 	}
 }
 `)
@@ -83,14 +84,20 @@ func (Company) Edges() []ent.Edge {
 	if user == nil {
 		t.Fatal("User schema not found")
 	}
-	if len(user.Fields) != 3 {
-		t.Fatalf("expected 3 fields on User, got %d", len(user.Fields))
+	if len(user.Fields) != 4 {
+		t.Fatalf("expected 4 fields on User, got %d", len(user.Fields))
 	}
 	if user.Fields[0].Name != "name" {
 		t.Fatalf("expected first field 'name', got %q", user.Fields[0].Name)
 	}
+	if user.Fields[0].JSONName != "display_name" || user.Fields[2].JSONName != "-" {
+		t.Fatalf("unexpected parsed JSON names: name=%q email=%q", user.Fields[0].JSONName, user.Fields[2].JSONName)
+	}
 	if !user.Fields[1].Optional {
 		t.Fatal("expected age field to be optional")
+	}
+	if !user.Fields[1].Nillable || user.Fields[1].GoType != "*int" {
+		t.Fatalf("expected age to be nillable *int, got %+v", user.Fields[1])
 	}
 
 	// Check edges.
@@ -113,6 +120,9 @@ func (Company) Edges() []ent.Edge {
 	if edge.Ref != "users" {
 		t.Fatalf("expected ref 'users', got %q", edge.Ref)
 	}
+	if edge.Field != "company_uuid" {
+		t.Fatalf("expected edge field %q, got %q", "company_uuid", edge.Field)
+	}
 
 	if company == nil {
 		t.Fatal("Company schema not found")
@@ -122,12 +132,170 @@ func (Company) Edges() []ent.Edge {
 	}
 }
 
+func TestParseEntSchemaDir_PreservesDefaultJSONNameAndGoTypeOption(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "user.go", `package schema
+
+import (
+	"entgo.io/ent"
+	"entgo.io/ent/schema/field"
+)
+
+type User struct {
+	ent.Schema
+}
+
+func (User) Fields() []ent.Field {
+	return []ent.Field{
+		field.String("display_name").StructTag("db:\"display_name\"").GoType(CustomString("")),
+	}
+}
+`)
+
+	schemas, err := ParseEntSchemaDir(dir)
+	if err != nil {
+		t.Fatalf("ParseEntSchemaDir: %v", err)
+	}
+	field := schemas[0].Fields[0]
+	if field.JSONName != "display_name" || !field.CustomGoType {
+		t.Fatalf("parsed field = %+v, want default JSON name and custom Go type", field)
+	}
+}
+
+func TestParseEntSchemaDir_IncludesMixinOnlyAndEmptySchemas(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "schemas.go", `package schema
+
+import "entgo.io/ent"
+
+type Empty struct {
+	ent.Schema
+}
+
+type MixinOnly struct {
+	ent.Schema
+}
+
+func (MixinOnly) Mixin() []ent.Mixin {
+	return nil
+}
+`)
+
+	schemas, err := ParseEntSchemaDir(dir)
+	if err != nil {
+		t.Fatalf("ParseEntSchemaDir: %v", err)
+	}
+	if len(schemas) != 2 || schemas[0].Name != "Empty" || schemas[1].Name != "MixinOnly" {
+		t.Fatalf("schemas = %+v, want Empty and MixinOnly", schemas)
+	}
+}
+
 func TestParseEntSchemaDir_EmptyDir(t *testing.T) {
 	// Act & Assert
 	dir := t.TempDir()
 	_, err := ParseEntSchemaDir(dir)
 	if err == nil {
 		t.Fatal("expected error for empty dir")
+	}
+}
+
+func TestParseEntSchemaDir_RejectsUnexposedSingularEdge(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "user.go", `package schema
+
+import (
+	"entgo.io/ent"
+	"entgo.io/ent/schema/edge"
+)
+
+type User struct {
+	ent.Schema
+}
+
+func (User) Edges() []ent.Edge {
+	return []ent.Edge{
+		edge.To("profile", Profile.Type).Unique(),
+	}
+}
+`)
+
+	_, err := ParseEntSchemaDir(dir)
+	if err == nil || !strings.Contains(err.Error(), "requires .Field(...)") {
+		t.Fatalf("expected exposed foreign-key error, got %v", err)
+	}
+}
+
+func TestParseEntSchemaDir_AcceptsSingularEdgeExposedByCounterpart(t *testing.T) {
+	// Ent only allows .Field(...) on the schema holding the FK column, so the
+	// owning side of a one-to-one cannot expose it itself.
+	dir := t.TempDir()
+	writeFile(t, dir, "user.go", `package schema
+
+import (
+	"entgo.io/ent"
+	"entgo.io/ent/schema/edge"
+	"entgo.io/ent/schema/field"
+)
+
+type User struct {
+	ent.Schema
+}
+
+func (User) Fields() []ent.Field {
+	return []ent.Field{field.String("name")}
+}
+
+func (User) Edges() []ent.Edge {
+	return []ent.Edge{
+		edge.To("card", Card.Type).Unique(),
+	}
+}
+
+type Card struct {
+	ent.Schema
+}
+
+func (Card) Fields() []ent.Field {
+	return []ent.Field{field.Int("user_id")}
+}
+
+func (Card) Edges() []ent.Edge {
+	return []ent.Edge{
+		edge.From("owner", User.Type).Ref("card").Unique().Required().Field("user_id"),
+	}
+}
+`)
+
+	schemas, err := ParseEntSchemaDir(dir)
+	if err != nil {
+		t.Fatalf("ParseEntSchemaDir: %v", err)
+	}
+	if len(schemas) != 2 {
+		t.Fatalf("got %d schemas, want 2", len(schemas))
+	}
+}
+
+func TestGenerateEnt_RequiresExposedForeignKeyForSingularEdges(t *testing.T) {
+	tests := []struct {
+		name string
+		edge EntEdge
+	}{
+		{name: "inverse unique", edge: EntEdge{Name: "company", Type: "Company", Direction: "From", Unique: true}},
+		{name: "inverse required", edge: EntEdge{Name: "company", Type: "Company", Direction: "From", Required: true}},
+		{name: "owning unique", edge: EntEdge{Name: "profile", Type: "Profile", Direction: "To", Unique: true}},
+		{name: "owning required", edge: EntEdge{Name: "profile", Type: "Profile", Direction: "To", Required: true}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schemas := []EntSchema{{Name: "User", Edges: []EntEdge{tt.edge}}}
+
+			var buf bytes.Buffer
+			err := GenerateEnt(&buf, "testutil", "github.com/myapp/ent", schemas)
+			if err == nil || !strings.Contains(err.Error(), "requires .Field(...)") {
+				t.Fatalf("expected exposed foreign-key error, got %v", err)
+			}
+		})
 	}
 }
 
@@ -159,17 +327,18 @@ func TestGenerateEnt_BasicOutput(t *testing.T) {
 		{
 			Name: "Company",
 			Fields: []EntField{
-				{Name: "name", Type: "String", GoType: "string"},
+				{Name: "name", GoName: "Name", Type: "String", GoType: "string"},
 			},
 		},
 		{
 			Name: "User",
 			Fields: []EntField{
-				{Name: "name", Type: "String", GoType: "string"},
-				{Name: "age", Type: "Int", GoType: "int", Optional: true},
+				{Name: "name", GoName: "Name", Type: "String", GoType: "string"},
+				{Name: "age", GoName: "Age", Type: "Int", GoType: "*int", Optional: true, Nillable: true},
+				{Name: "company_uuid", GoName: "CompanyUUID", Type: "Int", GoType: "int"},
 			},
 			Edges: []EntEdge{
-				{Name: "company", Type: "Company", Direction: "From", Ref: "users", Unique: true, Required: true},
+				{Name: "company", Type: "Company", Direction: "From", Ref: "users", Field: "company_uuid", Unique: true, Required: true},
 			},
 		},
 	}
@@ -196,6 +365,9 @@ func TestGenerateEnt_BasicOutput(t *testing.T) {
 		{"save call", ".Save(ctx)"},
 		{"delete call", ".DeleteOneID(v.ID)"},
 		{"belongs to from edge", "seedling.BelongsTo"},
+		{"explicit edge field", `LocalField: "CompanyUUID"`},
+		{"acronym-aware field setter", "SetCompanyUUID(v.CompanyUUID)"},
+		{"nillable setter", "SetNillableAge(v.Age)"},
 		{"ref blueprint", `RefBlueprint: "company"`},
 	}
 
@@ -205,6 +377,79 @@ func TestGenerateEnt_BasicOutput(t *testing.T) {
 				t.Fatalf("expected output to contain %q\n\nGot:\n%s", check.substr, output)
 			}
 		})
+	}
+}
+
+func TestGenerateEnt_SkipsZeroOptionalNonNillableForeignKey(t *testing.T) {
+	schemas := []EntSchema{
+		{
+			Name: "Company",
+			Fields: []EntField{
+				{Name: "name", GoName: "Name", Type: "String", GoType: "string"},
+			},
+		},
+		{
+			Name: "User",
+			Fields: []EntField{
+				{Name: "company_id", GoName: "CompanyID", Type: "Int", GoType: "int", Optional: true},
+			},
+			Edges: []EntEdge{
+				{Name: "company", Type: "Company", Direction: "From", Field: "company_id", Unique: true},
+			},
+		},
+	}
+
+	var output bytes.Buffer
+	if err := GenerateEnt(&output, "testutil", "github.com/myapp/ent", schemas); err != nil {
+		t.Fatalf("GenerateEnt: %v", err)
+	}
+	generated := output.String()
+	if !strings.Contains(generated, `"reflect"`) {
+		t.Fatalf("generated output does not import reflect:\n%s", generated)
+	}
+	if !strings.Contains(generated, `if !reflect.ValueOf(v.CompanyID).IsZero() {`) {
+		t.Fatalf("generated output does not guard the optional FK setter:\n%s", generated)
+	}
+}
+
+func TestGenerateEnt_PointerForeignKeyUsesNilGuardWithoutReflect(t *testing.T) {
+	schemas := []EntSchema{
+		{
+			Name: "Company",
+			Fields: []EntField{
+				{Name: "name", GoName: "Name", Type: "String", GoType: "string"},
+			},
+		},
+		{
+			Name: "User",
+			Fields: []EntField{
+				{
+					Name:         "company_id",
+					GoName:       "CompanyID",
+					Type:         "Int",
+					GoType:       "*mytypes.CompanyID",
+					Optional:     true,
+					CustomGoType: true,
+					SetterName:   "SetCompanyID",
+					SetterDeref:  true,
+				},
+			},
+			Edges: []EntEdge{
+				{Name: "company", Type: "Company", Direction: "From", Field: "company_id", Unique: true},
+			},
+		},
+	}
+
+	var output bytes.Buffer
+	if err := GenerateEnt(&output, "testutil", "github.com/myapp/ent", schemas); err != nil {
+		t.Fatalf("GenerateEnt: %v", err)
+	}
+	generated := output.String()
+	if strings.Contains(generated, `"reflect"`) {
+		t.Fatalf("generated output imports reflect for a nil-guarded FK setter:\n%s", generated)
+	}
+	if !strings.Contains(generated, `if v.CompanyID != nil {`) {
+		t.Fatalf("generated output does not nil-guard the pointer FK setter:\n%s", generated)
 	}
 }
 
@@ -225,24 +470,65 @@ func TestRun_EntRequiresImportPath(t *testing.T) {
 	}
 }
 
+func TestGenerateEnt_SkipsDefaultForExplicitIDField(t *testing.T) {
+	// A schema that declares its own id still gets its ID from Ent or the
+	// database, so generated Defaults must leave it alone.
+	tests := []struct {
+		name  string
+		field EntField
+	}{
+		{name: "int id", field: EntField{Name: "id", GoName: "ID", Type: "Int", GoType: "int", DefaultType: "int"}},
+		{name: "string id", field: EntField{Name: "id", GoName: "ID", Type: "String", GoType: "string", DefaultType: "string"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			schemas := []EntSchema{{
+				Name: "Item",
+				Fields: []EntField{
+					tt.field,
+					{Name: "label", GoName: "Label", Type: "String", GoType: "string", DefaultType: "string"},
+				},
+			}}
+
+			// Act
+			var buf bytes.Buffer
+			if err := GenerateEnt(&buf, "testutil", "github.com/myapp/ent", schemas); err != nil {
+				t.Fatal(err)
+			}
+
+			// Assert
+			output := buf.String()
+			if strings.Contains(output, "ID:") {
+				t.Fatalf("expected no default for the explicit id field\n\nGot:\n%s", output)
+			}
+			if !strings.Contains(output, `Label: "item-label"`) {
+				t.Fatalf("expected other fields to keep their defaults\n\nGot:\n%s", output)
+			}
+		})
+	}
+}
+
 func TestGenerateEnt_DefaultsAutofillSupportedFields(t *testing.T) {
 	// Arrange
 	schemas := []EntSchema{
 		{
 			Name: "Company",
 			Fields: []EntField{
-				{Name: "name", Type: "String", GoType: "string"},
+				{Name: "name", GoName: "Name", Type: "String", GoType: "string"},
 			},
 		},
 		{
 			Name: "User",
 			Fields: []EntField{
-				{Name: "name", Type: "String", GoType: "string"},
-				{Name: "created_at", Type: "Time", GoType: "time.Time"},
-				{Name: "token", Type: "UUID", GoType: "uuid.UUID"},
+				{Name: "name", GoName: "Name", Type: "String", GoType: "string"},
+				{Name: "created_at", GoName: "CreatedAt", Type: "Time", GoType: "time.Time"},
+				{Name: "token", GoName: "Token", Type: "UUID", GoType: "uuid.UUID"},
+				{Name: "company_id", GoName: "CompanyID", Type: "Int", GoType: "int"},
 			},
 			Edges: []EntEdge{
-				{Name: "company", Type: "Company", Direction: "From", Ref: "users", Unique: true, Required: true},
+				{Name: "company", Type: "Company", Direction: "From", Ref: "users", Field: "company_id", Unique: true, Required: true},
 			},
 		},
 	}

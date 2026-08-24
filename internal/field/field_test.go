@@ -205,3 +205,66 @@ func TestExists_ReturnsExpectedResult(t *testing.T) {
 		})
 	}
 }
+
+func TestCopy_WrapsValueForNullableDestination(t *testing.T) {
+	type source struct {
+		Code int
+	}
+	type destination struct {
+		SourceCode *int
+	}
+
+	var dst destination
+	if err := field.Copy(source{Code: 42}, "Code", &dst, "SourceCode"); err != nil {
+		t.Fatal(err)
+	}
+	if dst.SourceCode == nil || *dst.SourceCode != 42 {
+		t.Fatalf("SourceCode = %v, want pointer to 42", dst.SourceCode)
+	}
+}
+
+func TestCopy_NilEmbeddedPointerReturnsError(t *testing.T) {
+	type embedded struct {
+		ID int
+	}
+	type model struct {
+		*embedded
+	}
+
+	tests := []struct {
+		name string
+		src  any
+		dst  any
+	}{
+		{
+			name: "source",
+			src:  model{},
+			dst:  &sample{},
+		},
+		{
+			name: "destination",
+			src:  sample{ID: 42},
+			dst:  &model{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := field.Copy(tt.src, "ID", tt.dst, "ID")
+			if !errors.Is(err, errx.ErrInvalidOption) {
+				t.Fatalf("got %v, want %v", err, errx.ErrInvalidOption)
+			}
+		})
+	}
+}
+
+func TestCopy_UnexportedSourceFieldReturnsError(t *testing.T) {
+	type source struct {
+		id int
+	}
+
+	err := field.Copy(source{id: 42}, "id", &sample{}, "ID")
+	if !errors.Is(err, errx.ErrFieldNotFound) {
+		t.Fatalf("got %v, want %v", err, errx.ErrFieldNotFound)
+	}
+}

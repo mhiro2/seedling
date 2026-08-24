@@ -22,7 +22,8 @@ func (g *Graph) AddNode(n *Node) {
 }
 
 // AddEdge adds a dependency edge: child depends on parent.
-// The edge records which FK field on the child should be populated with the parent's PK.
+// This shorthand binds the parent's first primary key field to the child's FK field.
+// Use AddEdgeBindings to bind other referenced fields or composite keys.
 func (g *Graph) AddEdge(parent, child *Node, localField string) {
 	bindings := []FieldBinding{{
 		ParentField: firstPKField(parent),
@@ -31,7 +32,7 @@ func (g *Graph) AddEdge(parent, child *Node, localField string) {
 	g.AddEdgeBindings(parent, child, bindings)
 }
 
-// AddEdgeBindings adds a dependency edge with one or more PK→FK bindings.
+// AddEdgeBindings adds a dependency edge with one or more referenced-field→FK bindings.
 func (*Graph) AddEdgeBindings(parent, child *Node, bindings []FieldBinding) {
 	e := &Edge{
 		Parent:   parent,
@@ -43,6 +44,13 @@ func (*Graph) AddEdgeBindings(parent, child *Node, bindings []FieldBinding) {
 	}
 	child.dependencies = append(child.dependencies, e)
 	parent.dependents = append(parent.dependents, e)
+}
+
+// SetRoot overrides the node that AddNode inferred as the root. Pass nil for a
+// graph that has no single entry point, such as a partial result whose root
+// never completed.
+func (g *Graph) SetRoot(n *Node) {
+	g.root = n
 }
 
 // Root returns the root node of the graph.

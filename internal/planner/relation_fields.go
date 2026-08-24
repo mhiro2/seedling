@@ -15,19 +15,26 @@ func localFieldsForRelation(rel RelationDef) []string {
 	return cloneFields(rel.LocalFields)
 }
 
+func refFieldsForRelation(rel RelationDef, primaryKeyFields []string) []string {
+	if len(rel.RefFields) > 0 {
+		return cloneFields(rel.RefFields)
+	}
+	return cloneFields(primaryKeyFields)
+}
+
 func remoteFieldsForRelation(rel RelationDef) []string {
 	return cloneFields(rel.RemoteFields)
 }
 
 func buildBindings(blueprint string, rel RelationDef, parentFields, childFields []string) ([]graph.FieldBinding, error) {
 	if len(parentFields) == 0 {
-		return nil, fmt.Errorf("%w: relation %q on blueprint %q refers to a blueprint with no PK fields", errx.ErrInvalidOption, rel.Name, blueprint)
+		return nil, fmt.Errorf("%w: relation %q on blueprint %q has no referenced fields", errx.ErrInvalidOption, rel.Name, blueprint)
 	}
 	if len(childFields) == 0 {
 		return nil, fmt.Errorf("%w: relation %q on blueprint %q is missing FK field mappings", errx.ErrInvalidOption, rel.Name, blueprint)
 	}
 	if len(parentFields) != len(childFields) {
-		return nil, fmt.Errorf("%w: relation %q on blueprint %q maps %d FK fields to %d PK fields", errx.ErrInvalidOption, rel.Name, blueprint, len(childFields), len(parentFields))
+		return nil, fmt.Errorf("%w: relation %q on blueprint %q maps %d FK fields to %d referenced fields", errx.ErrInvalidOption, rel.Name, blueprint, len(childFields), len(parentFields))
 	}
 
 	bindings := make([]graph.FieldBinding, len(parentFields))
@@ -41,7 +48,7 @@ func buildBindings(blueprint string, rel RelationDef, parentFields, childFields 
 }
 
 func buildLocalBindings(blueprint string, rel RelationDef, parentFields []string) ([]graph.FieldBinding, error) {
-	return buildBindings(blueprint, rel, parentFields, localFieldsForRelation(rel))
+	return buildBindings(blueprint, rel, refFieldsForRelation(rel, parentFields), localFieldsForRelation(rel))
 }
 
 func buildRemoteBindings(blueprint string, rel RelationDef, parentFields []string) ([]graph.FieldBinding, error) {

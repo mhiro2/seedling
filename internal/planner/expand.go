@@ -9,14 +9,15 @@ import (
 )
 
 // expand recursively creates nodes for a blueprint and its required relations.
-// visited tracks node IDs already expanded to handle diamond dependencies.
+// visited tracks opaque node identities already expanded to handle diamond
+// dependencies without conflating relation names with path separators.
 func expand(
 	reg Registry,
 	bp *BlueprintDef,
-	nodeID string,
+	nodeID nodeIdentity,
 	opts *OptionSet,
 	g *graph.Graph,
-	visited map[string]*graph.Node,
+	visited map[nodeIdentity]*graph.Node,
 	bindings map[string]*graph.Node,
 	only map[string]bool,
 ) (*graph.Node, error) {
@@ -31,7 +32,7 @@ func expand(
 type expander struct {
 	reg     Registry
 	graph   *graph.Graph
-	visited map[string]*graph.Node
+	visited map[nodeIdentity]*graph.Node
 	share   *batchShareState
 	only    map[string]bool // nil = expand all; non-nil = skip root-level relations not in set
 	active  []activeBlueprint
@@ -48,7 +49,7 @@ type activeBlueprint struct {
 	opts *OptionSet
 }
 
-func (e *expander) expandBlueprint(bp *BlueprintDef, nodeID string, opts *OptionSet, bindings map[string]*graph.Node, relationPath string) (*graph.Node, error) {
+func (e *expander) expandBlueprint(bp *BlueprintDef, nodeID nodeIdentity, opts *OptionSet, bindings map[string]*graph.Node, relationPath relationPath) (*graph.Node, error) {
 	if existing, ok := e.visited[nodeID]; ok {
 		return existing, nil
 	}
@@ -58,7 +59,7 @@ func (e *expander) expandBlueprint(bp *BlueprintDef, nodeID string, opts *Option
 	}
 	defer e.leaveBlueprint()
 
-	node, err := newBlueprintNode(bp, nodeID, opts)
+	node, err := newBlueprintNode(bp, nodeID.String(), opts)
 	if err != nil {
 		return nil, err
 	}

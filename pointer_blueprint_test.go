@@ -446,3 +446,74 @@ func TestPointerBlueprint_CleanupUsesInsertedSnapshot(t *testing.T) {
 		t.Fatalf("deleted IDs = %v, want [7]", deleted)
 	}
 }
+
+func TestPointerBlueprint_PartialResultCleanupUsesInsertedValues(t *testing.T) {
+	// Arrange
+	reg := seedling.NewRegistry()
+	nextID := 0
+	var deletedCompanies []int
+	insertFailure := errors.New("user insert failed")
+
+	seedling.MustRegisterTo(reg, seedling.Blueprint[*pointerCompany]{
+		Name:    "pointer_company",
+		Table:   "pointer_companies",
+		PKField: "ID",
+		Insert: func(_ context.Context, _ seedling.DBTX, company *pointerCompany) (*pointerCompany, error) {
+			nextID++
+			company.ID = nextID
+			return company, nil
+		},
+		Delete: func(_ context.Context, _ seedling.DBTX, company *pointerCompany) error {
+			deletedCompanies = append(deletedCompanies, company.ID)
+			return nil
+		},
+	})
+	seedling.MustRegisterTo(reg, seedling.Blueprint[*pointerUser]{
+		Name:    "pointer_user",
+		Table:   "pointer_users",
+		PKField: "ID",
+		Defaults: func() *pointerUser {
+			return &pointerUser{}
+		},
+		Relations: []seedling.Relation{
+			seedling.BelongsToRelation("company", "pointer_company", false, "CompanyID"),
+		},
+		Insert: func(_ context.Context, _ seedling.DBTX, _ *pointerUser) (*pointerUser, error) {
+			return nil, insertFailure
+		},
+		Delete: func(_ context.Context, _ seedling.DBTX, _ *pointerUser) error {
+			t.Fatal("delete called for a node that was never inserted")
+			return nil
+		},
+	})
+
+	// Act
+	result, err := seedling.NewSession[*pointerUser](reg).InsertOneE(t.Context(), nil)
+
+	// Assert
+	if !errors.Is(err, insertFailure) {
+		t.Fatalf("insert error = %v, want wrapped %v", err, insertFailure)
+	}
+
+	company, ok, err := seedling.NodeAs[*pointerCompany](result, "pointer_company")
+	if err != nil {
+		t.Fatalf("read partial company: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected inserted company in partial result")
+	}
+	if company.ID != 1 {
+		t.Fatalf("company ID = %d, want 1", company.ID)
+	}
+
+	// The caller holds the same pointer the graph does; cleanup must still
+	// delete the row as Insert returned it.
+	company.ID = 99
+
+	if err := result.CleanupE(t.Context(), nil); err != nil {
+		t.Fatalf("cleanup partial result: %v", err)
+	}
+	if !reflect.DeepEqual(deletedCompanies, []int{1}) {
+		t.Fatalf("deleted company IDs = %v, want [1]", deletedCompanies)
+	}
+}

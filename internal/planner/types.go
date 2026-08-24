@@ -34,6 +34,7 @@ type RelationDef struct {
 	Name             string
 	Kind             RelationKind
 	LocalFields      []string
+	RefFields        []string
 	RefBlueprint     string
 	ThroughBlueprint string
 	RemoteFields     []string

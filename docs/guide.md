@@ -44,6 +44,10 @@ _ = company
 _ = ok
 ```
 
+`InsertManyE` and `Plan.InsertE` return successful nodes together with an execution error when insertion stops partway through. The partial result's cleanup methods delete only those successful nodes. A partial `BatchResult` counts and lists only completed roots through `Len` and `Roots`; `RootAt` and `NodeAt` keep the original request indices and report a missing result for roots that did not complete.
+
+When transaction rollback is unavailable, use `InsertOneE`, `Plan.InsertE`, or `InsertManyE` so an error path can call cleanup on the returned partial result. The `testing.TB` convenience wrappers (`InsertOne`, `Plan.Insert`, and `InsertMany`) still fail the test immediately and therefore do not expose partial results.
+
 `InsertMany` batch-shares auto-created `BelongsTo` parents when each record resolves to the same static relation options.
 
 ```go
@@ -153,11 +157,12 @@ With a pointer blueprint (`Blueprint[*Model]`, as generated for ent), the packag
 
 ## Relationship Patterns
 
-- `BelongsTo`: insert required parent rows and write the parent key into the child
+- `BelongsTo`: insert required parent rows and write the referenced parent field into the child
 - `HasMany`: insert children automatically from a parent blueprint using `Count`
 - `ManyToMany`: create related rows and join-table rows together
-- Composite keys: use `PKFields`, `LocalFields`, and `RemoteFields`
-- Matching field types: a child FK field and its parent PK field must have the exact same Go type. A named type and its underlying type (e.g. `type UserID int64` versus `int64`) are not interchangeable, so declare the FK with the same type as the referenced PK
+- Composite keys: use `PKFields`, `LocalFields`, `RefFields`, and `RemoteFields`
+- Non-primary references: set `RefField` or `RefFields` on `BelongsTo` when the foreign key references a unique parent field other than its primary key (for example, `CountryCode` referencing `Country.Code`)
+- Matching field types: a referenced parent field of type `T` can populate a child FK of type `T` or nullable `*T`. No other implicit conversion or pointer unwrapping is performed. Named and underlying types (for example, `type UserID int64` and `int64`) remain distinct
 - Self/mutual references (e.g. `employees.manager_id → employees.id`, or `A ↔ B`) must be `Optional`: a *required* reference back to a blueprint already being expanded has no finite expansion and is rejected with `ErrCycleDetected`
 
 The execution model and graph expansion rules are documented in [ARCHITECTURE.md](../ARCHITECTURE.md).
@@ -170,7 +175,7 @@ seedling does not generate SQL at runtime. Your blueprint owns the `Insert` and 
 - `database/sql`: pass `*sql.DB` or `*sql.Tx`
 - pgx: pass your pool or transaction handle, or use `github.com/mhiro2/seedling/seedlingpgx` for rollback-on-cleanup helpers
 - GORM: use the `gorm` subcommand to generate blueprints with `gorm.DB`-based Insert/Delete callbacks
-- ent: use the `ent` subcommand to generate `Blueprint[*ent.X]` definitions with ent fluent builder Insert/Delete callbacks; seedling preserves the pointer model type through options, relation binding, results, and cleanup
+- ent: generate the Ent client first, then use the `ent` subcommand to generate `Blueprint[*ent.X]` definitions with fluent builder Insert/Delete callbacks. The command resolves field names, mixin fields, custom entc acronyms, setter parameter types, and ID types from the package named by `--import-path`, and rejects missing or incompatible generated signatures. A singular edge (`Unique` or `Required`) must expose its FK with `.Field(...)` on whichever schema holds the column, and the opposite side of a one-to-one needs nothing; nillable fields use the generated `SetNillableX` builder methods, while optional non-nillable foreign keys are left unset when their value is zero
 - Atlas HCL: use the `atlas` subcommand to generate blueprints from Atlas schema definitions
 
 When you use `database/sql`, [`WithTx`](https://pkg.go.dev/github.com/mhiro2/seedling#WithTx) is the easiest way to get a rollback-on-cleanup transaction. [`NewTestSession`](https://pkg.go.dev/github.com/mhiro2/seedling#NewTestSession) offers the same with registry binding and custom `sql.TxOptions`. For pgx, use [`seedlingpgx.WithTx`](https://pkg.go.dev/github.com/mhiro2/seedling/seedlingpgx#WithTx) or [`seedlingpgx.NewTestSession`](https://pkg.go.dev/github.com/mhiro2/seedling/seedlingpgx#NewTestSession).
@@ -221,7 +226,7 @@ seedling-gen sqlc --dir ./internal/db --import-path github.com/you/app/internal/
 # GORM models: parses Go source with gorm struct tags
 seedling-gen gorm --dir ./models --import-path github.com/you/app/models --pkg blueprints
 
-# ent schemas: parses ent schema directory (Fields/Edges methods)
+# ent schemas: parses Fields/Edges and verifies the current generated Ent package
 seedling-gen ent --dir ./ent/schema --import-path github.com/you/app/ent --pkg blueprints
 
 # Atlas HCL: parses Atlas schema file
@@ -235,12 +240,16 @@ All subcommands also support diagnostic output modes:
 - `--explain`: print the parsed schema/model metadata plus the inferred blueprint relations instead of generated Go code
 - `--json`: print the same diagnostic report as JSON, which is useful for tooling or CI checks
 
+Both diagnostic flags report what they resolved even when generation would fail. Anything unresolved is listed under `Unresolved` (`warnings` in JSON) and the command exits non-zero, so the report stays readable while CI still catches the failure.
+
 The `sqlc` subcommand has two input modes:
 
 - `--config`: read `sqlc.yaml` and auto-resolve schema files, output directory, and Go import path
 - `--dir` + `--import-path` + `<schema.sql>`: manually point at generated sqlc Go files and the schema DDL
 
 When `--out` is specified, the output is written atomically via a temporary file so that a generation failure never leaves a partial file on disk.
+
+The `ent` subcommand requires the package at `--import-path` to exist and compile. Run Ent code generation before `seedling-gen ent`; this lets seedling-gen use the exact generated names even when the project configures custom acronyms with entc. Generated mixin fields are included in the blueprint and its Insert callback so required mixin values are not silently omitted.
 
 Treat generated `Defaults` as ergonomic starters, not full fake-data generation. If a test needs unique values or domain-specific shapes, override them with `Set`, `With`, or `Generate`.
 

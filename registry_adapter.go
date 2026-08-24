@@ -56,6 +56,7 @@ func toBlueprintDef(def *blueprintDef) *planner.BlueprintDef {
 			Name:             r.name,
 			Kind:             planner.RelationKind(r.kind),
 			LocalFields:      cloneStrings(r.localFields),
+			RefFields:        cloneStrings(r.refFields),
 			RefBlueprint:     r.refBlueprint,
 			ThroughBlueprint: r.throughBlueprint,
 			RemoteFields:     cloneStrings(r.remoteFields),

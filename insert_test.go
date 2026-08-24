@@ -2476,6 +2476,90 @@ func TestInsertOneE_AfterInsertEFailure_ReturnsResult(t *testing.T) {
 	}
 }
 
+func TestPlanInsertE_InsertFailureReturnsPartialResult(t *testing.T) {
+	// Arrange
+	reg := seedlingtest.NewRegistry()
+	insertErr := errors.New("insert user")
+	var deletedCompanies []int
+	deletedUsers := 0
+
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
+		Name:    "company",
+		Table:   "companies",
+		PKField: "ID",
+		Defaults: func() Company {
+			return Company{Name: "inserted-before-failure"}
+		},
+		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
+			v.ID = 41
+			return v, nil
+		},
+		Delete: func(ctx context.Context, db seedling.DBTX, v Company) error {
+			deletedCompanies = append(deletedCompanies, v.ID)
+			return nil
+		},
+	})
+	seedling.MustRegisterTo(reg, seedling.Blueprint[User]{
+		Name:    "user",
+		Table:   "users",
+		PKField: "ID",
+		Defaults: func() User {
+			return User{Name: "fails"}
+		},
+		Relations: []seedling.Relation{
+			{
+				Name:         "company",
+				Kind:         seedling.BelongsTo,
+				LocalField:   "CompanyID",
+				RefBlueprint: "company",
+			},
+		},
+		Insert: func(ctx context.Context, db seedling.DBTX, v User) (User, error) {
+			return User{}, insertErr
+		},
+		Delete: func(ctx context.Context, db seedling.DBTX, v User) error {
+			deletedUsers++
+			return nil
+		},
+	})
+
+	plan, err := seedling.NewSession[User](reg).BuildE()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	result, err := plan.InsertE(t.Context(), nil)
+
+	// Assert
+	if !errors.Is(err, insertErr) {
+		t.Fatalf("got %v, want wrapped %v", err, insertErr)
+	}
+	if result.Root().ID != 0 {
+		t.Fatalf("got failed root ID %d, want 0", result.Root().ID)
+	}
+	companyNode, ok := result.Node("company")
+	if !ok {
+		t.Fatal("expected inserted company in partial result")
+	}
+	if got, want := companyNode.Value().(Company).ID, 41; got != want {
+		t.Fatalf("got company ID %d, want %d", got, want)
+	}
+	if _, ok := result.Node("user"); ok {
+		t.Fatal("did not expect failed user in partial result")
+	}
+
+	if err := result.CleanupE(t.Context(), nil); err != nil {
+		t.Fatalf("cleanup partial result: %v", err)
+	}
+	if !reflect.DeepEqual(deletedCompanies, []int{41}) {
+		t.Fatalf("got deleted company IDs %v, want [41]", deletedCompanies)
+	}
+	if deletedUsers != 0 {
+		t.Fatalf("got %d user deletes, want 0", deletedUsers)
+	}
+}
+
 func TestInsertManyE_AfterInsertEFailure_ReturnsBatchResult(t *testing.T) {
 	// Arrange
 	ids := seedlingtest.NewIDSequence()
@@ -2539,6 +2623,110 @@ func TestInsertManyE_AfterInsertEFailure_ReturnsBatchResult(t *testing.T) {
 	}
 	if len(deleted) != 3 {
 		t.Fatalf("got %d deleted records, want 3", len(deleted))
+	}
+}
+
+func TestInsertManyE_InsertFailurePreservesSparseRootIndices(t *testing.T) {
+	// Arrange
+	reg := seedlingtest.NewRegistry()
+	insertErr := errors.New("insert root zero company")
+	userInsertCalls := 0
+	companyInsertCalls := 0
+	companyDeleteCalls := 0
+	var deletedUsers []string
+
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
+		Name:    "company",
+		Table:   "companies",
+		PKField: "ID",
+		Defaults: func() Company {
+			return Company{Name: "fails-after-root-one"}
+		},
+		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
+			companyInsertCalls++
+			return Company{}, insertErr
+		},
+		Delete: func(ctx context.Context, db seedling.DBTX, v Company) error {
+			companyDeleteCalls++
+			return nil
+		},
+	})
+	seedling.MustRegisterTo(reg, seedling.Blueprint[User]{
+		Name:    "user",
+		Table:   "users",
+		PKField: "ID",
+		Defaults: func() User {
+			return User{Name: "unset"}
+		},
+		Relations: []seedling.Relation{
+			{
+				Name:         "company",
+				Kind:         seedling.BelongsTo,
+				LocalField:   "CompanyID",
+				RefBlueprint: "company",
+				Optional:     true,
+				When: seedling.WhenFunc(func(v User) bool {
+					return v.Name == "root-0"
+				}),
+			},
+		},
+		Insert: func(ctx context.Context, db seedling.DBTX, v User) (User, error) {
+			userInsertCalls++
+			v.ID = 42
+			return v, nil
+		},
+		Delete: func(ctx context.Context, db seedling.DBTX, v User) error {
+			deletedUsers = append(deletedUsers, v.Name)
+			return nil
+		},
+	})
+
+	// Act
+	result, err := seedling.NewSession[User](reg).InsertManyE(t.Context(), nil, 2,
+		seedling.Seq("Name", func(i int) string {
+			return fmt.Sprintf("root-%d", i)
+		}),
+	)
+
+	// Assert
+	if !errors.Is(err, insertErr) {
+		t.Fatalf("got %v, want wrapped %v", err, insertErr)
+	}
+	if got, want := result.Len(), 1; got != want {
+		t.Fatalf("got %d completed roots, want %d", got, want)
+	}
+	if roots := result.Roots(); len(roots) != 1 || roots[0].Name != "root-1" {
+		t.Fatalf("got completed roots %v, want only root-1", roots)
+	}
+	if _, ok := result.RootAt(0); ok {
+		t.Fatal("did not expect failed root at original index 0")
+	}
+	root, ok := result.RootAt(1)
+	if !ok || root.Name != "root-1" {
+		t.Fatalf("got root at original index 1 (%v, %t), want root-1", root, ok)
+	}
+	if _, ok := result.NodeAt(0, "user"); ok {
+		t.Fatal("did not expect nodes scoped to failed root index 0")
+	}
+	rootNode, ok := result.NodeAt(1, "user")
+	if !ok || rootNode.Value().(User).Name != "root-1" {
+		t.Fatal("expected user node scoped to successful root index 1")
+	}
+	if got, want := len(result.All()), 1; got != want {
+		t.Fatalf("got %d completed nodes, want %d", got, want)
+	}
+	if userInsertCalls != 1 || companyInsertCalls != 1 {
+		t.Fatalf("got user/company Insert calls %d/%d, want 1/1", userInsertCalls, companyInsertCalls)
+	}
+
+	if err := result.CleanupE(t.Context(), nil); err != nil {
+		t.Fatalf("cleanup partial batch result: %v", err)
+	}
+	if !reflect.DeepEqual(deletedUsers, []string{"root-1"}) {
+		t.Fatalf("got deleted users %v, want [root-1]", deletedUsers)
+	}
+	if companyDeleteCalls != 0 {
+		t.Fatalf("got %d company deletes, want 0", companyDeleteCalls)
 	}
 }
 

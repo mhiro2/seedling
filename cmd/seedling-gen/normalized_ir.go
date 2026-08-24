@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"text/template"
@@ -14,6 +15,7 @@ import (
 type normalizedField struct {
 	GoName       string
 	GoType       string
+	DefaultType  string
 	IsPK         bool
 	IsRelationFK bool
 	IsOptional   bool
@@ -23,6 +25,8 @@ type normalizedRelation struct {
 	Name         string
 	LocalField   string
 	LocalFields  []string
+	RefField     string
+	RefFields    []string
 	RefBlueprint string
 	Optional     bool
 }
@@ -79,7 +83,7 @@ func RegisterBlueprints(reg *seedling.Registry) {
 {{- if $model.Relations}}
 		Relations: []seedling.Relation{
 {{- range $model.Relations}}
-			{Name: {{quote .Name}}, Kind: seedling.BelongsTo, {{- if isCompositeRelation .}} LocalFields: []string{ {{- range $i, $field := .LocalFields}}{{if $i}}, {{end}}{{quote $field}}{{end}} }, {{- else}} LocalField: {{quote .LocalField}}, {{- end}} RefBlueprint: {{quote .RefBlueprint}}{{- if .Optional}}, Optional: true{{- end}}},
+			{Name: {{quote .Name}}, Kind: seedling.BelongsTo, {{- if isCompositeRelation .}} LocalFields: []string{ {{- range $i, $field := .LocalFields}}{{if $i}}, {{end}}{{quote $field}}{{end}} }, {{- else}} LocalField: {{quote .LocalField}}, {{- end}}{{- if .RefFields}}{{- if isCompositeReference .}} RefFields: []string{ {{- range $i, $field := .RefFields}}{{if $i}}, {{end}}{{quote $field}}{{end}} }, {{- else}} RefField: {{quote .RefField}}, {{- end}}{{- end}} RefBlueprint: {{quote .RefBlueprint}}{{- if .Optional}}, Optional: true{{- end}}},
 {{- end}}
 		},
 {{- end}}
@@ -129,6 +133,9 @@ func generateNormalizedCode(w io.Writer, kind, pkg string, imports []string, mod
 		},
 		"isCompositeRelation": func(rel normalizedRelation) bool {
 			return len(rel.LocalFields) > 1
+		},
+		"isCompositeReference": func(rel normalizedRelation) bool {
+			return len(rel.RefFields) > 1
 		},
 		"defaultLiteral": buildDefaultLiteral,
 		"indent":         indentBlock,
@@ -188,6 +195,19 @@ func validateNormalizedModels(models []normalizedModel, emitStructs bool) error 
 				if err := validateGoExpr("field type", field.GoType); err != nil {
 					return fmt.Errorf("model %q field %q: %w", name, field.GoName, err)
 				}
+			}
+		}
+		relationNames := make(map[string]struct{}, len(model.Relations))
+		for _, relation := range model.Relations {
+			if relation.Name == "" {
+				return fmt.Errorf("model %q: relation name must not be empty", name)
+			}
+			if _, exists := relationNames[relation.Name]; exists {
+				return fmt.Errorf("model %q: duplicate relation name %q", name, relation.Name)
+			}
+			relationNames[relation.Name] = struct{}{}
+			if len(relation.RefFields) > 0 && len(relation.RefFields) != len(relation.LocalFields) {
+				return fmt.Errorf("model %q relation %q: %d local fields do not match %d referenced fields", name, relation.Name, len(relation.LocalFields), len(relation.RefFields))
 			}
 		}
 	}
@@ -311,22 +331,207 @@ func normalizeTableModels(tables []Table) []normalizedModel {
 	return models
 }
 
-func normalizeSqlcModels(tables []Table, sqlcInfo *SqlcInfo) []normalizedModel {
+type sqlcTableBinding struct {
+	model  *SqlcModel
+	insert *SqlcQuery
+	delete *SqlcDeleteQuery
+}
+
+func resolveSqlcTableBindings(tables []Table, info *SqlcInfo) (map[string]sqlcTableBinding, error) {
+	bindings := make(map[string]sqlcTableBinding, len(tables))
+	for _, table := range tables {
+		binding, err := resolveSqlcTableBinding(table, info)
+		if err != nil {
+			return nil, fmt.Errorf("table %q: %w", table.Name, err)
+		}
+		bindings[table.Name] = binding
+	}
+	return bindings, nil
+}
+
+func resolveSqlcTableBinding(table Table, info *SqlcInfo) (sqlcTableBinding, error) {
+	model, err := findUniqueSqlcModel(info.Models, table.GoName)
+	if err != nil {
+		return sqlcTableBinding{}, err
+	}
+
+	namedQueries := namedSqlcInsertQueries(info.Queries, table.GoName)
+	if model == nil {
+		if len(namedQueries) != 1 {
+			return sqlcTableBinding{}, fmt.Errorf("sqlc model %q not found and %d Insert/Create queries identify the table", table.GoName, len(namedQueries))
+		}
+		if isSQLCQueryRow(*namedQueries[0]) {
+			return sqlcTableBinding{}, fmt.Errorf(
+				"query %q returns query-specific row type %q, which cannot identify the table model",
+				namedQueries[0].Name,
+				namedQueries[0].ReturnType,
+			)
+		}
+		model, err = findUniqueSqlcModel(info.Models, namedQueries[0].ReturnType)
+		if err != nil {
+			return sqlcTableBinding{}, fmt.Errorf("query %q return type: %w", namedQueries[0].Name, err)
+		}
+		if model == nil {
+			return sqlcTableBinding{}, fmt.Errorf("query %q returns unknown sqlc model %q", namedQueries[0].Name, namedQueries[0].ReturnType)
+		}
+	}
+
+	matchingQueries := make([]*SqlcQuery, 0, len(info.Queries))
+	for i := range info.Queries {
+		if normalizeSQLCIdentifier(info.Queries[i].ReturnType) == normalizeSQLCIdentifier(model.Name) {
+			matchingQueries = append(matchingQueries, &info.Queries[i])
+		}
+	}
+	selectedInsert, hasInsert, err := selectSqlcInsertQuery(table, model, matchingQueries, namedQueries)
+	if err != nil {
+		return sqlcTableBinding{}, err
+	}
+	var insert *SqlcQuery
+	if hasInsert {
+		insert = &selectedInsert
+	}
+
+	deleteQuery, err := findUniqueSqlcDeleteQuery(info.DeleteQueries, table.GoName, model.Name)
+	if err != nil {
+		return sqlcTableBinding{}, err
+	}
+	return sqlcTableBinding{model: model, insert: insert, delete: deleteQuery}, nil
+}
+
+func isSQLCQueryRow(query SqlcQuery) bool {
+	return normalizeSQLCIdentifier(query.ReturnType) == normalizeSQLCIdentifier(query.Name+"Row")
+}
+
+func findUniqueSqlcModel(models []SqlcModel, name string) (*SqlcModel, error) {
+	for i := range models {
+		if models[i].Name == name {
+			return &models[i], nil
+		}
+	}
+
+	wanted := normalizeSQLCIdentifier(name)
+	var match *SqlcModel
+	for i := range models {
+		if normalizeSQLCIdentifier(models[i].Name) != wanted {
+			continue
+		}
+		if match != nil {
+			return nil, fmt.Errorf("sqlc model name %q is ambiguous", name)
+		}
+		match = &models[i]
+	}
+	return match, nil
+}
+
+func namedSqlcInsertQueries(queries []SqlcQuery, tableGoName string) []*SqlcQuery {
+	insertName := normalizeSQLCIdentifier("Insert" + tableGoName)
+	createName := normalizeSQLCIdentifier("Create" + tableGoName)
+	matches := make([]*SqlcQuery, 0, 1)
+	for i := range queries {
+		name := normalizeSQLCIdentifier(queries[i].Name)
+		if name == insertName || name == createName {
+			matches = append(matches, &queries[i])
+		}
+	}
+	return matches
+}
+
+func selectSqlcInsertQuery(table Table, model *SqlcModel, matching, named []*SqlcQuery) (SqlcQuery, bool, error) {
+	if len(matching) == 1 {
+		return *matching[0], true, nil
+	}
+	if len(matching) > 1 {
+		var namedMatch *SqlcQuery
+		for _, query := range matching {
+			if !slices.Contains(named, query) {
+				continue
+			}
+			if namedMatch != nil {
+				return SqlcQuery{}, false, fmt.Errorf("multiple Insert/Create queries return sqlc model %q", model.Name)
+			}
+			namedMatch = query
+		}
+		if namedMatch != nil {
+			return *namedMatch, true, nil
+		}
+		return SqlcQuery{}, false, fmt.Errorf("multiple queries return sqlc model %q", model.Name)
+	}
+	if len(named) > 0 {
+		return SqlcQuery{}, false, fmt.Errorf("query %q does not return sqlc model %q for table %q", named[0].Name, model.Name, table.Name)
+	}
+	return SqlcQuery{}, false, nil
+}
+
+func findUniqueSqlcDeleteQuery(queries []SqlcDeleteQuery, tableGoName, modelName string) (*SqlcDeleteQuery, error) {
+	targets := []string{
+		normalizeSQLCIdentifier("Delete" + tableGoName),
+		normalizeSQLCIdentifier("Delete" + modelName),
+	}
+	var match *SqlcDeleteQuery
+	for i := range queries {
+		if !slices.Contains(targets, normalizeSQLCIdentifier(queries[i].Name)) {
+			continue
+		}
+		if match != nil && match.Name != queries[i].Name {
+			return nil, fmt.Errorf("multiple delete queries match table model %q", modelName)
+		}
+		match = &queries[i]
+	}
+	return match, nil
+}
+
+func normalizeSqlcModels(tables []Table, sqlcInfo *SqlcInfo) ([]normalizedModel, error) {
+	bindings, err := resolveSqlcTableBindings(tables, sqlcInfo)
+	if err != nil {
+		return nil, err
+	}
+	fieldMappings := make(map[string]map[string]SqlcField, len(tables))
+	for _, table := range tables {
+		sqlcModel := bindings[table.Name].model
+
+		fieldsByColumn, err := mapSqlcModelFields(table, sqlcModel)
+		if err != nil {
+			return nil, fmt.Errorf("table %q model %q: %w", table.Name, sqlcModel.Name, err)
+		}
+		fieldMappings[table.Name] = fieldsByColumn
+	}
+
 	models := make([]normalizedModel, 0, len(tables))
 	for _, table := range tables {
-		model := normalizedModel{
-			TypeExpr:      sqlcInfo.Package + "." + table.GoName,
-			ZeroValueExpr: sqlcInfo.Package + "." + table.GoName + "{}",
-			BlueprintID:   table.BlueprintID,
-			TableName:     table.Name,
-			PKFields:      normalizedPKFields(table.Columns),
-			Fields:        normalizedTableFields(table),
-			Relations:     normalizeTableRelations(table),
+		binding := bindings[table.Name]
+		fieldsByColumn := fieldMappings[table.Name]
+		sqlcModel := binding.model
+		pkFields, err := normalizedSqlcPKFields(table, fieldsByColumn)
+		if err != nil {
+			return nil, fmt.Errorf("table %q model %q: %w", table.Name, sqlcModel.Name, err)
+		}
+		relations, err := normalizeSqlcRelations(table, fieldMappings)
+		if err != nil {
+			return nil, fmt.Errorf("table %q model %q: %w", table.Name, sqlcModel.Name, err)
 		}
 
-		if query := sqlcInfo.FindQueryForTable(table); query != nil && query.ParamType != "" {
+		typePrefix := sqlcInfo.Package + "." + sqlcModel.Name
+		model := normalizedModel{
+			TypeExpr:      typePrefix,
+			ZeroValueExpr: typePrefix + "{}",
+			BlueprintID:   table.BlueprintID,
+			TableName:     table.Name,
+			PKFields:      pkFields,
+			Fields:        normalizedSqlcFields(table, fieldsByColumn),
+			Relations:     relations,
+		}
+
+		if query := binding.insert; query != nil {
+			scalarField, err := resolveSqlcScalarInsertField(sqlcModel, *query, pkFields)
+			if err != nil {
+				return nil, fmt.Errorf("table %q query %q: %w", table.Name, query.Name, err)
+			}
+			paramFields, err := resolveSqlcParamFields(query.ParamFields, sqlcModel.Fields)
+			if err != nil {
+				return nil, fmt.Errorf("table %q query %q: %w", table.Name, query.Name, err)
+			}
 			model.InsertHook = &normalizedMutationHook{
-				Body: buildSqlcInsertHook(sqlcInfo.Package, *query),
+				Body: buildSqlcInsertHook(sqlcInfo.Package, *query, paramFields, scalarField),
 			}
 		} else {
 			model.InsertHook = &normalizedMutationHook{
@@ -334,15 +539,29 @@ func normalizeSqlcModels(tables []Table, sqlcInfo *SqlcInfo) []normalizedModel {
 			}
 		}
 
-		if deleteQuery := sqlcInfo.FindDeleteQueryForTable(table); deleteQuery != nil {
+		if deleteQuery := binding.delete; deleteQuery != nil {
+			paramFields, err := resolveSqlcParamFields(deleteQuery.ParamFields, sqlcModel.Fields)
+			if err != nil {
+				return nil, fmt.Errorf("table %q delete query %q: %w", table.Name, deleteQuery.Name, err)
+			}
+			scalarField, err := validateSqlcDeletePrimaryKey(
+				*deleteQuery,
+				paramFields,
+				table,
+				fieldsByColumn,
+				model.PKFields,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("table %q delete query %q: %w", table.Name, deleteQuery.Name, err)
+			}
 			model.DeleteHook = &normalizedMutationHook{
-				Body: buildSqlcDeleteHook(sqlcInfo.Package, *deleteQuery, model.PKFields),
+				Body: buildSqlcDeleteHook(sqlcInfo.Package, *deleteQuery, paramFields, scalarField),
 			}
 		}
 
 		models = append(models, model)
 	}
-	return models
+	return models, nil
 }
 
 func normalizeGormModels(models []GormModel, alias string) []normalizedModel {
@@ -360,24 +579,47 @@ func normalizeGormModels(models []GormModel, alias string) []normalizedModel {
 
 		relations := make([]normalizedRelation, 0, len(model.Fields))
 		relationLocalFields := make(map[string]struct{})
+		fieldsByName := make(map[string]GormField, len(model.Fields))
+		for _, field := range model.Fields {
+			fieldsByName[field.Name] = field
+		}
 		for _, field := range model.Fields {
 			if field.Relation == nil || field.Relation.Kind != "BelongsTo" {
 				continue
 			}
 
-			localField := field.Relation.ForeignKey
-			if localField == "" {
-				localField = field.Name + "ID"
+			localFields := splitCommaSeparatedFields(field.Relation.ForeignKey)
+			if len(localFields) == 0 {
+				localFields = []string{field.Name + "ID"}
+			}
+			refFields := splitCommaSeparatedFields(field.Relation.References)
+
+			required := true
+			for _, localField := range localFields {
+				fkField, ok := fieldsByName[localField]
+				if !ok || !fkField.NotNull {
+					required = false
+					break
+				}
 			}
 
-			relations = append(relations, normalizedRelation{
+			relation := normalizedRelation{
 				Name:         strings.ToLower(field.Name[:1]) + field.Name[1:],
-				LocalField:   localField,
-				LocalFields:  []string{localField},
+				LocalFields:  localFields,
+				RefFields:    refFields,
 				RefBlueprint: singularize(strings.ToLower(field.Relation.RefModel)),
-				Optional:     !field.NotNull,
-			})
-			relationLocalFields[localField] = struct{}{}
+				Optional:     !required,
+			}
+			if len(localFields) == 1 {
+				relation.LocalField = localFields[0]
+			}
+			if len(refFields) == 1 {
+				relation.RefField = refFields[0]
+			}
+			relations = append(relations, relation)
+			for _, localField := range localFields {
+				relationLocalFields[localField] = struct{}{}
+			}
 		}
 
 		fields := make([]normalizedField, 0, len(model.Fields))
@@ -411,6 +653,16 @@ func normalizeGormModels(models []GormModel, alias string) []normalizedModel {
 	return normalized
 }
 
+func splitCommaSeparatedFields(value string) []string {
+	fields := make([]string, 0, strings.Count(value, ",")+1)
+	for field := range strings.SplitSeq(value, ",") {
+		if field = strings.TrimSpace(field); field != "" {
+			fields = append(fields, field)
+		}
+	}
+	return fields
+}
+
 func normalizeEntModels(schemas []EntSchema) []normalizedModel {
 	models := make([]normalizedModel, 0, len(schemas))
 	for _, schema := range schemas {
@@ -420,15 +672,22 @@ func normalizeEntModels(schemas []EntSchema) []normalizedModel {
 			BlueprintID:   singularize(strings.ToLower(schema.Name)),
 			TableName:     singularize(strings.ToLower(schema.Name)) + "s",
 			PKFields:      []string{"ID"},
-			Fields:        normalizeEntFields(schema.Fields),
+			Fields:        normalizeEntFields(schema.Fields, []string{"ID"}),
 		}
 
 		for _, edge := range schema.Edges {
-			if edge.Direction != "From" {
+			if edge.Field == "" {
 				continue
 			}
 
-			localField := toGoFieldName(edge.Name) + "ID"
+			field, _ := lookupEntField(schema.Fields, edge.Field)
+			localField := field.GoName
+			for i := range model.Fields {
+				if model.Fields[i].GoName == localField {
+					model.Fields[i].IsRelationFK = true
+					break
+				}
+			}
 			model.Relations = append(model.Relations, normalizedRelation{
 				Name:         edge.Name,
 				LocalField:   localField,
@@ -470,12 +729,60 @@ func normalizedPKField(fields []string) string {
 	return fields[0]
 }
 
-func normalizedTableFields(table Table) []normalizedField {
+// mapSqlcModelFields pairs each schema column with the struct field sqlc
+// generated for it.
+//
+// sqlc emits model fields in table column order, so position is the binding, and
+// a column whose name sqlc rewrote (the `rename` config option) still resolves.
+// Position is verified rather than assumed: if a column's name matches a field at
+// some other index, this schema and that model disagree about the column order,
+// and binding by position would make the generated hooks read and delete by the
+// wrong column while still compiling.
+func mapSqlcModelFields(table Table, model *SqlcModel) (map[string]SqlcField, error) {
+	if len(model.Fields) != len(table.Columns) {
+		return nil, fmt.Errorf("has %d fields but schema table has %d columns", len(model.Fields), len(table.Columns))
+	}
+
+	fieldIndexes := unambiguousSqlcFieldIndexes(model.Fields)
+	fieldsByColumn := make(map[string]SqlcField, len(table.Columns))
+	for i, column := range table.Columns {
+		if j, ok := fieldIndexes[normalizeSQLCIdentifier(column.Name)]; ok && j != i {
+			return nil, fmt.Errorf("column %q matches generated field %q at position %d, but position %d holds %q; regenerate sqlc so its models match this schema",
+				column.Name, model.Fields[j].Name, j, i, model.Fields[i].Name)
+		}
+		fieldsByColumn[column.Name] = model.Fields[i]
+	}
+
+	return fieldsByColumn, nil
+}
+
+// unambiguousSqlcFieldIndexes indexes fields by normalized name, dropping any
+// name that more than one field normalizes to so an ambiguous match never drives
+// the position check.
+func unambiguousSqlcFieldIndexes(fields []SqlcField) map[string]int {
+	indexes := make(map[string]int, len(fields))
+	ambiguous := make(map[string]struct{})
+	for j, field := range fields {
+		name := normalizeSQLCIdentifier(field.Name)
+		if _, exists := indexes[name]; exists {
+			ambiguous[name] = struct{}{}
+			continue
+		}
+		indexes[name] = j
+	}
+	for name := range ambiguous {
+		delete(indexes, name)
+	}
+	return indexes
+}
+
+func normalizedSqlcFields(table Table, fieldsByColumn map[string]SqlcField) []normalizedField {
 	fields := make([]normalizedField, 0, len(table.Columns))
 	for _, column := range table.Columns {
+		field := fieldsByColumn[column.Name]
 		fields = append(fields, normalizedField{
-			GoName:       column.GoName,
-			GoType:       column.GoType,
+			GoName:       field.Name,
+			GoType:       field.Type,
 			IsPK:         column.IsPK,
 			IsRelationFK: column.IsFK,
 			IsOptional:   !column.NotNull,
@@ -484,13 +791,94 @@ func normalizedTableFields(table Table) []normalizedField {
 	return fields
 }
 
-func normalizeEntFields(fields []EntField) []normalizedField {
+func normalizedSqlcPKFields(table Table, fieldsByColumn map[string]SqlcField) ([]string, error) {
+	fields := make([]string, 0, len(table.Columns))
+	for _, column := range table.Columns {
+		if column.IsPK {
+			fields = append(fields, fieldsByColumn[column.Name].Name)
+		}
+	}
+	if len(fields) > 0 {
+		return fields, nil
+	}
+
+	for _, column := range table.Columns {
+		if normalizeSQLCIdentifier(column.Name) == "id" {
+			return []string{fieldsByColumn[column.Name].Name}, nil
+		}
+	}
+	return nil, fmt.Errorf("has no primary key and no conventional id field")
+}
+
+func normalizeSqlcRelations(table Table, fieldMappings map[string]map[string]SqlcField) ([]normalizedRelation, error) {
+	relations := make([]normalizedRelation, 0, len(table.ForeignKeys))
+	names := relationNamesForTable(table)
+	for i, foreignKey := range table.ForeignKeys {
+		if len(foreignKey.Columns) == 0 {
+			continue
+		}
+		name := names[i]
+
+		localFields := make([]string, 0, len(foreignKey.Columns))
+		for _, columnName := range foreignKey.Columns {
+			field, ok := fieldMappings[table.Name][columnName]
+			if !ok {
+				return nil, fmt.Errorf("relation %q: local column %q not found", name, columnName)
+			}
+			localFields = append(localFields, field.Name)
+		}
+
+		refFields := make([]string, 0, len(foreignKey.RefColumns))
+		if len(foreignKey.RefColumns) > 0 {
+			refMapping, ok := fieldMappings[foreignKey.RefTable]
+			if !ok {
+				return nil, fmt.Errorf("relation %q: referenced table %q is not present in sqlc models", name, foreignKey.RefTable)
+			}
+			for _, columnName := range foreignKey.RefColumns {
+				field, ok := refMapping[columnName]
+				if !ok {
+					return nil, fmt.Errorf("relation %q: referenced column %q.%s not found", name, foreignKey.RefTable, columnName)
+				}
+				refFields = append(refFields, field.Name)
+			}
+		}
+
+		relation := normalizedRelation{
+			Name:         name,
+			LocalFields:  localFields,
+			RefFields:    refFields,
+			RefBlueprint: singularize(foreignKey.RefTable),
+			Optional:     !foreignKey.NotNull,
+		}
+		if len(localFields) == 1 {
+			relation.LocalField = localFields[0]
+		}
+		if len(refFields) == 1 {
+			relation.RefField = refFields[0]
+		}
+		relations = append(relations, relation)
+	}
+	return relations, nil
+}
+
+func normalizeEntFields(fields []EntField, pkFields []string) []normalizedField {
 	normalized := make([]normalizedField, 0, len(fields))
 	for _, field := range fields {
+		goName := field.GoName
+		if goName == "" {
+			// Only the diagnostic fallback path reaches here, where the
+			// generated package could not be resolved.
+			goName = toGoFieldName(field.Name)
+		}
 		normalized = append(normalized, normalizedField{
-			GoName:     toGoFieldName(field.Name),
-			GoType:     field.GoType,
-			IsOptional: field.Optional,
+			GoName:      goName,
+			GoType:      field.GoType,
+			DefaultType: field.DefaultType,
+			// A schema that declares its own id (field.Int("id")) surfaces as an
+			// ordinary field. Marking it as the primary key keeps generated
+			// Defaults from overwriting the ID that Ent or the database assigns.
+			IsPK:       slices.Contains(pkFields, goName),
+			IsOptional: field.Optional || field.Nillable,
 		})
 	}
 	return normalized
@@ -498,10 +886,12 @@ func normalizeEntFields(fields []EntField) []normalizedField {
 
 func normalizeTableRelations(table Table) []normalizedRelation {
 	relations := make([]normalizedRelation, 0, len(table.ForeignKeys))
-	for _, foreignKey := range table.ForeignKeys {
+	names := relationNamesForTable(table)
+	for i, foreignKey := range table.ForeignKeys {
 		if len(foreignKey.Columns) == 0 {
 			continue
 		}
+		name := names[i]
 
 		localFields := make([]string, 0, len(foreignKey.Columns))
 		for _, columnName := range foreignKey.Columns {
@@ -517,19 +907,23 @@ func normalizeTableRelations(table Table) []normalizedRelation {
 			continue
 		}
 
-		name := singularize(foreignKey.RefTable)
-		if len(foreignKey.Columns) == 1 {
-			name = relationNameForColumn(foreignKey.Columns[0], foreignKey.RefTable)
+		refFields := make([]string, 0, len(foreignKey.RefColumns))
+		for _, columnName := range foreignKey.RefColumns {
+			refFields = append(refFields, toGoFieldName(columnName))
 		}
 
 		relation := normalizedRelation{
 			Name:         name,
 			LocalFields:  localFields,
+			RefFields:    refFields,
 			RefBlueprint: singularize(foreignKey.RefTable),
 			Optional:     !foreignKey.NotNull,
 		}
 		if len(localFields) == 1 {
 			relation.LocalField = localFields[0]
+		}
+		if len(refFields) == 1 {
+			relation.RefField = refFields[0]
 		}
 
 		relations = append(relations, relation)
@@ -563,7 +957,12 @@ func defaultFieldExpr(blueprintID string, field normalizedField) string {
 
 	label := blueprintID + "-" + toSnakeCase(field.GoName)
 
-	switch field.GoType {
+	fieldType := field.GoType
+	if field.DefaultType != "" {
+		fieldType = field.DefaultType
+	}
+
+	switch fieldType {
 	case "string":
 		return strconv.Quote(label)
 	case "bool":
@@ -592,47 +991,356 @@ func normalizedModelsNeedTimeImport(models []normalizedModel) bool {
 	return false
 }
 
-func buildSqlcInsertHook(alias string, query SqlcQuery) string {
-	var body strings.Builder
-	body.WriteString("return ")
-	body.WriteString(alias)
-	body.WriteString(".New(dbtx.(")
-	body.WriteString(alias)
-	body.WriteString(".DBTX)).")
-	body.WriteString(query.Name)
-	body.WriteString("(ctx, ")
-	body.WriteString(alias)
-	body.WriteString(".")
-	body.WriteString(query.ParamType)
-	body.WriteString("{\n")
-	for _, field := range query.ParamFields {
-		body.WriteString("\t")
-		body.WriteString(field.Name)
-		body.WriteString(": v.")
-		body.WriteString(field.Name)
-		body.WriteString(",\n")
+type sqlcParamField struct {
+	paramName  string
+	modelField string
+}
+
+// resolveSqlcParamFields binds each params-struct field to the model field the
+// generated Insert hook should read it from.
+//
+// Name matches are resolved first, across every parameter, before any type-only
+// fallback claims a field. Resolving in parameter order instead let a fallback
+// consume a field that a later parameter matched by name, which then failed with
+// a misleading "maps to model field more than once".
+func resolveSqlcParamFields(params, modelFields []SqlcField) ([]sqlcParamField, error) {
+	matches := make([]int, len(params))
+	for i := range matches {
+		matches[i] = -1
 	}
-	body.WriteString("})")
+	used := make([]bool, len(modelFields))
+
+	for i, param := range params {
+		match, matched, err := matchSqlcParamFieldByName(param, modelFields, used)
+		if err != nil {
+			return nil, err
+		}
+		if !matched {
+			continue
+		}
+		used[match] = true
+		matches[i] = match
+	}
+
+	for i, param := range params {
+		if matches[i] >= 0 {
+			continue
+		}
+		match, err := matchSqlcParamFieldByType(param, modelFields, used)
+		if err != nil {
+			return nil, err
+		}
+		used[match] = true
+		matches[i] = match
+	}
+
+	resolved := make([]sqlcParamField, 0, len(params))
+	for i, param := range params {
+		resolved = append(resolved, sqlcParamField{
+			paramName:  param.Name,
+			modelField: modelFields[matches[i]].Name,
+		})
+	}
+	return resolved, nil
+}
+
+// matchSqlcParamFieldByName resolves a parameter against a model field of the
+// same name, exactly or ignoring case and underscores. It reports whether a name
+// match existed at all, so the caller can defer to the type fallback.
+func matchSqlcParamFieldByName(param SqlcField, modelFields []SqlcField, used []bool) (int, bool, error) {
+	for i, field := range modelFields {
+		if field.Name != param.Name {
+			continue
+		}
+		if used[i] {
+			return 0, false, fmt.Errorf("params field %q maps to model field %q more than once", param.Name, field.Name)
+		}
+		if field.Type != param.Type {
+			return 0, false, fmt.Errorf("params field %q type %s does not match model field type %s", param.Name, param.Type, field.Type)
+		}
+		return i, true, nil
+	}
+
+	normalizedMatches := make([]int, 0, 1)
+	for i, field := range modelFields {
+		if normalizeSQLCIdentifier(field.Name) == normalizeSQLCIdentifier(param.Name) {
+			normalizedMatches = append(normalizedMatches, i)
+		}
+	}
+	if len(normalizedMatches) > 1 {
+		return 0, false, fmt.Errorf("params field %q matches multiple model fields by name", param.Name)
+	}
+	if len(normalizedMatches) == 0 {
+		return 0, false, nil
+	}
+
+	match := normalizedMatches[0]
+	if used[match] {
+		return 0, false, fmt.Errorf("params field %q maps to model field %q more than once", param.Name, modelFields[match].Name)
+	}
+	if modelFields[match].Type != param.Type {
+		return 0, false, fmt.Errorf("params field %q type %s does not match model field %q type %s", param.Name, param.Type, modelFields[match].Name, modelFields[match].Type)
+	}
+	return match, true, nil
+}
+
+// matchSqlcParamFieldByType handles a query parameter that sqlc named after
+// nothing in the model. It only resolves when exactly one unclaimed field has the
+// right type, because anything less specific would be a guess.
+func matchSqlcParamFieldByType(param SqlcField, modelFields []SqlcField, used []bool) (int, error) {
+	typeMatches := make([]int, 0, 1)
+	for i, field := range modelFields {
+		if !used[i] && field.Type == param.Type {
+			typeMatches = append(typeMatches, i)
+		}
+	}
+	if len(typeMatches) == 1 {
+		return typeMatches[0], nil
+	}
+	return 0, fmt.Errorf("cannot map params field %q (%s) to exactly one model field", param.Name, param.Type)
+}
+
+func validateSqlcDeletePrimaryKey(
+	query SqlcDeleteQuery,
+	paramFields []sqlcParamField,
+	table Table,
+	fieldsByColumn map[string]SqlcField,
+	pkFields []string,
+) (string, error) {
+	if query.ParamType != "" {
+		seen := make(map[string]struct{}, len(paramFields))
+		for _, field := range paramFields {
+			if !slices.Contains(pkFields, field.modelField) {
+				return "", fmt.Errorf(
+					"params field %q maps to non-primary-key model field %q",
+					field.paramName,
+					field.modelField,
+				)
+			}
+			if _, ok := seen[field.modelField]; ok {
+				return "", fmt.Errorf("primary-key model field %q is mapped more than once", field.modelField)
+			}
+			seen[field.modelField] = struct{}{}
+		}
+		for _, pkField := range pkFields {
+			if _, ok := seen[pkField]; !ok {
+				return "", fmt.Errorf("does not accept primary-key model field %q", pkField)
+			}
+		}
+		return "", nil
+	}
+
+	if query.ArgType == "" {
+		return "", fmt.Errorf("does not accept the model primary key")
+	}
+	if len(pkFields) != 1 {
+		return "", fmt.Errorf("scalar argument cannot cover %d primary-key fields", len(pkFields))
+	}
+
+	pkField := pkFields[0]
+	if query.ArgName != "" && query.ArgName != "_" {
+		argumentField, err := resolveSqlcDeleteArgumentField(query.ArgName, table, fieldsByColumn)
+		if err != nil {
+			return "", err
+		}
+		if argumentField != pkField {
+			return "", fmt.Errorf(
+				"scalar argument %q identifies non-primary-key model field %q",
+				query.ArgName,
+				argumentField,
+			)
+		}
+	}
+
+	for _, field := range fieldsByColumn {
+		if field.Name != pkField {
+			continue
+		}
+		if field.Type != query.ArgType {
+			return "", fmt.Errorf(
+				"scalar argument %q type %s does not match primary-key model field %q type %s",
+				query.ArgName,
+				query.ArgType,
+				pkField,
+				field.Type,
+			)
+		}
+		return pkField, nil
+	}
+	return "", fmt.Errorf("primary-key model field %q is missing from sqlc model", pkField)
+}
+
+func resolveSqlcDeleteArgumentField(
+	argumentName string,
+	table Table,
+	fieldsByColumn map[string]SqlcField,
+) (string, error) {
+	wanted := normalizeSQLCIdentifier(argumentName)
+	matches := make(map[string]struct{}, 1)
+	for _, column := range table.Columns {
+		field := fieldsByColumn[column.Name]
+		if normalizeSQLCIdentifier(column.Name) == wanted || normalizeSQLCIdentifier(field.Name) == wanted {
+			matches[field.Name] = struct{}{}
+		}
+	}
+	if len(matches) == 0 {
+		return "", fmt.Errorf("scalar argument %q does not identify a model field", argumentName)
+	}
+	if len(matches) > 1 {
+		return "", fmt.Errorf("scalar argument %q identifies multiple model fields", argumentName)
+	}
+	for field := range matches {
+		return field, nil
+	}
+	panic("unreachable")
+}
+
+func buildSqlcInsertHook(alias string, query SqlcQuery, paramFields []sqlcParamField, scalarField string) string {
+	var body strings.Builder
+	if query.ReturnPointer {
+		body.WriteString("inserted, err := ")
+	} else {
+		body.WriteString("return ")
+	}
+	writeSqlcQueriesConstructor(&body, alias, query.DBArgument)
+	body.WriteString(query.Name)
+	body.WriteString("(ctx")
+	if query.DBArgument {
+		body.WriteString(", dbtx.(")
+		body.WriteString(alias)
+		body.WriteString(".DBTX)")
+	}
+	switch {
+	case query.ParamType != "":
+		body.WriteString(", ")
+		if query.ParamPointer {
+			body.WriteString("&")
+		}
+		body.WriteString(alias)
+		body.WriteString(".")
+		body.WriteString(query.ParamType)
+		body.WriteString("{\n")
+		for _, field := range paramFields {
+			body.WriteString("\t")
+			body.WriteString(field.paramName)
+			body.WriteString(": v.")
+			body.WriteString(field.modelField)
+			body.WriteString(",\n")
+		}
+		body.WriteString("}")
+	case query.ArgType != "":
+		body.WriteString(", v.")
+		body.WriteString(scalarField)
+	}
+	body.WriteString(")")
+	if query.ReturnPointer {
+		body.WriteString("\nif err != nil {\n\treturn v, err\n}\nreturn *inserted, nil")
+	}
 	return body.String()
 }
 
-func buildSqlcDeleteHook(alias string, deleteQuery SqlcDeleteQuery, pkFields []string) string {
+func resolveSqlcScalarInsertField(model *SqlcModel, query SqlcQuery, pkFields []string) (string, error) {
+	if query.ParamType != "" || query.ArgType == "" {
+		return "", nil
+	}
+
+	type candidate struct {
+		name       string
+		typeName   string
+		primaryKey bool
+	}
+	isPrimaryKey := func(name string) bool {
+		return slices.Contains(pkFields, name)
+	}
+
+	candidates := make([]candidate, 0, len(model.Fields))
+	for _, field := range model.Fields {
+		candidates = append(candidates, candidate{
+			name:       field.Name,
+			typeName:   field.Type,
+			primaryKey: isPrimaryKey(field.Name),
+		})
+	}
+
+	if query.ArgName != "" && query.ArgName != "_" {
+		normalizedArgument := normalizeSQLCIdentifier(query.ArgName)
+		for _, candidate := range candidates {
+			if normalizeSQLCIdentifier(candidate.name) == normalizedArgument {
+				return candidate.name, nil
+			}
+		}
+	}
+
+	typeMatches := make([]candidate, 0, len(candidates))
+	nonPKMatches := make([]candidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.typeName != query.ArgType {
+			continue
+		}
+		typeMatches = append(typeMatches, candidate)
+		if !candidate.primaryKey {
+			nonPKMatches = append(nonPKMatches, candidate)
+		}
+	}
+	if len(nonPKMatches) == 1 {
+		return nonPKMatches[0].name, nil
+	}
+	if len(typeMatches) == 1 {
+		return typeMatches[0].name, nil
+	}
+
+	return "", fmt.Errorf("cannot map scalar argument %q (%s) to exactly one model field", query.ArgName, query.ArgType)
+}
+
+func normalizeSQLCIdentifier(value string) string {
+	return strings.ToLower(strings.ReplaceAll(value, "_", ""))
+}
+
+func buildSqlcDeleteHook(alias string, deleteQuery SqlcDeleteQuery, paramFields []sqlcParamField, scalarField string) string {
 	var body strings.Builder
 	body.WriteString("return ")
-	body.WriteString(alias)
-	body.WriteString(".New(dbtx.(")
-	body.WriteString(alias)
-	body.WriteString(".DBTX)).")
+	writeSqlcQueriesConstructor(&body, alias, deleteQuery.DBArgument)
 	body.WriteString(deleteQuery.Name)
-	body.WriteString("(ctx, ")
-	if deleteQuery.ArgName != "" {
-		body.WriteString("v.")
-		body.WriteString(pkFieldForDeleteArg(deleteQuery.ArgName, pkFields))
-	} else {
-		body.WriteString("v")
+	body.WriteString("(ctx")
+	if deleteQuery.DBArgument {
+		body.WriteString(", dbtx.(")
+		body.WriteString(alias)
+		body.WriteString(".DBTX)")
+	}
+	if deleteQuery.ParamType != "" {
+		body.WriteString(", ")
+		if deleteQuery.ParamPointer {
+			body.WriteString("&")
+		}
+		body.WriteString(alias)
+		body.WriteString(".")
+		body.WriteString(deleteQuery.ParamType)
+		body.WriteString("{\n")
+		for _, field := range paramFields {
+			body.WriteString("\t")
+			body.WriteString(field.paramName)
+			body.WriteString(": v.")
+			body.WriteString(field.modelField)
+			body.WriteString(",\n")
+		}
+		body.WriteString("}")
+	} else if deleteQuery.ArgType != "" {
+		body.WriteString(", v.")
+		body.WriteString(scalarField)
 	}
 	body.WriteString(")")
 	return body.String()
+}
+
+func writeSqlcQueriesConstructor(body *strings.Builder, alias string, dbArgument bool) {
+	body.WriteString(alias)
+	body.WriteString(".New(")
+	if !dbArgument {
+		body.WriteString("dbtx.(")
+		body.WriteString(alias)
+		body.WriteString(".DBTX)")
+	}
+	body.WriteString(").")
 }
 
 func buildEntInsertHook(schema EntSchema) string {
@@ -640,12 +1348,39 @@ func buildEntInsertHook(schema EntSchema) string {
 	body.WriteString("builder := dbtx.(*ent.Client).")
 	body.WriteString(schema.Name)
 	body.WriteString(".Create()\n")
+	optionalRelationFields := entOptionalRelationFields(schema)
 	for _, field := range schema.Fields {
+		skipZero := entFieldUsesReflectGuard(field, optionalRelationFields)
+		if field.SetterDeref {
+			body.WriteString("if v.")
+			body.WriteString(field.GoName)
+			body.WriteString(" != nil {\n\t")
+		} else if skipZero {
+			body.WriteString("if !reflect.ValueOf(v.")
+			body.WriteString(field.GoName)
+			body.WriteString(").IsZero() {\n\t")
+		}
 		body.WriteString("builder.Set")
-		body.WriteString(toGoFieldName(field.Name))
-		body.WriteString("(v.")
-		body.WriteString(toGoFieldName(field.Name))
+		setterName := field.SetterName
+		if setterName == "" {
+			if field.Nillable {
+				body.WriteString("Nillable")
+			}
+			setterName = field.GoName
+		} else {
+			setterName = strings.TrimPrefix(setterName, "Set")
+		}
+		body.WriteString(setterName)
+		if field.SetterDeref {
+			body.WriteString("(*v.")
+		} else {
+			body.WriteString("(v.")
+		}
+		body.WriteString(field.GoName)
 		body.WriteString(")\n")
+		if field.SetterDeref || skipZero {
+			body.WriteString("}\n")
+		}
 	}
 	body.WriteString("return builder.Save(ctx)")
 	return body.String()

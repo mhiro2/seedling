@@ -2,6 +2,8 @@ module github.com/mhiro2/seedling
 
 go 1.26.0
 
+require golang.org/x/tools v0.41.0
+
 require (
 	github.com/bitfield/gotestdox v0.2.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
@@ -27,7 +29,6 @@ require (
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/term v0.39.0 // indirect
 	golang.org/x/text v0.33.0 // indirect
-	golang.org/x/tools v0.41.0 // indirect
 	gotest.tools/gotestsum v1.13.0 // indirect
 	k8s.io/klog/v2 v2.90.1 // indirect
 )

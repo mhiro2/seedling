@@ -13,6 +13,7 @@ type relationDef struct {
 	name             string
 	kind             RelationKind
 	localFields      []string
+	refFields        []string
 	refBlueprint     string
 	throughBlueprint string
 	remoteFields     []string
@@ -145,9 +146,21 @@ func registerTyped[T any](r *registry, bp Blueprint[T]) error {
 		}
 	}
 
-	// Count is the number of HasMany/ManyToMany children to create. A negative
-	// value is meaningless (zero creates none), so reject it at the source.
+	// Relation names address options and form part of graph identity, so they
+	// must be present and unique within their blueprint.
+	relationNames := make(map[string]struct{}, len(bp.Relations))
 	for _, rel := range bp.Relations {
+		if rel.Name == "" {
+			return fmt.Errorf("%w: blueprint %q has a relation with an empty Name", errx.ErrInvalidOption, bp.Name)
+		}
+		if _, exists := relationNames[rel.Name]; exists {
+			return fmt.Errorf("%w: blueprint %q has duplicate relation name %q", errx.ErrInvalidOption, bp.Name, rel.Name)
+		}
+		relationNames[rel.Name] = struct{}{}
+
+		// Count is the number of HasMany/ManyToMany children to create. A
+		// negative value is meaningless (zero creates none), so reject it at
+		// the source.
 		if rel.Count < 0 {
 			return fmt.Errorf("%w: blueprint %q relation %q has negative Count %d", errx.ErrInvalidOption, bp.Name, rel.Name, rel.Count)
 		}
@@ -236,6 +249,7 @@ func normalizeRelations(rels []Relation) []relationDef {
 			name:             rel.Name,
 			kind:             rel.Kind,
 			localFields:      normalizeFields(rel.LocalField, rel.LocalFields),
+			refFields:        normalizeFields(rel.RefField, rel.RefFields),
 			refBlueprint:     rel.RefBlueprint,
 			throughBlueprint: rel.ThroughBlueprint,
 			remoteFields:     normalizeFields(rel.RemoteField, rel.RemoteFields),

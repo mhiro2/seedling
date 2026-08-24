@@ -48,7 +48,9 @@ func NewTestSession[T any](tb testing.TB, reg *Registry, db TxBeginner, txOption
 	return NewSession[T](reg).WithDB(tx)
 }
 
-// WithDB returns a copy of the session bound to db.
+// WithDB returns a copy of the session bound to db. Plans built from the
+// returned session retain this binding; a non-nil DB passed to Plan.Insert or
+// Plan.InsertE overrides it.
 func (s Session[T]) WithDB(db DBTX) Session[T] {
 	s.db = db
 	return s

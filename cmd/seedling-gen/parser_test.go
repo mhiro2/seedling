@@ -199,6 +199,33 @@ func TestParseSchema_TableConstraintRealKeysStillDetected(t *testing.T) {
 	if !owner.IsFK || owner.FKRefTable != "owners" {
 		t.Fatalf("owner_id: got FK=%v ref=%q, want FK to owners", owner.IsFK, owner.FKRefTable)
 	}
+	if got := tables[0].ForeignKeys[0].RefColumns; len(got) != 1 || got[0] != "id" {
+		t.Fatalf("referenced columns = %v, want [id]", got)
+	}
+}
+
+func TestParseSchema_RetainsNonPrimaryReferencedColumns(t *testing.T) {
+	sql := `
+CREATE TABLE countries (
+  id INT PRIMARY KEY,
+  code TEXT UNIQUE NOT NULL
+);
+CREATE TABLE cities (
+  id INT PRIMARY KEY,
+  country_code TEXT NOT NULL REFERENCES countries(code)
+);`
+
+	tables, err := ParseSchemaWithDialect(sql, "postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fk := tables[1].ForeignKeys[0]
+	if got := fk.RefColumns; len(got) != 1 || got[0] != "code" {
+		t.Fatalf("referenced columns = %v, want [code]", got)
+	}
+	if got := tables[1].Columns[1].FKRefColumns; len(got) != 1 || got[0] != "code" {
+		t.Fatalf("column referenced fields = %v, want [code]", got)
+	}
 }
 
 func TestParseSchema_DottedQualifiedTable(t *testing.T) {

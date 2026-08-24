@@ -666,16 +666,16 @@ func TestPlan_ManyToManyAutoExpand(t *testing.T) {
 	}
 	for _, nodeID := range []string{
 		"article.tags[0]",
-		"article.tags[0].article_tag",
+		"article.tags[0].%join:article_tag",
 		"article.tags[1]",
-		"article.tags[1].article_tag",
+		"article.tags[1].%join:article_tag",
 	} {
 		if result.Graph.Node(nodeID) == nil {
 			t.Fatalf("expected node %q", nodeID)
 		}
 	}
 
-	for _, nodeID := range []string{"article.tags[0].article_tag", "article.tags[1].article_tag"} {
+	for _, nodeID := range []string{"article.tags[0].%join:article_tag", "article.tags[1].%join:article_tag"} {
 		node := result.Graph.Node(nodeID)
 		if node == nil {
 			t.Fatalf("expected join node %q", nodeID)
@@ -1071,9 +1071,9 @@ func TestPlan_OptionalManyToManyRefExpandsRelation(t *testing.T) {
 	}
 	for _, nodeID := range []string{
 		"article.tags[0]",
-		"article.tags[0].article_tag",
+		"article.tags[0].%join:article_tag",
 		"article.tags[1]",
-		"article.tags[1].article_tag",
+		"article.tags[1].%join:article_tag",
 	} {
 		if result.Graph.Node(nodeID) == nil {
 			t.Fatalf("expected node %q", nodeID)

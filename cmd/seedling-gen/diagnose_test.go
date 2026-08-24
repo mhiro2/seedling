@@ -117,8 +117,8 @@ type Company struct {
 
 type User struct {
 	ID        int64
-	Name      string
 	CompanyID int64
+	Name      string
 }
 `,
 		"query.sql.go": `package db
@@ -129,18 +129,18 @@ type DBTX interface{}
 
 type Queries struct{}
 
-func New(DBTX) *Queries { return &Queries{} }
+func New() *Queries { return &Queries{} }
 
 type InsertUserParams struct {
 	Name      string
 	CompanyID int64
 }
 
-func (*Queries) InsertUser(context.Context, InsertUserParams) (User, error) {
-	return User{}, nil
+func (*Queries) InsertUser(context.Context, DBTX, *InsertUserParams) (*User, error) {
+	return &User{}, nil
 }
 
-func (*Queries) DeleteUser(context.Context, int64) error {
+func (*Queries) DeleteUser(context.Context, DBTX, int64) error {
 	return nil
 }
 `,
@@ -177,8 +177,8 @@ CREATE TABLE users (
 		"Adapter: sqlc",
 		"Parsed sqlc metadata:",
 		"package=db importPath=github.com/example/db",
-		"InsertUser -> User using InsertUserParams",
-		"DeleteUser using int64",
+		"InsertUser -> *User with DB argument using *InsertUserParams",
+		"DeleteUser with DB argument using int64",
 		"- user (table: users, type: db.User, pk: ID, insert: InsertUser, delete: DeleteUser)",
 	}
 	for _, check := range checks {
@@ -236,54 +236,13 @@ type User struct {
 
 func TestRun_EntExplain_PrintsParsedSchemas(t *testing.T) {
 	// Arrange
-	dir := t.TempDir()
-	writeFile(t, dir, "user.go", `package schema
-
-import (
-	"entgo.io/ent"
-	"entgo.io/ent/schema/edge"
-	"entgo.io/ent/schema/field"
-)
-
-type User struct {
-	ent.Schema
-}
-
-func (User) Fields() []ent.Field {
-	return []ent.Field{
-		field.String("name"),
-	}
-}
-
-func (User) Edges() []ent.Edge {
-	return []ent.Edge{
-		edge.From("company", Company.Type).Ref("users").Unique().Required(),
-	}
-}
-`)
-	writeFile(t, dir, "company.go", `package schema
-
-import (
-	"entgo.io/ent"
-	"entgo.io/ent/schema/edge"
-)
-
-type Company struct {
-	ent.Schema
-}
-
-func (Company) Edges() []ent.Edge {
-	return []ent.Edge{
-		edge.To("users", User.Type),
-	}
-}
-`)
+	dir := filepath.Join("testdata", "ent", "schema")
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
 	// Act
-	exitCode := run([]string{"ent", "--dir", dir, "--import-path", "github.com/example/ent", "-explain"}, &stdout, &stderr)
+	exitCode := run([]string{"ent", "--dir", dir, "--import-path", "github.com/mhiro2/seedling/cmd/seedling-gen/testent", "-explain"}, &stdout, &stderr)
 
 	// Assert
 	if exitCode != 0 {
@@ -298,7 +257,7 @@ func (Company) Edges() []ent.Edge {
 		"Adapter: ent",
 		"Parsed ent schemas:",
 		"- User",
-		"direction=From type=Company ref=users unique=true required=true",
+		"direction=From type=Company ref=users field=company_uuid unique=true required=true",
 		"- user (table: users, type: *ent.User, pk: ID, insert: ent.Create, delete: ent.DeleteOneID)",
 	}
 	for _, check := range checks {

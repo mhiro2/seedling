@@ -18,14 +18,14 @@ func Plan(reg Registry, rootType reflect.Type, opts *OptionSet) (*PlanResult, er
 	}
 
 	g := graph.New()
-	visited := make(map[string]*graph.Node)
+	visited := make(map[nodeIdentity]*graph.Node)
 
 	var only map[string]bool
 	if opts != nil {
 		only = opts.Only
 	}
 
-	_, err = expand(reg, bp, bp.Name, opts, g, visited, nil, only)
+	_, err = expand(reg, bp, rootNodeIdentity(bp.Name), opts, g, visited, nil, only)
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +41,7 @@ func PlanMany(reg Registry, rootType reflect.Type, opts []*OptionSet) (*PlanMany
 	}
 
 	g := graph.New()
-	visited := make(map[string]*graph.Node)
+	visited := make(map[nodeIdentity]*graph.Node)
 	shared := newBatchShareState()
 	rootIDs := make([]string, 0, len(opts))
 
@@ -52,8 +52,8 @@ func PlanMany(reg Registry, rootType reflect.Type, opts []*OptionSet) (*PlanMany
 	}
 
 	for i, opt := range opts {
-		rootID := fmt.Sprintf("root[%d]", i)
-		rootIDs = append(rootIDs, rootID)
+		rootID := batchRootNodeIdentity(i)
+		rootIDs = append(rootIDs, rootID.String())
 
 		exp := &expander{
 			reg:     reg,

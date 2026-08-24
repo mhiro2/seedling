@@ -2,13 +2,14 @@ package seedling
 
 // Relation describes a dependency between two blueprints.
 type Relation struct {
-	// Name is the identifier used with Use() and Ref() (e.g. "company", "assignee").
+	// Name is the non-empty identifier used with Use() and Ref() (e.g.
+	// "company", "assignee"). It must be unique within the blueprint.
 	Name string
 
 	// Kind is the type of relationship (BelongsTo, HasMany, or ManyToMany).
 	Kind RelationKind
 
-	// LocalField is the legacy single-column form of LocalFields.
+	// LocalField is the single-column form of LocalFields.
 	// For BelongsTo: the FK field on the child struct (e.g. "CompanyID").
 	// For HasMany: the FK field on the referenced (child) blueprint's struct
 	// that points back to this parent (e.g. "CompanyID" on User).
@@ -17,8 +18,19 @@ type Relation struct {
 	LocalField string
 
 	// LocalFields is the multi-column form of LocalField.
-	// Use this when the related blueprint has a composite primary key.
+	// Use this for composite foreign keys.
 	LocalFields []string
+
+	// RefField is the single-column form of RefFields.
+	// For BelongsTo, it identifies the field on the referenced blueprint whose
+	// value is copied into LocalField. When omitted, the referenced blueprint's
+	// primary key field is used.
+	RefField string
+
+	// RefFields is the multi-column form of RefField. Its order must match
+	// LocalFields. When omitted, the referenced blueprint's primary key fields
+	// are used.
+	RefFields []string
 
 	// RefBlueprint is the name of the related blueprint.
 	// For BelongsTo: the parent blueprint.
@@ -31,7 +43,7 @@ type Relation struct {
 	// RefBlueprint.
 	ThroughBlueprint string
 
-	// RemoteField is the legacy single-column form of RemoteFields.
+	// RemoteField is the single-column form of RemoteFields.
 	// Only used for ManyToMany, where it identifies the FK field on the
 	// join-table struct pointing to the related blueprint.
 	RemoteField string
