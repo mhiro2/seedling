@@ -33,7 +33,9 @@ func (s *stubBeginner) BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pg
 }
 
 type stubTx struct {
-	rollbackCalls int
+	rollbackCalls       int
+	rollbackContextErr  error
+	rollbackHasDeadline bool
 }
 
 func (s *stubTx) Begin(ctx context.Context) (pgx.Tx, error) {
@@ -47,6 +49,8 @@ func (s *stubTx) Commit(ctx context.Context) error {
 
 func (s *stubTx) Rollback(ctx context.Context) error {
 	s.rollbackCalls++
+	s.rollbackContextErr = ctx.Err()
+	_, s.rollbackHasDeadline = ctx.Deadline()
 	return nil
 }
 
@@ -110,6 +114,12 @@ func TestWithTx_RollsBackTransactionOnCleanup(t *testing.T) {
 	if got, want := tx.rollbackCalls, 1; got != want {
 		t.Fatalf("got %v, want %v", got, want)
 	}
+	if tx.rollbackContextErr != nil {
+		t.Fatalf("rollback context error: %v", tx.rollbackContextErr)
+	}
+	if !tx.rollbackHasDeadline {
+		t.Fatal("rollback context has no deadline")
+	}
 }
 
 func TestNewTestSession_BindsTransactionAndRollsBackOnCleanup(t *testing.T) {
@@ -140,6 +150,12 @@ func TestNewTestSession_BindsTransactionAndRollsBackOnCleanup(t *testing.T) {
 	}
 	if got, want := tx.rollbackCalls, 1; got != want {
 		t.Fatalf("got %v, want %v", got, want)
+	}
+	if tx.rollbackContextErr != nil {
+		t.Fatalf("rollback context error: %v", tx.rollbackContextErr)
+	}
+	if !tx.rollbackHasDeadline {
+		t.Fatal("rollback context has no deadline")
 	}
 }
 

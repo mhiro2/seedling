@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/mhiro2/seedling"
 	"github.com/mhiro2/seedling/seedlingtest"
@@ -194,6 +195,142 @@ func TestCleanup(t *testing.T) {
 			t.Fatal("expected non-empty DebugString")
 		}
 	})
+}
+
+func TestCleanup_UsesActiveBoundedContextDuringTestCleanup(t *testing.T) {
+	// Arrange
+	var cleanupCalled bool
+	var cleanupContextErr error
+	var cleanupHasDeadline bool
+
+	// Act
+	t.Run("cleanup", func(t *testing.T) {
+		ids := seedlingtest.NewIDSequence()
+		reg := seedling.NewRegistry()
+
+		seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
+			Name:    "company",
+			Table:   "companies",
+			PKField: "ID",
+			Defaults: func() Company {
+				return Company{Name: "test-company"}
+			},
+			Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
+				v.ID = ids.Next()
+				return v, nil
+			},
+			Delete: func(ctx context.Context, db seedling.DBTX, v Company) error {
+				cleanupCalled = true
+				cleanupContextErr = ctx.Err()
+				_, cleanupHasDeadline = ctx.Deadline()
+				return nil
+			},
+		})
+		useTestRegistry(t, reg)
+
+		result := build[Company](t).Insert(t, nil)
+		t.Cleanup(func() { result.Cleanup(t, nil) })
+	})
+
+	// Assert
+	if !cleanupCalled {
+		t.Fatal("delete callback was not called")
+	}
+	if cleanupContextErr != nil {
+		t.Fatalf("cleanup context error: %v", cleanupContextErr)
+	}
+	if !cleanupHasDeadline {
+		t.Fatal("cleanup context has no deadline")
+	}
+}
+
+func TestCleanup_WithCleanupTimeoutOverridesBudget(t *testing.T) {
+	// Arrange
+	const timeout = 90 * time.Second
+	var remaining time.Duration
+	var deleted bool
+
+	ids := seedlingtest.NewIDSequence()
+	reg := seedling.NewRegistry()
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
+		Name:    "company",
+		Table:   "companies",
+		PKField: "ID",
+		Defaults: func() Company {
+			return Company{Name: "test-company"}
+		},
+		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
+			v.ID = ids.Next()
+			return v, nil
+		},
+		Delete: func(ctx context.Context, db seedling.DBTX, v Company) error {
+			deleted = true
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Error("cleanup context has no deadline")
+				return nil
+			}
+			remaining = time.Until(deadline)
+			return nil
+		},
+	})
+	useTestRegistry(t, reg)
+	result := build[Company](t).Insert(t, nil)
+
+	// Act
+	result.Cleanup(t, nil, seedling.WithCleanupTimeout(timeout))
+
+	// Assert
+	if !deleted {
+		t.Fatal("delete callback was not called")
+	}
+	// The remaining budget is the requested timeout minus the time spent
+	// reaching the callback, so allow a small margin.
+	if remaining > timeout || remaining < timeout-10*time.Second {
+		t.Fatalf("cleanup budget = %v, want close to %v", remaining, timeout)
+	}
+}
+
+func TestCleanup_DefaultBudgetFollowsTestDeadline(t *testing.T) {
+	// Arrange
+	deadline, hasDeadline := t.Deadline()
+	if !hasDeadline {
+		t.Skip("test binary runs without a deadline")
+	}
+	var cleanupDeadline time.Time
+
+	ids := seedlingtest.NewIDSequence()
+	reg := seedling.NewRegistry()
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
+		Name:    "company",
+		Table:   "companies",
+		PKField: "ID",
+		Defaults: func() Company {
+			return Company{Name: "test-company"}
+		},
+		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
+			v.ID = ids.Next()
+			return v, nil
+		},
+		Delete: func(ctx context.Context, db seedling.DBTX, v Company) error {
+			cleanupDeadline, _ = ctx.Deadline()
+			return nil
+		},
+	})
+	useTestRegistry(t, reg)
+	result := build[Company](t).Insert(t, nil)
+
+	// Act
+	result.Cleanup(t, nil)
+
+	// Assert
+	// The default budget tracks the test deadline rather than a fixed constant,
+	// so a long -timeout must not be shortened to the floor.
+	if remaining := time.Until(deadline); remaining > time.Minute {
+		if cleanupDeadline.Before(deadline.Add(-time.Second)) {
+			t.Fatalf("cleanup deadline %v is well before the test deadline %v", cleanupDeadline, deadline)
+		}
+	}
 }
 
 func TestCleanup_SnapshotDeleteFns(t *testing.T) {

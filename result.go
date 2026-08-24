@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mhiro2/seedling/internal/clone"
 	"github.com/mhiro2/seedling/internal/debug"
@@ -15,6 +16,26 @@ import (
 	"github.com/mhiro2/seedling/internal/executor"
 	"github.com/mhiro2/seedling/internal/graph"
 )
+
+// minCleanupTimeout is the floor for the cleanup budget. Tests run without a
+// deadline (`go test -timeout 0`) get exactly this.
+const minCleanupTimeout = 5 * time.Second
+
+// CleanupOption configures a [Result.Cleanup] or [BatchResult.Cleanup] call.
+type CleanupOption func(*cleanupConfig)
+
+type cleanupConfig struct {
+	timeout time.Duration
+}
+
+// WithCleanupTimeout caps how long Cleanup may spend deleting records. Use it
+// when tearing down a large graph against a slow database, where the default
+// budget derived from the test deadline is not what you want.
+func WithCleanupTimeout(timeout time.Duration) CleanupOption {
+	return func(cfg *cleanupConfig) {
+		cfg.timeout = timeout
+	}
+}
 
 // deleteFn holds a snapshot of a blueprint's delete function captured at
 // Result creation time. This prevents cleanup behavior from changing if
@@ -85,11 +106,61 @@ func (r Result[T]) DebugString() string {
 //
 // Cleanup is useful when transaction rollback is not available, such as when
 // using testcontainers or external databases.
-func (r Result[T]) Cleanup(tb testing.TB, db DBTX) {
+func (r Result[T]) Cleanup(tb testing.TB, db DBTX, opts ...CleanupOption) {
 	tb.Helper()
-	if err := r.CleanupE(tb.Context(), db); err != nil {
+	ctx, cancel := cleanupContext(tb, opts)
+	defer cancel()
+
+	if err := r.CleanupE(ctx, db); err != nil {
 		tb.Fatal(err)
 	}
+}
+
+// cleanupContext derives a context that stays active while test cleanup runs.
+// tb.Context() is already canceled by the time t.Cleanup callbacks execute, so
+// the deadline has to be rebuilt rather than inherited.
+func cleanupContext(tb testing.TB, opts []CleanupOption) (context.Context, context.CancelFunc) {
+	tb.Helper()
+	return context.WithTimeout(context.WithoutCancel(tb.Context()), cleanupTimeout(tb, opts))
+}
+
+// cleanupTimeout resolves the cleanup budget. Without an explicit option it
+// follows the test binary's own remaining deadline, so deleting a large graph
+// row-by-row against a slow database is bounded by the same limit the test had
+// rather than by an unrelated constant.
+func cleanupTimeout(tb testing.TB, opts []CleanupOption) time.Duration {
+	tb.Helper()
+
+	var cfg cleanupConfig
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+	if cfg.timeout > 0 {
+		return cfg.timeout
+	}
+	return remainingDeadline(tb)
+}
+
+// remainingDeadline returns the time left before the test binary's deadline,
+// never less than minCleanupTimeout. testing.TB does not declare Deadline, so
+// it is probed on the concrete type.
+func remainingDeadline(tb testing.TB) time.Duration {
+	tb.Helper()
+
+	deadliner, ok := tb.(interface{ Deadline() (time.Time, bool) })
+	if !ok {
+		return minCleanupTimeout
+	}
+	deadline, ok := deadliner.Deadline()
+	if !ok {
+		return minCleanupTimeout
+	}
+	if remaining := time.Until(deadline); remaining > minCleanupTimeout {
+		return remaining
+	}
+	return minCleanupTimeout
 }
 
 // CleanupE deletes all records that were inserted by seedling in reverse
@@ -256,9 +327,12 @@ func (r BatchResult[T]) DebugString() string {
 }
 
 // Cleanup deletes all records that were inserted by seedling in reverse dependency order.
-func (r BatchResult[T]) Cleanup(tb testing.TB, db DBTX) {
+func (r BatchResult[T]) Cleanup(tb testing.TB, db DBTX, opts ...CleanupOption) {
 	tb.Helper()
-	if err := r.CleanupE(tb.Context(), db); err != nil {
+	ctx, cancel := cleanupContext(tb, opts)
+	defer cancel()
+
+	if err := r.CleanupE(ctx, db); err != nil {
 		tb.Fatal(err)
 	}
 }
