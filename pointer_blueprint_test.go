@@ -313,20 +313,6 @@ func TestPointerBlueprint_RegistrationValidation(t *testing.T) {
 				})
 			},
 		},
-		{
-			name: "nil defaults",
-			register: func(reg *seedling.Registry) error {
-				return seedling.RegisterTo(reg, seedling.Blueprint[*pointerCompany]{
-					Name: "nil_defaults",
-					Defaults: func() *pointerCompany {
-						return nil
-					},
-					Insert: func(_ context.Context, _ seedling.DBTX, value *pointerCompany) (*pointerCompany, error) {
-						return value, nil
-					},
-				})
-			},
-		},
 	}
 
 	for _, tt := range tests {
@@ -342,18 +328,14 @@ func TestPointerBlueprint_RegistrationValidation(t *testing.T) {
 	}
 }
 
-func TestPointerBlueprint_DefaultsReturningNilLaterReturnsError(t *testing.T) {
-	// Arrange
+func TestPointerBlueprint_NilDefaultsReturnsErrorAtBuild(t *testing.T) {
+	// Arrange: Defaults is a per-record hook, so registration must not invoke
+	// it; a nil result surfaces when the first record is planned.
 	reg := seedling.NewRegistry()
-	defaultsCalls := 0
 	err := seedling.RegisterTo(reg, seedling.Blueprint[*pointerCompany]{
-		Name: "stateful_nil_defaults",
+		Name: "nil_defaults",
 		Defaults: func() *pointerCompany {
-			defaultsCalls++
-			if defaultsCalls > 1 {
-				return nil
-			}
-			return &pointerCompany{}
+			return nil
 		},
 		Insert: func(_ context.Context, _ seedling.DBTX, value *pointerCompany) (*pointerCompany, error) {
 			return value, nil

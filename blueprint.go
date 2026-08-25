@@ -24,8 +24,10 @@ type Blueprint[T any] struct {
 	PKFields []string
 
 	// Defaults returns a new instance of T with default field values.
-	// This function is called once per record creation to avoid shared mutable state.
-	// Always return a fresh value — do not return a package-level variable.
+	// This function is called exactly once per record creation and never during
+	// registration, so sequences, random values, or I/O inside it are only
+	// consumed by records that are actually planned. Always return a fresh value
+	// — do not return a package-level variable.
 	//
 	// The returned value's dynamic type must equal T. For a pointer blueprint,
 	// Defaults must return a non-nil pointer. When Defaults is omitted, a value
@@ -43,7 +45,9 @@ type Blueprint[T any] struct {
 
 	// Traits defines named option presets that can be applied by name.
 	// When a trait is defined here, callers can use BlueprintTrait("name")
-	// without re-specifying the options each time.
+	// without re-specifying the options each time. The registry copies this
+	// map and its option slices, so later changes by the caller do not affect
+	// registered traits.
 	//
 	//	Traits: map[string][]seedling.Option{
 	//	    "admin": {seedling.Set("Role", "admin"), seedling.Set("Active", true)},
