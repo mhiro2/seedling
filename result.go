@@ -549,16 +549,22 @@ func cleanupResultGraph(ctx context.Context, g *graph.Graph, deleteFns map[strin
 		return fmt.Errorf("sort cleanup graph: %w", err)
 	}
 
+	// Check every blueprint in the graph for a Delete callback before touching
+	// the database, so a missing callback on a parent never leaves its
+	// already-deleted children behind as a half-finished cleanup.
+	targets := make([]*graph.Node, 0, len(order))
 	for _, node := range slices.Backward(order) {
 		if node.IsProvided {
 			continue
 		}
-
-		df, ok := deleteFns[node.BlueprintName]
-		if !ok || df.fn == nil {
+		if df, ok := deleteFns[node.BlueprintName]; !ok || df.fn == nil {
 			return fmt.Errorf("cleanup blueprint %q: %w", node.BlueprintName, errx.DeleteNotDefined(node.BlueprintName))
 		}
+		targets = append(targets, node)
+	}
 
+	for _, node := range targets {
+		df := deleteFns[node.BlueprintName]
 		value, ok := values[node.ID]
 		if !ok {
 			value = node.Value

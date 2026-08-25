@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 	"sync"
 
 	"github.com/mhiro2/seedling/internal/errx"
@@ -132,20 +133,6 @@ func registerTyped[T any](r *registry, bp Blueprint[T]) error {
 		}
 	}
 
-	// Defaults must produce a value whose dynamic type equals T. Typed options,
-	// insertion, and cleanup rely on direct assertions to that exact type.
-	// Validate at registration time so a mismatch surfaces at the source.
-	if bp.Defaults != nil {
-		value := bp.Defaults()
-		got := reflect.TypeOf(value)
-		if got != modelType {
-			return fmt.Errorf("%w: blueprint %q Defaults returned %s but expected value type %s", errx.ErrInvalidOption, bp.Name, got, modelType)
-		}
-		if modelType.Kind() == reflect.Pointer && reflect.ValueOf(value).IsNil() {
-			return fmt.Errorf("%w: blueprint %q Defaults returned nil %s", errx.ErrInvalidOption, bp.Name, modelType)
-		}
-	}
-
 	// Relation names address options and form part of graph identity, so they
 	// must be present and unique within their blueprint.
 	relationNames := make(map[string]struct{}, len(bp.Relations))
@@ -184,12 +171,19 @@ func registerTyped[T any](r *registry, bp Blueprint[T]) error {
 		}
 	}
 
+	// Copy the trait table so later mutations of the caller's map or option
+	// slices cannot change what a registered trait expands to.
+	traits := make(map[string][]Option, len(bp.Traits))
+	for name, opts := range bp.Traits {
+		traits[name] = cloneOptions(opts)
+	}
+
 	def := &blueprintDef{
 		name:      bp.Name,
 		table:     bp.Table,
 		pkFields:  normalizeFields(bp.PKField, bp.PKFields),
 		relations: normalizeRelations(bp.Relations),
-		traits:    bp.Traits,
+		traits:    traits,
 		modelType: modelType,
 		defaults: func() any {
 			if bp.Defaults != nil {
@@ -299,4 +293,19 @@ func (r *registry) lookupByType(t reflect.Type) (*blueprintDef, error) {
 		return nil, fmt.Errorf("lookup blueprint type %s: %w", t, errx.BlueprintNotFound(t.String()))
 	}
 	return def, nil
+}
+
+// cloneOptions copies an option slice together with the option slices nested
+// inside Ref and InlineTrait, so registered traits never alias caller memory.
+func cloneOptions(opts []Option) []Option {
+	out := slices.Clone(opts)
+	for i, o := range out {
+		switch o := o.(type) {
+		case refOption:
+			out[i] = refOption{name: o.name, opts: cloneOptions(o.opts)}
+		case inlineTraitOption:
+			out[i] = inlineTraitOption{opts: cloneOptions(o.opts)}
+		}
+	}
+	return out
 }

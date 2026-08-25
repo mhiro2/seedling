@@ -306,3 +306,75 @@ func TestValue_DeepCopy(t *testing.T) {
 		t.Fatalf("got %v, want %v", orig.Any.(*sample).Name, "iface")
 	}
 }
+
+func TestValue_SelfReferentialMap(t *testing.T) {
+	// Arrange: a map that contains itself as a value.
+	orig := map[string]any{"name": "root"}
+	orig["self"] = orig
+
+	// Act
+	cp := clone.Value(orig).(map[string]any)
+
+	// Assert
+	if cp["name"] != "root" {
+		t.Fatalf("got name %v, want root", cp["name"])
+	}
+	self, ok := cp["self"].(map[string]any)
+	if !ok {
+		t.Fatalf("self entry has type %T, want map", cp["self"])
+	}
+	if reflect.ValueOf(self).Pointer() != reflect.ValueOf(cp).Pointer() {
+		t.Fatal("clone did not preserve the map self-reference")
+	}
+	if reflect.ValueOf(self).Pointer() == reflect.ValueOf(orig).Pointer() {
+		t.Fatal("clone still points at the original map")
+	}
+}
+
+func TestValue_SelfReferentialSlice(t *testing.T) {
+	// Arrange: a slice whose first element is the slice itself.
+	orig := make([]any, 2)
+	orig[0] = orig
+	orig[1] = "tail"
+
+	// Act
+	cp := clone.Value(orig).([]any)
+
+	// Assert
+	if cp[1] != "tail" {
+		t.Fatalf("got tail %v, want tail", cp[1])
+	}
+	self, ok := cp[0].([]any)
+	if !ok {
+		t.Fatalf("first element has type %T, want slice", cp[0])
+	}
+	if reflect.ValueOf(self).Pointer() != reflect.ValueOf(cp).Pointer() {
+		t.Fatal("clone did not preserve the slice self-reference")
+	}
+	if reflect.ValueOf(self).Pointer() == reflect.ValueOf(orig).Pointer() {
+		t.Fatal("clone still points at the original slice")
+	}
+}
+
+type namedInts []int
+
+func TestValue_AliasedSlicesWithDistinctTypes(t *testing.T) {
+	// Arrange: two fields of different slice types share one backing array.
+	type holder struct {
+		Plain []int
+		Named namedInts
+	}
+	base := []int{1, 2, 3}
+	orig := holder{Plain: base, Named: namedInts(base)}
+
+	// Act
+	cp := clone.Value(orig).(holder)
+
+	// Assert
+	if len(cp.Plain) != 3 || len(cp.Named) != 3 || cp.Named[2] != 3 {
+		t.Fatalf("got %+v, want both slices copied", cp)
+	}
+	if reflect.ValueOf(cp.Plain).Pointer() == reflect.ValueOf(base).Pointer() {
+		t.Fatal("clone still shares the original backing array")
+	}
+}

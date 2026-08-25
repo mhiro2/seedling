@@ -29,5 +29,14 @@ func GetField(v any, name string) (any, error) {
 		return nil, fmt.Errorf("%w: field %q is unexported", errx.ErrFieldNotFound, name)
 	}
 
-	return rv.FieldByIndex(entry.Index).Interface(), nil
+	// FieldByIndexErr reports a nil embedded pointer on the path to a promoted
+	// field instead of panicking.
+	fv, err := rv.FieldByIndexErr(entry.Index)
+	if err != nil {
+		return nil, fmt.Errorf("get field %q: %w: %w", name, errx.ErrFieldNotFound, err)
+	}
+	if !fv.CanInterface() {
+		return nil, fmt.Errorf("%w: field %q is unexported", errx.ErrFieldNotFound, name)
+	}
+	return fv.Interface(), nil
 }
