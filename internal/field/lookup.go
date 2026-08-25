@@ -83,8 +83,9 @@ func CanCopyType(source, destination reflect.Type) bool {
 //
 // The destination is checked against dst itself, because nothing populates a
 // node's own value between this check and the assignment: a nil embedded
-// pointer there can never become settable and is reported now, before any
-// Insert callback has had a chance to write to the database.
+// pointer there is allocated on assignment when it is exported, and reported
+// now when it is not, before any Insert callback has had a chance to write to
+// the database.
 func CanBind(srcType reflect.Type, srcName string, dst any, dstName string) error {
 	srcStruct, err := structTypeFor(srcType, "source")
 	if err != nil {
@@ -103,12 +104,8 @@ func CanBind(srcType reflect.Type, srcName string, dst any, dstName string) erro
 	if err != nil {
 		return err
 	}
-	dstField, err := dstElem.FieldByIndexErr(dstEntry.Index)
-	if err != nil {
+	if err := checkFieldPath(dstElem, dstEntry.Index); err != nil {
 		return fmt.Errorf("set field %q: %w: %w", dstName, errx.ErrInvalidOption, err)
-	}
-	if !dstField.CanSet() {
-		return fmt.Errorf("%w: field %q is unexported", errx.ErrFieldNotFound, dstName)
 	}
 	if !CanCopyType(srcEntry.Type, dstEntry.Type) {
 		return fmt.Errorf("set field %q: %w", dstName, errx.TypeMismatch(dstName, dstEntry.Type.String(), srcEntry.Type.String()))
@@ -204,7 +201,7 @@ func Copy(src any, srcName string, dstPtr any, dstName string) error {
 	if !srcField.CanInterface() {
 		return fmt.Errorf("%w: field %q is unexported", errx.ErrFieldNotFound, srcName)
 	}
-	dstField, err := dstElem.FieldByIndexErr(dstEntry.Index)
+	dstField, err := fieldByIndexAlloc(dstElem, dstEntry.Index)
 	if err != nil {
 		return fmt.Errorf("set field %q: %w: %w", dstName, errx.ErrInvalidOption, err)
 	}

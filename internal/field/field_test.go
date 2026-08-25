@@ -223,7 +223,7 @@ func TestCopy_WrapsValueForNullableDestination(t *testing.T) {
 	}
 }
 
-func TestCopy_NilEmbeddedPointerReturnsError(t *testing.T) {
+func TestCopy_NilEmbeddedPointerSourceReturnsError(t *testing.T) {
 	type embedded struct {
 		ID int
 	}
@@ -231,30 +231,42 @@ func TestCopy_NilEmbeddedPointerReturnsError(t *testing.T) {
 		*embedded
 	}
 
-	tests := []struct {
-		name string
-		src  any
-		dst  any
-	}{
-		{
-			name: "source",
-			src:  model{},
-			dst:  &sample{},
-		},
-		{
-			name: "destination",
-			src:  sample{ID: 42},
-			dst:  &model{},
-		},
+	err := field.Copy(model{}, "ID", &sample{}, "ID")
+	if !errors.Is(err, errx.ErrInvalidOption) {
+		t.Fatalf("got %v, want %v", err, errx.ErrInvalidOption)
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := field.Copy(tt.src, "ID", tt.dst, "ID")
-			if !errors.Is(err, errx.ErrInvalidOption) {
-				t.Fatalf("got %v, want %v", err, errx.ErrInvalidOption)
-			}
-		})
+func TestCopy_NilEmbeddedPointerDestinationIsAllocated(t *testing.T) {
+	type Embedded struct {
+		ID int
+	}
+	type model struct {
+		*Embedded
+	}
+	var dst model
+
+	err := field.Copy(sample{ID: 42}, "ID", &dst, "ID")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dst.Embedded == nil || dst.ID != 42 {
+		t.Fatalf("got %+v, want embedded allocated with ID 42", dst)
+	}
+}
+
+func TestCopy_UnexportedNilEmbeddedPointerDestinationReturnsError(t *testing.T) {
+	type embedded struct {
+		ID int
+	}
+	type model struct {
+		*embedded
+	}
+	var dst model
+
+	err := field.Copy(sample{ID: 42}, "ID", &dst, "ID")
+	if !errors.Is(err, errx.ErrInvalidOption) {
+		t.Fatalf("got %v, want %v", err, errx.ErrInvalidOption)
 	}
 }
 
@@ -264,6 +276,64 @@ func TestCopy_UnexportedSourceFieldReturnsError(t *testing.T) {
 	}
 
 	err := field.Copy(source{id: 42}, "id", &sample{}, "ID")
+	if !errors.Is(err, errx.ErrFieldNotFound) {
+		t.Fatalf("got %v, want %v", err, errx.ErrFieldNotFound)
+	}
+}
+
+func TestSetField_AllocatesNilEmbeddedPointer(t *testing.T) {
+	// Arrange
+	type Embedded struct {
+		ID int
+	}
+	type model struct {
+		*Embedded
+	}
+	var m model
+
+	// Act
+	err := field.SetField(&m, "ID", 42)
+	// Assert
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.Embedded == nil || m.ID != 42 {
+		t.Fatalf("got %+v, want embedded allocated with ID 42", m)
+	}
+}
+
+func TestSetField_UnexportedNilEmbeddedPointerReturnsError(t *testing.T) {
+	// Arrange
+	type embedded struct {
+		ID int
+	}
+	type model struct {
+		*embedded
+	}
+	var m model
+
+	// Act
+	err := field.SetField(&m, "ID", 42)
+
+	// Assert
+	if !errors.Is(err, errx.ErrFieldNotFound) {
+		t.Fatalf("got %v, want %v", err, errx.ErrFieldNotFound)
+	}
+}
+
+func TestGetField_NilEmbeddedPointerReturnsError(t *testing.T) {
+	// Arrange
+	type embedded struct {
+		ID int
+	}
+	type model struct {
+		*embedded
+	}
+
+	// Act
+	_, err := field.GetField(model{}, "ID")
+
+	// Assert
 	if !errors.Is(err, errx.ErrFieldNotFound) {
 		t.Fatalf("got %v, want %v", err, errx.ErrFieldNotFound)
 	}

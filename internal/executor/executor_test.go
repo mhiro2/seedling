@@ -55,6 +55,18 @@ type UserWithNilEmbeddedCompanyID struct {
 	Name string
 }
 
+type userHiddenEmbeddedFields struct {
+	CompanyID int
+}
+
+// UserWithUnexportedNilEmbeddedCompanyID promotes CompanyID through an
+// unexported nil pointer, which the executor cannot allocate.
+type UserWithUnexportedNilEmbeddedCompanyID struct {
+	*userHiddenEmbeddedFields
+	ID   int
+	Name string
+}
+
 type Task struct {
 	ID             int
 	ProjectID      int
@@ -496,10 +508,10 @@ func TestExecute_PreflightRejectsInvalidGraphBeforeInsert(t *testing.T) {
 			wantError: errx.ErrTypeMismatch,
 		},
 		{
-			name: "nil embedded pointer in foreign key field",
+			name: "unexported nil embedded pointer in foreign key field",
 			configure: func(g *graph.Graph, company, user *graph.Node, lookup *mockLookup) {
-				user.Value = UserWithNilEmbeddedCompanyID{Name: "nil embedded destination"}
-				lookup.bps["user"].ModelType = reflect.TypeFor[UserWithNilEmbeddedCompanyID]()
+				user.Value = UserWithUnexportedNilEmbeddedCompanyID{Name: "nil embedded destination"}
+				lookup.bps["user"].ModelType = reflect.TypeFor[UserWithUnexportedNilEmbeddedCompanyID]()
 				g.AddEdge(company, user, "CompanyID")
 			},
 			wantError: errx.ErrInvalidOption,
@@ -594,6 +606,39 @@ func TestExecute_ParentInsertAllocatesEmbeddedReferencedField(t *testing.T) {
 	}
 	if inserted.CompanyID != 11 {
 		t.Fatalf("user CompanyID = %d, want 11", inserted.CompanyID)
+	}
+}
+
+func TestExecute_AllocatesNilEmbeddedForeignKeyField(t *testing.T) {
+	// Arrange: the child promotes CompanyID through an exported nil embedded
+	// pointer, which FK assignment allocates instead of rejecting.
+	g := graph.New()
+	company := &graph.Node{ID: "company", BlueprintName: "company", Value: Company{Name: "acme"}, PKField: "ID"}
+	user := &graph.Node{ID: "user", BlueprintName: "user", Value: UserWithNilEmbeddedCompanyID{Name: "alice"}, PKField: "ID"}
+	g.AddNode(company)
+	g.AddNode(user)
+	g.AddEdge(company, user, "CompanyID")
+
+	lookup := newTestLookup()
+	lookup.bps["user"].ModelType = reflect.TypeFor[UserWithNilEmbeddedCompanyID]()
+	lookup.bps["user"].Insert = func(ctx context.Context, db, v any) (any, error) {
+		u := v.(UserWithNilEmbeddedCompanyID)
+		u.ID = 2
+		return u, nil
+	}
+
+	// Act
+	result, err := executor.Execute(t.Context(), nil, g, lookup, nil)
+	// Assert
+	if err != nil {
+		t.Fatalf("Execute returned unexpected error: %v", err)
+	}
+	inserted, ok := result.Nodes["user"].Value.(UserWithNilEmbeddedCompanyID)
+	if !ok {
+		t.Fatalf("user node value = %T, want UserWithNilEmbeddedCompanyID", result.Nodes["user"].Value)
+	}
+	if inserted.UserEmbeddedFields == nil || inserted.CompanyID != result.Nodes["company"].Value.(Company).ID {
+		t.Fatalf("user = %+v, want embedded CompanyID bound to company ID", inserted)
 	}
 }
 
