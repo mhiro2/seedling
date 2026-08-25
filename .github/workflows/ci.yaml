@@ -21,6 +21,9 @@ jobs:
   lint:
     name: Lint (${{ matrix.module }})
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     strategy:
       fail-fast: false
       matrix:
@@ -67,6 +70,7 @@ jobs:
           github_token: ${{ secrets.github_token }}
           level: warning
           filter_mode: nofilter
+          fail_level: any
           reporter: github-pr-review
 
   module-quality:
