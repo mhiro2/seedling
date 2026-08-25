@@ -5,6 +5,7 @@ package testutil
 import (
 	"context"
 	"database/sql"
+	"os"
 	"testing"
 	"time"
 
@@ -17,6 +18,10 @@ import (
 const (
 	startupTimeout = 2 * time.Minute
 	cleanupTimeout = 30 * time.Second
+
+	// integrationRequiredEnv, when set, turns a Docker-unavailable skip into a
+	// hard failure so CI cannot pass with every integration test skipped.
+	integrationRequiredEnv = "SEEDLING_INTEGRATION_REQUIRED"
 )
 
 type Harness struct {
@@ -44,7 +49,7 @@ func openPostgresDB(tb testing.TB) *sql.DB {
 
 	container, err := runPostgresContainer(ctx)
 	if err != nil {
-		if shouldSkipDockerError(err) {
+		if shouldSkipDockerError(err) && os.Getenv(integrationRequiredEnv) == "" {
 			tb.Skipf("skip postgres integration test: %v", err)
 		}
 		tb.Fatalf("start postgres container: %v", err)

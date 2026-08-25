@@ -7,7 +7,7 @@ on:
   pull_request:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 defaults:
@@ -176,4 +176,6 @@ jobs:
       - name: Install Go tools
         run: go install tool
       - name: Run ${{ matrix.db }} integration tests
+        env:
+          SEEDLING_INTEGRATION_REQUIRED: "1"
         run: make test-integration-${{ matrix.db }}

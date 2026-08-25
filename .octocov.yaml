@@ -1,6 +1,7 @@
 repository: mhiro2/seedling
 
 coverage:
+  acceptable: current >= 80% && diff >= -1%
   exclude:
     - "seedlingtest/**"
     - "internal/testutil/**"
