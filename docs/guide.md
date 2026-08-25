@@ -245,6 +245,8 @@ Both diagnostic flags report what they resolved even when generation would fail.
 The `sqlc` subcommand has two input modes:
 
 - `--config`: read `sqlc.yaml` and auto-resolve schema files, output directory, and Go import path
+  - Supports sqlc config v1 (`packages`) and v2 (`sql`). `schema` may be a single path or a list; directories are expanded to their `*.sql` files in lexical order. The Go import path is derived from the nearest `go.mod` module path plus the output directory.
+  - The config must contain exactly one Go-generating entry (`gen.go` in v2, one `packages` item in v1). Multiple Go entries, a missing `gen.go.out`, an unknown `version`, or malformed YAML are reported as errors rather than guessed; split multi-package configs into separate files and run `seedling-gen` once per file.
 - `--dir` + `--import-path` + `<schema.sql>`: manually point at generated sqlc Go files and the schema DDL
 
 When `--out` is specified, the output is written atomically via a temporary file so that a generation failure never leaves a partial file on disk.

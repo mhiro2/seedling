@@ -27,7 +27,7 @@ It does not infer application-specific database calls. If the user wants a worki
 Choose exactly one input source. Prefer the strongest source of truth already used by the target project.
 
 1. `sqlc.yaml`
-   Use `sqlc --config`.
+   Use `sqlc --config`. Config v1 and v2 are supported, and `schema` may be a file, a directory, or a list. The config must contain exactly one Go-generating entry; if it has several, split it or fall back to manual mode (`--dir` + `--import-path` + schema file).
 2. GORM model directory with `gorm` struct tags
    Use `gorm --dir` and `--import-path`.
 3. ent schema directory with `Fields()` / `Edges()`
