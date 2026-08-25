@@ -7,6 +7,8 @@ description: Write Go tests using seedling to insert, customize, and clean up te
 
 Use this skill when a Go test needs to insert fixture data via seedling blueprints that are already registered.
 
+The snippets below use the package-level helpers (`seedling.InsertOne`, `seedling.InsertMany`, `seedling.Build`, ...), which read the global registry. In real tests prefer a test-local registry: call the generated `testutil.NewRegistry()` (or `seedling.NewRegistry()` + `seedling.MustRegisterTo`) and invoke the same methods on `seedling.NewSession[T](reg)`; see "Session API" below. This matches the README Quick Start and the Guide.
+
 ## Core API
 
 ### Insert a single record
@@ -42,6 +44,8 @@ t.Cleanup(func() { result.Cleanup(t, db) })
 ```
 
 `Cleanup` uses a bounded context that remains active while test cleanup callbacks run. Its budget follows the test deadline; `seedling.WithCleanupTimeout(d)` overrides it.
+
+`Cleanup` / `CleanupE` require a `Delete` callback on every blueprint in the inserted graph (root and all auto-inserted parents; `Use`'d records are exempt). All callbacks are checked before any row is removed, so a missing one fails with `ErrDeleteNotDefined` without deleting anything. `seedling-gen` emits `Delete` for `gorm` and `ent` always, and for `sqlc` only when the queries define a unique `Delete<Table>` / `Delete<Model>` query; `sql` and `atlas` output has no `Delete`, so write it by hand before relying on `Cleanup`.
 
 When using transaction rollback (recommended), explicit cleanup is unnecessary.
 
@@ -147,12 +151,16 @@ func TestUser(t *testing.T) {
 result := seedling.InsertOne[Task](t, db)
 task := result.Root()
 
-// By blueprint name
+// By blueprint name: NodeResult exposes Name() and Value() (the inserted value as any)
 node, ok := result.Node("User")
-userID := node.FieldByName("ID")
+if ok {
+    user := node.Value().(User)
+    t.Logf("%s inserted with ID %d", node.Name(), user.ID)
+}
 
 // Type-safe extraction
-user := seedling.MustNodeAs[User](result, "User")
+user := seedling.MustNodeAs[User](result, "User")       // panics if missing or wrong type
+user, ok, err := seedling.NodeAs[User](result, "User")  // ok=false when missing, err on type mismatch
 ```
 
 ## Session API (custom registry)
@@ -200,6 +208,6 @@ result := plan.Insert(t, db) // execute the plan
 
 ## Notes
 
-- Always register blueprints into a test-local registry before calling `InsertOne` / `InsertMany`; prefer `seedling.NewSession[T](reg)` over the global helpers.
+- Prefer a test-local registry (generated `NewRegistry()` or `seedling.NewRegistry()` + `MustRegisterTo`) with `seedling.NewSession[T](reg)` over the global registry and package-level helpers; a per-test registry keeps blueprint state isolated between tests and packages.
 - `InsertOne` / `InsertMany` accept a `testing.TB` and fail the test on error. Use the `E` variants (`InsertOneE`, `InsertManyE`) in non-test contexts or when you need explicit error handling.
 - Prefer transaction rollback over `Cleanup` for test isolation — it is faster and guarantees no leftover data.

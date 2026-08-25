@@ -138,6 +138,7 @@ Important detail:
 - They are assigned by the executor immediately before each insert.
 - This allows database-generated primary keys, or other returned referenced values, to flow into downstream child nodes.
 - If execution stops after some inserts succeed, the executor returns those nodes with the error. Its partial graph contains only completed nodes, so `Result.CleanupE` and `BatchResult.CleanupE` never attempt to delete failed or unvisited nodes. That graph keeps the original root when the root completed and has no root otherwise, so `DebugString` never presents an arbitrary surviving node as the root.
+- Cleanup walks the graph in reverse topological order and requires a `Delete` callback on every non-provided blueprint. It validates all callbacks before issuing the first delete, so a missing `Delete` surfaces as `ErrDeleteNotDefined` with no rows removed rather than as a half-finished teardown.
 
 ## Why the split exists
 
@@ -182,7 +183,7 @@ flowchart LR
     Render --> Out["Go source code<br/>Blueprint registrations"]
 ```
 
-SQL DDL, sqlc config, manual sqlc mode, and Atlas HCL still share the common `[]Table` parser output, including both local and referenced FK columns. GORM and ent continue to parse into adapter-specific types (`[]GormModel`, `[]EntSchema`). Ent additionally loads the generated client package and binds schema fields to its exact entity, builder, and ID signatures; this preserves project-defined entc acronyms, incorporates generated mixin fields, and rejects missing or incompatible generated signatures. Before code generation, each adapter is normalized into the same `[]normalizedModel` IR, including PK metadata, explicit referenced-field mappings, belongs-to relations, and Insert/Delete hook bodies. The final renderer is shared, so adapter-specific logic is isolated to parsing and normalization rather than duplicated template code.
+SQL DDL, sqlc config, manual sqlc mode, and Atlas HCL still share the common `[]Table` parser output, including both local and referenced FK columns. GORM and ent continue to parse into adapter-specific types (`[]GormModel`, `[]EntSchema`). Ent additionally loads the generated client package and binds schema fields to its exact entity, builder, and ID signatures; this preserves project-defined entc acronyms, incorporates generated mixin fields, and rejects missing or incompatible generated signatures. Before code generation, each adapter is normalized into the same `[]normalizedModel` IR, including PK metadata, explicit referenced-field mappings, belongs-to relations, and Insert/Delete hook bodies (GORM and ent always produce a Delete hook, sqlc only when a unique `Delete<Table>` query is present, and the DDL-only SQL/Atlas adapters produce none). The final renderer is shared, so adapter-specific logic is isolated to parsing and normalization rather than duplicated template code.
 
 The same normalization path also powers `seedling-gen --explain` and `--json`. Diagnostic mode emits both the parser output and the inferred blueprint summary, so relation naming, PK detection, and sqlc query matching can be inspected without reading generated code.
 

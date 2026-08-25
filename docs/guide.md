@@ -4,6 +4,8 @@ Practical workflows and API patterns for using seedling in your tests. Start wit
 
 ## Core Workflows
 
+The snippets in this guide call the package-level helpers (`seedling.InsertOne`, `seedling.InsertMany`, `seedling.Build`, ...), which read the global registry, to keep the examples short. In real tests prefer a test-local registry: create one with the generated `NewRegistry()` (or `seedling.NewRegistry()` + `MustRegisterTo`) and call the same methods on `seedling.NewSession[T](reg)`, as the README Quick Start does. A per-test registry keeps blueprint state isolated between tests and packages.
+
 ### Basic inserts
 
 Use `InsertOne` when a test needs a single root record and all required parents.
@@ -187,11 +189,11 @@ When you use `database/sql`, [`WithTx`](https://pkg.go.dev/github.com/mhiro2/see
 - `Result.DebugString`: inspect inserted nodes with primary-key values
 - `Result.Node(name)`: returns the lexicographically smallest matching node ID when multiple nodes share the same blueprint name
 - `Result.Nodes(name)`: returns all matching nodes in node ID order
-- `Result.Cleanup` / `CleanupE`: delete inserted rows in reverse dependency order when transaction rollback is not available
+- `Result.Cleanup` / `CleanupE`: delete inserted rows in reverse dependency order when transaction rollback is not available. Every blueprint in the inserted graph must define `Delete` (records supplied through `Use` are skipped); the callbacks are validated up front, so a missing one fails with `ErrDeleteNotDefined` before any row is deleted
 - `BatchResult.DebugString`: inspect the full batch execution graph with primary-key values
 - `BatchResult.Node(name)`: searches across the full batch, so use it only when cross-root ambiguity is acceptable
 - `BatchResult.NodeAt(rootIndex, name)` / `NodesForRoot(rootIndex, name)`: inspect one root and its shared ancestors without mixing in sibling roots
-- `BatchResult.Cleanup` / `CleanupE`: delete rows inserted by `InsertManyE`; cleanup is fail-fast and stops at the first delete error
+- `BatchResult.Cleanup` / `CleanupE`: delete rows inserted by `InsertManyE`; the same `Delete` requirement applies, and cleanup is fail-fast and stops at the first delete error
 
 ## CLI
 
@@ -232,6 +234,8 @@ seedling-gen ent --dir ./ent/schema --import-path github.com/you/app/ent --pkg b
 # Atlas HCL: parses Atlas schema file
 seedling-gen atlas --pkg blueprints schema.hcl
 ```
+
+Only some adapters can emit a `Delete` callback, which `Result.Cleanup` requires on every blueprint in the graph: `gorm` and `ent` always generate one, `sqlc` generates one when the queries define a unique `Delete<Table>` / `Delete<Model>` query taking the primary key, and `sql` / `atlas` generate none because they see only DDL. Add `Delete` by hand when you rely on `Cleanup` instead of `WithTx`.
 
 All subcommands support `--pkg` (generated package name) and `--out` (output file path). The `sql` and `sqlc` subcommands also support `--dialect` (`auto`, `postgres`, `mysql`, `sqlite`) as a validation hint. The SQL parser itself uses the same logic for all dialects, so `--dialect` does not change parsing behavior.
 

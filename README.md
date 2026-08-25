@@ -242,6 +242,8 @@ t.Cleanup(func() { result.Cleanup(t, db) })
 
 `Cleanup` uses a bounded context that remains active during `t.Cleanup`, even after the test context is canceled. Its budget follows the test binary's own deadline; pass `seedling.WithCleanupTimeout` to cap it explicitly when tearing down a large graph against a slow database.
 
+Every blueprint in the inserted graph (the root and every auto-inserted parent) needs a `Delete` callback. All callbacks are checked up front, so if any is missing `Cleanup` fails with `ErrDeleteNotDefined` before deleting anything. `seedling-gen` emits `Delete` for `gorm` and `ent`, and for `sqlc` when a unique `Delete<Table>` query exists; the `sql` and `atlas` subcommands leave it for you to write.
+
 The [Guide](./docs/guide.md#debugging-and-cleanup) lists the full set of debugging APIs, including `BatchResult.NodeAt` for `InsertMany` graphs.
 
 ## ⚖️ Comparison
@@ -273,6 +275,10 @@ The [Guide](./docs/guide.md#debugging-and-cleanup) lists the full set of debuggi
 - [Agent Skill: seedling-gen CLI](./skills/seedling-gen-cli/SKILL.md) -- instructions for AI agents that need to choose the right generator mode and scaffold blueprints
 - [Agent Skill: seedling test setup](./skills/seedling-test-setup/SKILL.md) -- instructions for AI agents that write Go tests using seedling blueprints
 - [pkg.go.dev API reference](https://pkg.go.dev/github.com/mhiro2/seedling) -- full type and function docs
+
+## 🛠️ Development
+
+`make fmt` and `make lint` cover the root, `integration`, and `seedlingpgx` modules; `make test` runs the root and `seedlingpgx` unit tests. The integration suites run separately with `make test-integration-{postgres,mysql,sqlite}`. PostgreSQL and MySQL start containers with testcontainers and skip when Docker is unavailable; set `SEEDLING_INTEGRATION_REQUIRED=1` (as CI does) to turn that skip into a failure. SQLite runs in-process and never skips. Fuzz targets run weekly in CI and on demand with `make fuzz`.
 
 ## 📝 License
 
