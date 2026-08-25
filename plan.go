@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/mhiro2/seedling/internal/debug"
@@ -134,6 +136,10 @@ func (p *Plan[T]) InsertE(ctx context.Context, db DBTX) (Result[T], error) {
 			if err := cb(root, effectiveDB); err != nil {
 				return result, fmt.Errorf("run after-insert callback: %w", err)
 			}
+		default:
+			// BuildE rejects mismatched callbacks up front; this guards against a
+			// plan assembled through any other path.
+			return result, afterInsertTypeError[T](fn)
 		}
 	}
 
@@ -195,48 +201,97 @@ func (p *Plan[T]) toExecutorLogFn() func(executor.LogEntry) {
 }
 
 func prepareRootOptions(reg *Registry, rootType reflect.Type, opts []Option) (*optionSet, error) {
-	collected := collectOptions(opts)
-
 	r := resolveRegistry(reg).reg
 	def, err := r.lookupByType(rootType)
 	if err != nil {
 		return nil, fmt.Errorf("build plan: %w", err)
 	}
-	if err := resolveAllTraits(collected, def, r); err != nil {
+	expanded, err := expandTraits(opts, def, r)
+	if err != nil {
 		return nil, fmt.Errorf("build plan: %w", err)
 	}
+	collected := collectOptions(expanded)
 	if err := validateResolvedOptions(collected, true); err != nil {
+		return nil, fmt.Errorf("build plan: %w", err)
+	}
+	if err := validateAfterInserts(rootType, collected.afterInserts); err != nil {
 		return nil, fmt.Errorf("build plan: %w", err)
 	}
 	return collected, nil
 }
 
-// resolveAllTraits resolves trait names on the optionSet and recursively on
-// all nested Ref options. For each Ref, the target blueprint is determined
-// from the relation definition so that traits can be looked up correctly.
-func resolveAllTraits(os *optionSet, def *blueprintDef, r *registry) error {
-	if err := resolveTraits(os, def); err != nil {
-		return err
-	}
-	for name, refOpts := range os.refs {
-		if !hasTraits(refOpts) {
-			continue
-		}
-		refBP, err := findRefBlueprint(def, name, r)
-		if err != nil {
-			// Unknown relation names will be caught by the planner validator.
-			continue
-		}
-		refCollected := collectOptions(refOpts)
-		if err := resolveAllTraits(refCollected, refBP, r); err != nil {
-			return fmt.Errorf("resolve traits for ref %q: %w", name, err)
-		}
-		os.refs[name] = reconstructOptions(refCollected)
-	}
-	return nil
+// expandTraits replaces every trait option in opts with the options it stands
+// for. Expansion happens in place, so a trait contributes its options exactly
+// where it was written and later options keep overriding earlier ones. Options
+// nested under Ref are expanded against the blueprint the relation targets.
+func expandTraits(opts []Option, def *blueprintDef, r *registry) ([]Option, error) {
+	return expandTraitsInScope(opts, def, r, nil)
 }
 
-// hasTraits checks if any option in the slice is a trait option.
+// traitKey identifies a trait on a specific blueprint while it is being expanded.
+type traitKey struct {
+	blueprint string
+	trait     string
+}
+
+func (k traitKey) String() string { return k.blueprint + ":" + k.trait }
+
+// expandTraitsInScope is the recursive worker for expandTraits. active holds
+// the chain of traits currently being expanded, across Ref boundaries, so that
+// a trait that (transitively) references itself — on the same blueprint or
+// through a relation back to it — is reported instead of looping.
+func expandTraitsInScope(opts []Option, def *blueprintDef, r *registry, active []traitKey) ([]Option, error) {
+	out := make([]Option, 0, len(opts))
+	for _, o := range opts {
+		switch o := o.(type) {
+		case blueprintTraitOption:
+			key := traitKey{blueprint: def.name, trait: o.name}
+			if slices.Contains(active, key) {
+				chain := make([]string, 0, len(active)+1)
+				for _, k := range append(slices.Clone(active), key) {
+					chain = append(chain, k.String())
+				}
+				return nil, fmt.Errorf("%w: trait %q on blueprint %q references itself via %s", ErrInvalidOption, o.name, def.name, strings.Join(chain, " -> "))
+			}
+			traitOpts, ok := def.traits[o.name]
+			if !ok {
+				return nil, fmt.Errorf("%w: trait %q not defined on blueprint %q", ErrInvalidOption, o.name, def.name)
+			}
+			expanded, err := expandTraitsInScope(traitOpts, def, r, append(slices.Clone(active), key))
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, expanded...)
+		case inlineTraitOption:
+			expanded, err := expandTraitsInScope(o.opts, def, r, active)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, expanded...)
+		case refOption:
+			refBP, err := findRefBlueprint(def, o.name, r)
+			if err != nil {
+				if hasTraits(o.opts) {
+					return nil, fmt.Errorf("resolve traits for ref %q: %w", o.name, err)
+				}
+				// Unknown relation names without traits are reported by the planner
+				// validator with its usual hints.
+				out = append(out, o)
+				continue
+			}
+			expanded, err := expandTraitsInScope(o.opts, refBP, r, active)
+			if err != nil {
+				return nil, fmt.Errorf("resolve traits for ref %q: %w", o.name, err)
+			}
+			out = append(out, refOption{name: o.name, opts: expanded})
+		default:
+			out = append(out, o)
+		}
+	}
+	return out, nil
+}
+
+// hasTraits reports whether opts contains a blueprint trait option at any depth.
 func hasTraits(opts []Option) bool {
 	for _, o := range opts {
 		switch o := o.(type) {
@@ -262,72 +317,36 @@ func findRefBlueprint(def *blueprintDef, relationName string, r *registry) (*blu
 			return r.lookupByName(rel.refBlueprint)
 		}
 	}
-	return nil, fmt.Errorf("relation %q not found on blueprint %q", relationName, def.name)
+	return nil, fmt.Errorf("%w: relation %q not found on blueprint %q", ErrInvalidOption, relationName, def.name)
 }
 
-// reconstructOptions converts an optionSet back into a slice of Options so
-// it can be stored in refs and later re-collected by toOptionSet.
-func reconstructOptions(os *optionSet) []Option {
-	var opts []Option
-	for field, value := range os.sets {
-		opts = append(opts, Set(field, value))
-	}
-	for name, value := range os.uses {
-		opts = append(opts, Use(name, value))
-	}
-	for name, refOpts := range os.refs {
-		opts = append(opts, Ref(name, refOpts...))
-	}
-	for name := range os.omits {
-		opts = append(opts, Omit(name))
-	}
-	for name, fn := range os.whens {
-		opts = append(opts, whenOption{name: name, fn: fn})
-	}
-	for _, fn := range os.withFns {
-		opts = append(opts, withFnOption{fn: fn})
-	}
-	for _, fn := range os.afterInserts {
-		opts = append(opts, rawAfterInsertOption{fn: fn})
-	}
-	for _, fn := range os.genFns {
-		opts = append(opts, rawGenerateOption{fn: fn})
-	}
-	if os.rand != nil {
-		opts = append(opts, WithRand(os.rand))
-	}
-	if os.ctx != nil {
-		opts = append(opts, WithContext(os.ctx))
-	}
-	if os.logFn != nil {
-		opts = append(opts, WithInsertLog(os.logFn))
-	}
-	return opts
-}
-
-// resolveTraits expands deferred trait names by looking them up from the
-// blueprint's registered traits and applying their options to the optionSet.
-// Traits are resolved iteratively to support trait-of-trait references.
-func resolveTraits(os *optionSet, def *blueprintDef) error {
-	seen := make(map[string]bool)
-	for len(os.traits) > 0 {
-		pending := os.traits
-		os.traits = nil
-		for _, name := range pending {
-			if seen[name] {
-				continue
-			}
-			seen[name] = true
-			traitOpts, ok := def.traits[name]
-			if !ok {
-				return fmt.Errorf("%w: trait %q not defined on blueprint %q", ErrInvalidOption, name, def.name)
-			}
-			for _, o := range traitOpts {
-				o.applyOption(os)
-			}
+// validateAfterInserts rejects AfterInsert callbacks whose record type does not
+// match the root blueprint type, e.g. AfterInsert[Post] passed to InsertOne[User],
+// and nil callbacks that would panic when invoked.
+func validateAfterInserts(rootType reflect.Type, fns []any) error {
+	dbType := reflect.TypeFor[DBTX]()
+	for _, fn := range fns {
+		fv := reflect.ValueOf(fn)
+		if !fv.IsValid() || fv.Kind() != reflect.Func {
+			return afterInsertTypeMismatch(rootType, fn)
+		}
+		if fv.IsNil() {
+			return fmt.Errorf("%w: after-insert callback must not be nil", ErrInvalidOption)
+		}
+		ft := fv.Type()
+		if ft.NumIn() != 2 || ft.In(0) != rootType || ft.In(1) != dbType {
+			return afterInsertTypeMismatch(rootType, fn)
 		}
 	}
 	return nil
+}
+
+func afterInsertTypeError[T any](fn any) error {
+	return afterInsertTypeMismatch(reflect.TypeFor[T](), fn)
+}
+
+func afterInsertTypeMismatch(rootType reflect.Type, fn any) error {
+	return fmt.Errorf("%w: after-insert callback has type %T; expected func(%s, seedling.DBTX) or func(%s, seedling.DBTX) error", ErrInvalidOption, fn, rootType, rootType)
 }
 
 func toOptionSet(os *optionSet) *planner.OptionSet {
@@ -379,6 +398,11 @@ func validateResolvedOptions(os *optionSet, root bool) error {
 	}
 	if len(os.seqs) > 0 || len(os.seqRefs) > 0 || len(os.seqUses) > 0 {
 		return fmt.Errorf("%w: Seq, SeqRef, and SeqUse are only supported by InsertMany", ErrInvalidOption)
+	}
+	if len(os.traits) > 0 {
+		// Traits are expanded before collection; a leftover means an option
+		// stream bypassed expandTraits.
+		return fmt.Errorf("%w: trait %q was not expanded", ErrInvalidOption, os.traits[0])
 	}
 	for name, refOpts := range os.refs {
 		if err := validateResolvedOptions(collectOptions(refOpts), false); err != nil {

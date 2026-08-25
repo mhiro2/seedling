@@ -92,7 +92,7 @@ seedling.InsertOne[User](t, db, seedling.With(func(u *User) {
 seedling.InsertOne[User](t, db, seedling.BlueprintTrait("admin"))
 ```
 
-Traits are defined in the blueprint's `Traits` map.
+Traits are defined in the blueprint's `Traits` map. A trait expands in place, so it behaves exactly like writing its options at that position: `Set` written after `BlueprintTrait` overrides the trait, and `BlueprintTrait` written after `Set` overrides the explicit value.
 
 ### Seq — per-record sequencing in InsertMany
 

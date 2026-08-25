@@ -27,7 +27,7 @@ type optionSet struct {
 	afterInserts []any                              // func(T, DBTX) closures run after insert
 	genFns       []generateFn                       // typed rand-driven mutators
 	rand         *rand.Rand                         // optional RNG for Generate options
-	traits       []string                           // deferred blueprint trait names
+	traits       []string                           // blueprint trait names left unexpanded (always empty after expandTraits)
 	logFn        func(InsertLog)                    // optional insert log callback
 	only         map[string]bool                    // Only option: nil = insert all, non-nil = insert only specified relations
 }
@@ -298,6 +298,11 @@ func (a afterInsertEOption[T]) applyOption(o *optionSet) {
 // BlueprintTrait applies a named trait defined on the target blueprint.
 //
 //	seedling.InsertOne[User](t, db, seedling.BlueprintTrait("admin"))
+//
+// The trait expands in place, so its options take effect exactly where the
+// trait is written: options listed after it override the trait, and the trait
+// overrides options listed before it. A trait may reference other traits of
+// the same blueprint, but a trait that reaches itself is rejected.
 func BlueprintTrait(name string) Option {
 	return blueprintTraitOption{name: name}
 }
@@ -467,23 +472,6 @@ func (o onlyOption) applyOption(os *optionSet) {
 		os.only[r] = true
 	}
 }
-
-// withFnOption wraps a pre-built withFn for internal use (e.g. reconstructOptions).
-type withFnOption struct{ fn withFn }
-
-func (w withFnOption) applyOption(o *optionSet) { o.withFns = append(o.withFns, w.fn) }
-
-// rawAfterInsertOption wraps a pre-built afterInsert closure for internal use.
-type rawAfterInsertOption struct{ fn any }
-
-func (a rawAfterInsertOption) applyOption(o *optionSet) {
-	o.afterInserts = append(o.afterInserts, a.fn)
-}
-
-// rawGenerateOption wraps a pre-built generateFn for internal use.
-type rawGenerateOption struct{ fn generateFn }
-
-func (g rawGenerateOption) applyOption(o *optionSet) { o.genFns = append(o.genFns, g.fn) }
 
 func applyTypedMutation[T any](kind string, value any, fn func(*T) error) (any, error) {
 	rv := reflect.ValueOf(value)

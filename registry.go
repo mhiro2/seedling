@@ -175,7 +175,7 @@ func registerTyped[T any](r *registry, bp Blueprint[T]) error {
 	// slices cannot change what a registered trait expands to.
 	traits := make(map[string][]Option, len(bp.Traits))
 	for name, opts := range bp.Traits {
-		traits[name] = slices.Clone(opts)
+		traits[name] = cloneOptions(opts)
 	}
 
 	def := &blueprintDef{
@@ -293,4 +293,19 @@ func (r *registry) lookupByType(t reflect.Type) (*blueprintDef, error) {
 		return nil, fmt.Errorf("lookup blueprint type %s: %w", t, errx.BlueprintNotFound(t.String()))
 	}
 	return def, nil
+}
+
+// cloneOptions copies an option slice together with the option slices nested
+// inside Ref and InlineTrait, so registered traits never alias caller memory.
+func cloneOptions(opts []Option) []Option {
+	out := slices.Clone(opts)
+	for i, o := range out {
+		switch o := o.(type) {
+		case refOption:
+			out[i] = refOption{name: o.name, opts: cloneOptions(o.opts)}
+		case inlineTraitOption:
+			out[i] = inlineTraitOption{opts: cloneOptions(o.opts)}
+		}
+	}
+	return out
 }
