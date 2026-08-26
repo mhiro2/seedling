@@ -42,6 +42,17 @@ jobs:
       - name: Test
         run: make test
 
+  seedlingpgx-version:
+    name: Check seedlingpgx parent version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check seedlingpgx tracks the latest published seedling release
+        run: bash scripts/check-seedlingpgx-parent-version.sh "$GITHUB_REF_NAME"
+
   integration:
     name: Integration test (${{ matrix.db }})
     runs-on: ubuntu-latest
@@ -75,6 +86,7 @@ jobs:
   goreleaser:
     needs:
       - quality
+      - seedlingpgx-version
       - integration
     runs-on: ubuntu-latest
     steps:
