@@ -72,6 +72,7 @@ jobs:
           filter_mode: nofilter
           fail_level: any
           reporter: github-pr-review
+          cache: false
 
   module-quality:
     name: Format and licenses (${{ matrix.module }})
