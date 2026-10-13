@@ -9,7 +9,10 @@ import (
 	"testing"
 )
 
-const actualGormFixtureImportPath = "github.com/mhiro2/seedling/cmd/seedling-gen/testdata/gorm_actual/model"
+const (
+	actualGormFixtureImportPath      = "github.com/mhiro2/seedling/cmd/seedling-gen/testdata/gorm_actual/model"
+	handwrittenGormFixtureImportPath = "github.com/mhiro2/seedling/cmd/seedling-gen/testdata/gorm_actual/handwritten"
+)
 
 func TestActualGormFixtureLifecycle(t *testing.T) {
 	fixtureDir := filepath.Join("testdata", "gorm_actual")
@@ -23,6 +26,24 @@ func TestActualGormFixtureLifecycle(t *testing.T) {
 		t.Fatalf("GenerateGorm: %v", err)
 	}
 	ensureActualGormCompilesAndRuns(t, fixtureDir, generated.String(), actualGormLifecycleTest)
+}
+
+// TestHandwrittenGormFixtureLifecycle covers conventional hand-written GORM
+// models: an untagged ID primary key and an embedded gorm.Model. Repeated and
+// batch inserts against SQLite prove the generated defaults leave the keys to
+// the database and compile against promoted fields.
+func TestHandwrittenGormFixtureLifecycle(t *testing.T) {
+	fixtureDir := filepath.Join("testdata", "gorm_actual")
+	models, err := ParseGormDir(filepath.Join(fixtureDir, "handwritten"))
+	if err != nil {
+		t.Fatalf("ParseGormDir: %v", err)
+	}
+
+	var generated strings.Builder
+	if err := GenerateGorm(&generated, "compile", handwrittenGormFixtureImportPath, models); err != nil {
+		t.Fatalf("GenerateGorm: %v", err)
+	}
+	ensureActualGormCompilesAndRuns(t, fixtureDir, generated.String(), handwrittenGormLifecycleTest)
 }
 
 func ensureActualGormCompilesAndRuns(t *testing.T, fixtureDir, src, testSrc string) {
@@ -159,6 +180,82 @@ func TestGeneratedActualGormBlueprintLifecycle(t *testing.T) {
 }
 
 func assertActualGormCount(t *testing.T, db *gorm.DB, model any, want int64) {
+	t.Helper()
+	var got int64
+	if err := db.Model(model).Count(&got).Error; err != nil {
+		t.Fatalf("count %T: %v", model, err)
+	}
+	if got != want {
+		t.Fatalf("count %T = %d, want %d", model, got, want)
+	}
+}
+`
+
+const handwrittenGormLifecycleTest = `package compile
+
+import (
+	"testing"
+
+	"github.com/glebarez/sqlite"
+	"github.com/mhiro2/seedling"
+	"github.com/mhiro2/seedling/cmd/seedling-gen/testdata/gorm_actual/handwritten"
+	"gorm.io/gorm"
+)
+
+func TestGeneratedHandwrittenGormBlueprintLifecycle(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:seedling_gorm_handwritten?mode=memory&cache=shared&_pragma=foreign_keys(1)"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open SQLite: %v", err)
+	}
+	if err := db.AutoMigrate(&handwritten.Team{}, &handwritten.Player{}); err != nil {
+		t.Fatalf("migrate fixture models: %v", err)
+	}
+
+	session := seedling.NewSession[handwritten.Player](NewRegistry())
+	first, err := session.InsertOneE(t.Context(), db)
+	if err != nil {
+		t.Fatalf("insert first player: %v", err)
+	}
+	second, err := session.InsertOneE(t.Context(), db)
+	if err != nil {
+		t.Fatalf("insert second player: %v", err)
+	}
+	batch, err := session.InsertManyE(t.Context(), db, 2)
+	if err != nil {
+		t.Fatalf("insert player batch: %v", err)
+	}
+
+	ids := make(map[uint]bool)
+	for _, player := range append([]handwritten.Player{first.Root(), second.Root()}, batch.Roots()...) {
+		if player.ID == 0 || ids[player.ID] {
+			t.Fatalf("player ID = %d, want a distinct generated value", player.ID)
+		}
+		ids[player.ID] = true
+	}
+
+	team := first.MustNode("team").Value().(handwritten.Team)
+	if team.ID == 0 || first.Root().TeamID != team.ID {
+		t.Fatalf("player team ID = %d, team ID = %d", first.Root().TeamID, team.ID)
+	}
+	if team.Name == "" || team.CreatedAt.IsZero() || team.UpdatedAt.IsZero() {
+		t.Fatalf("team defaults were not populated: %+v", team)
+	}
+	assertHandwrittenGormCount(t, db, &handwritten.Player{}, 4)
+
+	for _, cleanup := range []func() error{
+		func() error { return first.CleanupE(t.Context(), db) },
+		func() error { return second.CleanupE(t.Context(), db) },
+		func() error { return batch.CleanupE(t.Context(), db) },
+	} {
+		if err := cleanup(); err != nil {
+			t.Fatalf("cleanup generated GORM blueprint: %v", err)
+		}
+	}
+	assertHandwrittenGormCount(t, db, &handwritten.Player{}, 0)
+	assertHandwrittenGormCount(t, db, &handwritten.Team{}, 0)
+}
+
+func assertHandwrittenGormCount(t *testing.T, db *gorm.DB, model any, want int64) {
 	t.Helper()
 	var got int64
 	if err := db.Model(model).Count(&got).Error; err != nil {

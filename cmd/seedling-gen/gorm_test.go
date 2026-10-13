@@ -422,6 +422,37 @@ func TestGenerateGorm_InferredPrimaryKeyHasNoDefault(t *testing.T) {
 	}
 }
 
+func TestGenerateGorm_NestsGormModelDefaults(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "models.go", `package models
+
+import "gorm.io/gorm"
+
+type Item struct {
+	gorm.Model
+	Label string
+}
+`)
+	models, err := ParseGormDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	var buf bytes.Buffer
+	if err := GenerateGorm(&buf, "testutil", "github.com/myapp/models", models); err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	output := buf.String()
+	want := `return models.Item{Model: gorm.Model{CreatedAt: time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC), UpdatedAt: time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)}, Label: "item-label"}`
+	if !strings.Contains(output, want) {
+		t.Fatalf("expected promoted defaults under gorm.Model\n\nGot:\n%s", output)
+	}
+}
+
 func TestToSnakeCase(t *testing.T) {
 	tests := []struct {
 		input, want string

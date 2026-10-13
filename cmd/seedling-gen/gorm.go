@@ -30,6 +30,7 @@ type GormField struct {
 	IsFK       bool
 	FKRefModel string
 	Relation   *GormRelation
+	Embedded   *embeddedStruct // set for fields promoted from an embedded struct
 }
 
 // GormRelation represents a GORM relationship extracted from struct tags.
@@ -130,11 +131,12 @@ func parseGormStruct(name string, st *ast.StructType, allStructs map[string]*ast
 		// Handle embedded gorm.Model.
 		if len(field.Names) == 0 {
 			if isGormModelEmbed(field.Type) {
+				embedded := &embeddedStruct{FieldName: "Model", TypeExpr: "gorm.Model"}
 				model.Fields = append(model.Fields,
-					GormField{Name: "ID", Type: "uint", ColumnName: "id", IsPK: true},
-					GormField{Name: "CreatedAt", Type: "time.Time", ColumnName: "created_at"},
-					GormField{Name: "UpdatedAt", Type: "time.Time", ColumnName: "updated_at"},
-					GormField{Name: "DeletedAt", Type: "gorm.DeletedAt", ColumnName: "deleted_at"},
+					GormField{Name: "ID", Type: "uint", ColumnName: "id", IsPK: true, Embedded: embedded},
+					GormField{Name: "CreatedAt", Type: "time.Time", ColumnName: "created_at", Embedded: embedded},
+					GormField{Name: "UpdatedAt", Type: "time.Time", ColumnName: "updated_at", Embedded: embedded},
+					GormField{Name: "DeletedAt", Type: "gorm.DeletedAt", ColumnName: "deleted_at", Embedded: embedded},
 				)
 				continue
 			}
