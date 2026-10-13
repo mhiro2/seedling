@@ -1249,6 +1249,43 @@ func TestInsertOne_BelongsToParentWithHasManyBackReference(t *testing.T) {
 	}
 }
 
+func TestHasMany_RejectsUseOrRefOnBackReference(t *testing.T) {
+	// Arrange
+	tests := []struct {
+		name   string
+		option seedling.Option
+		want   string
+	}{
+		{
+			name:   "use",
+			option: seedling.Ref("employees", seedling.Use("department", Department{ID: 99})),
+			want:   "Use",
+		},
+		{
+			name:   "ref",
+			option: seedling.Ref("employees", seedling.Ref("department", seedling.Set("Name", "custom"))),
+			want:   "Ref",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupHasManyBlueprints(t)
+
+			// Act
+			_, err := buildE[Department](t, tt.option)
+
+			// Assert
+			if !errors.Is(err, seedling.ErrInvalidOption) {
+				t.Fatalf("got %v, want %v", err, seedling.ErrInvalidOption)
+			}
+			if !strings.Contains(err.Error(), `relation "department" on blueprint "employee" is bound`) || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error %q does not describe the bound relation and %s", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestRef_HasManyAppliesToAllChildren(t *testing.T) {
 	// Arrange
 	setupHasManyBlueprints(t)
