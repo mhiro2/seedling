@@ -1201,6 +1201,54 @@ func TestInsertOne_HasManyAutoExpand(t *testing.T) {
 	}
 }
 
+type employeeAssignment struct {
+	ID         int
+	EmployeeID int
+}
+
+func TestInsertOne_BelongsToParentWithHasManyBackReference(t *testing.T) {
+	// Arrange: assignment -> employee -> department -> employees. The
+	// department's generated employees bind back to it, so the graph is finite
+	// and must not be rejected as a cycle.
+	setupHasManyBlueprints(t)
+	seedling.MustRegisterTo(getTestRegistry(t), seedling.Blueprint[employeeAssignment]{
+		Name:    "assignment",
+		Table:   "assignments",
+		PKField: "ID",
+		Relations: []seedling.Relation{
+			{Name: "employee", Kind: seedling.BelongsTo, LocalField: "EmployeeID", RefBlueprint: "employee"},
+		},
+		Insert: func(_ context.Context, _ seedling.DBTX, v employeeAssignment) (employeeAssignment, error) {
+			v.ID = nextID()
+			return v, nil
+		},
+	})
+
+	// Act
+	result, err := session[employeeAssignment](t).InsertOneE(t.Context(), nil)
+	// Assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(result.All()); got != 5 {
+		t.Fatalf("got %d nodes, want %d", got, 5)
+	}
+	department, ok := result.Node("department")
+	if !ok {
+		t.Fatal("expected department node")
+	}
+	departmentID := department.Value().(Department).ID
+	employees := result.Nodes("employee")
+	if len(employees) != 3 {
+		t.Fatalf("got %d employees, want %d", len(employees), 3)
+	}
+	for _, node := range employees {
+		if got := node.Value().(Employee).DepartmentID; got != departmentID {
+			t.Fatalf("employee DepartmentID = %d, want %d", got, departmentID)
+		}
+	}
+}
+
 func TestRef_HasManyAppliesToAllChildren(t *testing.T) {
 	// Arrange
 	setupHasManyBlueprints(t)

@@ -2,7 +2,9 @@ package planner
 
 import (
 	"fmt"
+	"maps"
 	"reflect"
+	"slices"
 
 	"github.com/mhiro2/seedling/internal/errx"
 	"github.com/mhiro2/seedling/internal/graph"
@@ -40,13 +42,22 @@ type expander struct {
 
 // activeBlueprint records a blueprint currently on the expansion stack. The
 // expansion of a required relation that returns to an already-active
-// (blueprint, options) pair would recurse forever, so it is reported as a
-// cycle. Diamond dependencies are not affected: sibling branches leave the
-// stack before the next branch is expanded, and shared nodes short-circuit on
-// the visited map before reaching the cycle check.
+// (blueprint, options, bound relations) frame would recurse forever, so it is
+// reported as a cycle. Diamond dependencies are not affected: sibling branches
+// leave the stack before the next branch is expanded, and shared nodes
+// short-circuit on the visited map before reaching the cycle check.
+//
+// bound lists the relations already resolved by a structural back-reference
+// (a has-many child bound to the parent that created it). Those relations are
+// never expanded, so a frame that binds them terminates differently from one
+// that expands them: department -> employees[0] binds the child's department
+// relation instead of recursing into another department. Comparing relation
+// names rather than the bound nodes keeps a recursion that rebinds a fresh
+// parent on every level detectable.
 type activeBlueprint struct {
-	name string
-	opts *OptionSet
+	name  string
+	opts  *OptionSet
+	bound []string
 }
 
 func (e *expander) expandBlueprint(bp *BlueprintDef, nodeID nodeIdentity, opts *OptionSet, bindings map[string]*graph.Node, relationPath relationPath) (*graph.Node, error) {
@@ -54,7 +65,7 @@ func (e *expander) expandBlueprint(bp *BlueprintDef, nodeID nodeIdentity, opts *
 		return existing, nil
 	}
 
-	if err := e.enterBlueprint(bp.Name, opts); err != nil {
+	if err := e.enterBlueprint(bp.Name, opts, bindings); err != nil {
 		return nil, err
 	}
 	defer e.leaveBlueprint()
@@ -81,12 +92,13 @@ func (e *expander) expandBlueprint(bp *BlueprintDef, nodeID nodeIdentity, opts *
 }
 
 // enterBlueprint pushes a blueprint onto the active expansion stack, reporting
-// ErrCycleDetected when the same (blueprint, options) pair is already active.
-// A successful enter must be paired with leaveBlueprint; a returned error means
-// nothing was pushed.
-func (e *expander) enterBlueprint(name string, opts *OptionSet) error {
+// ErrCycleDetected when the same (blueprint, options, bound relations) frame is
+// already active. A successful enter must be paired with leaveBlueprint; a
+// returned error means nothing was pushed.
+func (e *expander) enterBlueprint(name string, opts *OptionSet, bindings map[string]*graph.Node) error {
+	bound := slices.Sorted(maps.Keys(bindings))
 	for _, frame := range e.active {
-		if frame.name == name && reflect.DeepEqual(frame.opts, opts) {
+		if frame.name == name && slices.Equal(frame.bound, bound) && reflect.DeepEqual(frame.opts, opts) {
 			path := make([]string, 0, len(e.active)+1)
 			for _, f := range e.active {
 				path = append(path, f.name)
@@ -95,7 +107,7 @@ func (e *expander) enterBlueprint(name string, opts *OptionSet) error {
 			return fmt.Errorf("expand relations: %w", errx.RelationCycle(path))
 		}
 	}
-	e.active = append(e.active, activeBlueprint{name: name, opts: opts})
+	e.active = append(e.active, activeBlueprint{name: name, opts: opts, bound: bound})
 	return nil
 }
 
