@@ -2,6 +2,7 @@ package faker_test
 
 import (
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"regexp"
 	"strings"
@@ -332,4 +333,81 @@ func ExamplePick() {
 	colors := []string{"red", "green", "blue"}
 	fmt.Println(faker.Pick(f, colors))
 	// Output: blue
+}
+
+func TestIntBetween_FullIntRanges(t *testing.T) {
+	f := newSeeded()
+	ranges := [][2]int{
+		{0, math.MaxInt},
+		{math.MinInt, 0},
+		{math.MinInt, math.MaxInt},
+		{math.MinInt, math.MinInt + 1},
+		{math.MaxInt - 1, math.MaxInt},
+		{-1, math.MaxInt},
+	}
+	for _, r := range ranges {
+		for range 1000 {
+			if v := f.IntBetween(r[0], r[1]); v < r[0] || v > r[1] {
+				t.Fatalf("IntBetween(%d, %d) = %d, out of range", r[0], r[1], v)
+			}
+		}
+	}
+}
+
+func TestFloatBetween_WideFiniteRange(t *testing.T) {
+	f := newSeeded()
+	for range 1000 {
+		v := f.FloatBetween(-math.MaxFloat64, math.MaxFloat64)
+		if math.IsInf(v, 0) || math.IsNaN(v) || v < -math.MaxFloat64 || v >= math.MaxFloat64 {
+			t.Fatalf("FloatBetween(-MaxFloat64, MaxFloat64) = %g, out of range", v)
+		}
+	}
+	if v := f.FloatBetween(2.5, 2.5); v != 2.5 {
+		t.Fatalf("FloatBetween(2.5, 2.5) = %g, want 2.5", v)
+	}
+
+	// An empty range still consumes one draw, so later values do not shift.
+	a, b := newSeeded(), newSeeded()
+	a.FloatBetween(1, 1)
+	b.Float()
+	if a.Int() != b.Int() {
+		t.Fatal("FloatBetween(1, 1) did not consume exactly one draw")
+	}
+}
+
+func TestFloatBetween_InvalidBoundsPanic(t *testing.T) {
+	tests := map[string][2]float64{
+		"reversed": {5, 1},
+		"NaN":      {math.NaN(), 1},
+		"infinite": {0, math.Inf(1)},
+	}
+	for name, bounds := range tests {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("FloatBetween(%g, %g) did not panic", bounds[0], bounds[1])
+				}
+			}()
+			newSeeded().FloatBetween(bounds[0], bounds[1])
+		})
+	}
+}
+
+func TestDateBetween_RangeLongerThanDuration(t *testing.T) {
+	f := newSeeded()
+	tokyo := time.FixedZone("JST", 9*60*60)
+	from := time.Date(1700, 1, 1, 0, 0, 0, 500, tokyo)
+	to := time.Date(2100, 12, 31, 23, 59, 59, 100, tokyo)
+	for range 1000 {
+		d := f.DateBetween(from, to)
+		if d.Before(from) || d.After(to) {
+			t.Fatalf("DateBetween(%v, %v) = %v, out of range", from, to, d)
+		}
+		if d.Location() != tokyo {
+			t.Fatalf("DateBetween location = %v, want %v", d.Location(), tokyo)
+		}
+	}
+	if d := f.DateBetween(from, from); !d.Equal(from) {
+		t.Fatalf("DateBetween(from, from) = %v, want %v", d, from)
+	}
 }
