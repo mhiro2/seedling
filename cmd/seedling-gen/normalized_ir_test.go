@@ -103,6 +103,24 @@ func TestValidateNormalizedModels_RejectsInvalidPositions(t *testing.T) {
 			},
 		},
 		{
+			name: "invalid embedded field name",
+			model: normalizedModel{
+				TypeExpr: "User",
+				Fields: []normalizedField{{GoName: "CreatedAt", GoType: "time.Time", Embedded: &embeddedStruct{
+					FieldName: "Model: evil()", TypeExpr: "gorm.Model",
+				}}},
+			},
+		},
+		{
+			name: "embedded type breakout",
+			model: normalizedModel{
+				TypeExpr: "User",
+				Fields: []normalizedField{{GoName: "CreatedAt", GoType: "time.Time", Embedded: &embeddedStruct{
+					FieldName: "Model", TypeExpr: "gorm.Model{}; evil()",
+				}}},
+			},
+		},
+		{
 			name: "duplicate relation names",
 			model: normalizedModel{
 				TypeExpr: "User",

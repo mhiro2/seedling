@@ -199,7 +199,7 @@ When you use `database/sql`, [`WithTx`](https://pkg.go.dev/github.com/mhiro2/see
 
 [`seedling-gen`](../cmd/seedling-gen) generates model and blueprint skeletons from multiple input sources.
 
-Generated blueprints now include deterministic `Defaults` for common scalar fields such as strings, numbers, booleans, byte slices, and `time.Time`. Primary keys, relation FK fields, and unsupported custom types stay untouched so relation resolution and application-specific constraints remain explicit.
+Generated blueprints now include deterministic `Defaults` for common scalar fields such as strings, numbers, booleans, byte slices, and `time.Time`. Primary keys (including the untagged `ID` field GORM treats as the key by convention), relation FK fields, and unsupported custom types stay untouched so relation resolution and application-specific constraints remain explicit. Defaults for fields promoted from an embedded `gorm.Model` are written through the embedded struct (`Model: gorm.Model{CreatedAt: ...}`), and the `time` import is added only when generated code actually references it.
 
 Install the CLI:
 

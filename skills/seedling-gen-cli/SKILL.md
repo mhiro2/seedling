@@ -103,7 +103,7 @@ seedling-gen atlas \
 - `--dialect` is available on `sql` and `sqlc`. It is a validation hint and defaults to `auto` when omitted. Supported values are `auto`, `postgres`, `mysql`, and `sqlite`.
 - `--import-path` must be a full Go import path.
 - The `ent` import path must resolve to compilable entc output. `seedling-gen` reads exact field, mixin, setter, lifecycle, and ID signatures so custom acronyms are preserved and missing or incompatible generated signatures are rejected.
-- Generated `Defaults` fill common scalar fields deterministically, but skip primary keys, relation foreign keys, and unsupported custom types.
+- Generated `Defaults` fill common scalar fields deterministically, but skip primary keys (including GORM's untagged `ID` convention), relation foreign keys, and unsupported custom types. Fields promoted from an embedded `gorm.Model` are set through the embedded struct literal.
 - The generated file is a starting point. Agents should expect follow-up edits for callback wiring, naming cleanup, and any domain-specific default overrides.
 
 ## Troubleshooting

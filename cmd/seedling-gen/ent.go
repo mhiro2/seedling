@@ -486,9 +486,6 @@ func GenerateEnt(w io.Writer, pkg, entImportPath string, schemas []EntSchema) er
 		`"github.com/mhiro2/seedling"`,
 		spec,
 	}
-	if normalizedModelsNeedTimeImport(models) {
-		imports = append(imports, `"time"`)
-	}
 	if entSchemasNeedReflect(schemas) {
 		imports = append(imports, `"reflect"`)
 	}

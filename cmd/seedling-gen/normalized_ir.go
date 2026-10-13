@@ -19,6 +19,16 @@ type normalizedField struct {
 	IsPK         bool
 	IsRelationFK bool
 	IsOptional   bool
+	// Embedded names the embedded struct that promotes this field. Promoted
+	// fields cannot be keyed directly in a composite literal, so defaults for
+	// them are nested under the embedded struct's own literal.
+	Embedded *embeddedStruct
+}
+
+// embeddedStruct identifies an anonymous struct field, such as gorm.Model.
+type embeddedStruct struct {
+	FieldName string // implicit field name, e.g. "Model"
+	TypeExpr  string // type expression in the generated file, e.g. "gorm.Model"
 }
 
 type normalizedRelation struct {
@@ -113,6 +123,9 @@ func generateNormalizedCode(w io.Writer, kind, pkg string, imports []string, mod
 	buf.WriteString(pkg)
 	buf.WriteString("\n\n")
 
+	if normalizedModelsNeedTimeImport(models, emitStructs) {
+		imports = append(imports, `"time"`)
+	}
 	renderImports(&buf, imports)
 
 	if emitStructs {
@@ -189,6 +202,14 @@ func validateNormalizedModels(models []normalizedModel, emitStructs bool) error 
 		for _, field := range model.Fields {
 			if !token.IsIdentifier(field.GoName) {
 				return fmt.Errorf("model %q: invalid field name %q", name, field.GoName)
+			}
+			if embedded := field.Embedded; embedded != nil {
+				if !token.IsIdentifier(embedded.FieldName) {
+					return fmt.Errorf("model %q field %q: invalid embedded field name %q", name, field.GoName, embedded.FieldName)
+				}
+				if err := validateGoExpr("embedded type", embedded.TypeExpr); err != nil {
+					return fmt.Errorf("model %q field %q: %w", name, field.GoName, err)
+				}
 			}
 			// GoType is only emitted as a type in the struct template.
 			if emitStructs {
@@ -626,11 +647,15 @@ func normalizeGormModels(models []GormModel, alias string) []normalizedModel {
 		for _, field := range model.Fields {
 			_, isRelationFK := relationLocalFields[field.Name]
 			fields = append(fields, normalizedField{
-				GoName:       field.Name,
-				GoType:       field.Type,
-				IsPK:         field.IsPK,
+				GoName: field.Name,
+				GoType: field.Type,
+				// GORM treats a field named ID as the primary key when no field
+				// carries a primaryKey tag, so the inferred key must be left to
+				// the database like an explicitly tagged one.
+				IsPK:         slices.Contains(pkFields, field.Name),
 				IsRelationFK: isRelationFK,
 				IsOptional:   !field.NotNull,
+				Embedded:     field.Embedded,
 			})
 		}
 
@@ -932,23 +957,54 @@ func normalizeTableRelations(table Table) []normalizedRelation {
 }
 
 func buildDefaultLiteral(model normalizedModel) string {
-	assignments := make([]string, 0, len(model.Fields))
+	prefix, ok := strings.CutSuffix(model.ZeroValueExpr, "{}")
+	if !ok {
+		return model.ZeroValueExpr
+	}
+
+	// Promoted fields are grouped under their embedded struct, which takes the
+	// position of its first defaulted field.
+	type literalEntry struct {
+		embedded *embeddedStruct
+		parts    []string
+	}
+	var entries []*literalEntry
+	embeddedEntries := make(map[embeddedStruct]*literalEntry)
 	for _, field := range model.Fields {
 		expr := defaultFieldExpr(model.BlueprintID, field)
 		if expr == "" {
 			continue
 		}
-		assignments = append(assignments, field.GoName+": "+expr)
+		assignment := field.GoName + ": " + expr
+		if field.Embedded == nil {
+			entries = append(entries, &literalEntry{parts: []string{assignment}})
+			continue
+		}
+		entry, ok := embeddedEntries[*field.Embedded]
+		if !ok {
+			entry = &literalEntry{embedded: field.Embedded}
+			embeddedEntries[*field.Embedded] = entry
+			entries = append(entries, entry)
+		}
+		entry.parts = append(entry.parts, assignment)
 	}
-	if len(assignments) == 0 {
+	if len(entries) == 0 {
 		return model.ZeroValueExpr
 	}
-	prefix, ok := strings.CutSuffix(model.ZeroValueExpr, "{}")
-	if !ok {
-		return model.ZeroValueExpr
+
+	assignments := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.embedded == nil {
+			assignments = append(assignments, entry.parts[0])
+			continue
+		}
+		assignments = append(assignments, entry.embedded.FieldName+": "+entry.embedded.TypeExpr+"{"+strings.Join(entry.parts, ", ")+"}")
 	}
 	return prefix + "{" + strings.Join(assignments, ", ") + "}"
 }
+
+// timeDefaultExpr is the generated default for time.Time fields.
+const timeDefaultExpr = "time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)"
 
 func defaultFieldExpr(blueprintID string, field normalizedField) string {
 	if field.IsPK || field.IsRelationFK {
@@ -974,16 +1030,23 @@ func defaultFieldExpr(blueprintID string, field normalizedField) string {
 	case "[]byte":
 		return "[]byte(" + strconv.Quote(label) + ")"
 	case "time.Time":
-		return "time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)"
+		return timeDefaultExpr
 	default:
 		return ""
 	}
 }
 
-func normalizedModelsNeedTimeImport(models []normalizedModel) bool {
+// normalizedModelsNeedTimeImport reports whether the generated file references
+// the time package: through emitted struct field types, or through a default
+// that is actually rendered. A time.Time field skipped by the defaults (a key or
+// relation field) on an existing model type needs no import.
+func normalizedModelsNeedTimeImport(models []normalizedModel, emitStructs bool) bool {
 	for _, model := range models {
 		for _, field := range model.Fields {
-			if field.GoType == "time.Time" {
+			if emitStructs && field.GoType == "time.Time" {
+				return true
+			}
+			if defaultFieldExpr(model.BlueprintID, field) == timeDefaultExpr {
 				return true
 			}
 		}

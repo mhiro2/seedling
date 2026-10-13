@@ -393,6 +393,92 @@ func TestGenerateGorm_DefaultsAutofillSupportedFields(t *testing.T) {
 	}
 }
 
+func TestGenerateGorm_InferredPrimaryKeyHasNoDefault(t *testing.T) {
+	// Arrange: no field carries a primaryKey tag, so GORM treats ID as the key.
+	models := []GormModel{
+		{
+			Name:  "User",
+			Table: "users",
+			Fields: []GormField{
+				{Name: "ID", Type: "uint"},
+				{Name: "Name", Type: "string"},
+			},
+		},
+	}
+
+	// Act
+	var buf bytes.Buffer
+	if err := GenerateGorm(&buf, "testutil", "github.com/myapp/models", models); err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	output := buf.String()
+	if !strings.Contains(output, `PKField: "ID"`) {
+		t.Fatalf("expected inferred ID primary key\n\nGot:\n%s", output)
+	}
+	if !strings.Contains(output, `return models.User{Name: "user-name"}`) {
+		t.Fatalf("expected defaults to leave the inferred primary key unset\n\nGot:\n%s", output)
+	}
+}
+
+func TestGenerateGorm_NestsGormModelDefaults(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "models.go", `package models
+
+import "gorm.io/gorm"
+
+type Item struct {
+	gorm.Model
+	Label string
+}
+`)
+	models, err := ParseGormDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	var buf bytes.Buffer
+	if err := GenerateGorm(&buf, "testutil", "github.com/myapp/models", models); err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	output := buf.String()
+	want := `return models.Item{Model: gorm.Model{CreatedAt: time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC), UpdatedAt: time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)}, Label: "item-label"}`
+	if !strings.Contains(output, want) {
+		t.Fatalf("expected promoted defaults under gorm.Model\n\nGot:\n%s", output)
+	}
+}
+
+func TestGenerateGorm_OmitsTimeImportForTimeKeysOnly(t *testing.T) {
+	// Arrange: the only time.Time field is a primary key, which never receives
+	// a generated default.
+	models := []GormModel{
+		{
+			Name:  "Snapshot",
+			Table: "snapshots",
+			Fields: []GormField{
+				{Name: "TakenAt", Type: "time.Time", IsPK: true},
+				{Name: "Label", Type: "string"},
+			},
+		},
+	}
+
+	// Act
+	var buf bytes.Buffer
+	if err := GenerateGorm(&buf, "testutil", "github.com/myapp/models", models); err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	if output := buf.String(); strings.Contains(output, `"time"`) {
+		t.Fatalf("expected no time import\n\nGot:\n%s", output)
+	}
+}
+
 func TestToSnakeCase(t *testing.T) {
 	tests := []struct {
 		input, want string
