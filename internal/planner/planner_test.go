@@ -4,10 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/mhiro2/seedling/internal/errx"
+	"github.com/mhiro2/seedling/internal/graph"
 	"github.com/mhiro2/seedling/internal/planner"
 	"github.com/mhiro2/seedling/internal/testutil/plannertest"
 	"github.com/mhiro2/seedling/seedlingtest"
@@ -1001,6 +1003,105 @@ func TestPlan_RequiredMutualReferenceReturnsCycleError(t *testing.T) {
 	// Arrange
 	reg := newMockRegistry()
 	registerCycleMutual(reg)
+
+	// Act
+	_, err := planner.Plan(reg, reflect.TypeFor[cycleLeft](), nil)
+
+	// Assert
+	if !errors.Is(err, errx.ErrCycleDetected) {
+		t.Fatalf("got %v, want %v", err, errx.ErrCycleDetected)
+	}
+}
+
+func TestPlan_HasManyBackReferenceThroughBelongsToIsNotACycle(t *testing.T) {
+	// Arrange: employee -> department -> employees[i]. Each generated employee
+	// binds its department relation to the department that created it, so the
+	// graph is finite even though employee appears twice on the expansion path.
+	reg := newMockRegistry()
+
+	// Act
+	result, err := planner.Plan(reg, reflect.TypeFor[Employee](), nil)
+	// Assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(result.Graph.Nodes()); got != 4 {
+		t.Fatalf("got %d nodes, want %d", got, 4)
+	}
+	department := result.Graph.Node("employee.department")
+	if department == nil {
+		t.Fatal("expected department node")
+	}
+	for _, nodeID := range []string{"employee.department.employees[0]", "employee.department.employees[1]"} {
+		child := result.Graph.Node(nodeID)
+		if child == nil {
+			t.Fatalf("expected node %q", nodeID)
+		}
+		if result.Graph.Node(nodeID+".department") != nil {
+			t.Fatalf("%s must bind its department instead of expanding a new one", nodeID)
+		}
+		if !slices.ContainsFunc(child.Dependencies(), func(edge *graph.Edge) bool { return edge.Parent == department }) {
+			t.Fatalf("%s must depend on the department that created it", nodeID)
+		}
+	}
+}
+
+type cycleCategory struct {
+	ID       int64
+	ParentID int64
+}
+
+func TestPlan_RequiredHasManySelfReferenceReturnsCycleError(t *testing.T) {
+	// Arrange: every category creates a child category bound to it, which in
+	// turn creates its own child forever.
+	reg := newMockRegistry()
+	reg.Register(&planner.BlueprintDef{
+		Name:     "category",
+		Table:    "categories",
+		PKFields: []string{"ID"},
+		Relations: []planner.RelationDef{
+			{Name: "children", Kind: planner.HasMany, LocalFields: []string{"ParentID"}, RefBlueprint: "category", Required: true, Count: 1},
+			{Name: "parent", Kind: planner.BelongsTo, LocalFields: []string{"ParentID"}, RefBlueprint: "category"},
+		},
+		Defaults:  func() any { return cycleCategory{} },
+		ModelType: reflect.TypeFor[cycleCategory](),
+	})
+
+	// Act
+	_, err := planner.Plan(reg, reflect.TypeFor[cycleCategory](), nil)
+
+	// Assert
+	if !errors.Is(err, errx.ErrCycleDetected) {
+		t.Fatalf("got %v, want %v", err, errx.ErrCycleDetected)
+	}
+}
+
+func TestPlan_RequiredMutualHasManyReturnsCycleError(t *testing.T) {
+	// Arrange: left creates rights bound to it, and each right creates lefts
+	// bound to it, so every level rebinds a fresh parent.
+	reg := newMockRegistry()
+	reg.Register(&planner.BlueprintDef{
+		Name:     "cycle_left",
+		Table:    "cycle_lefts",
+		PKFields: []string{"ID"},
+		Relations: []planner.RelationDef{
+			{Name: "rights", Kind: planner.HasMany, LocalFields: []string{"LeftID"}, RefBlueprint: "cycle_right", Required: true, Count: 1},
+			{Name: "right", Kind: planner.BelongsTo, LocalFields: []string{"RightID"}, RefBlueprint: "cycle_right"},
+		},
+		Defaults:  func() any { return cycleLeft{} },
+		ModelType: reflect.TypeFor[cycleLeft](),
+	})
+	reg.Register(&planner.BlueprintDef{
+		Name:     "cycle_right",
+		Table:    "cycle_rights",
+		PKFields: []string{"ID"},
+		Relations: []planner.RelationDef{
+			{Name: "lefts", Kind: planner.HasMany, LocalFields: []string{"RightID"}, RefBlueprint: "cycle_left", Required: true, Count: 1},
+			{Name: "left", Kind: planner.BelongsTo, LocalFields: []string{"LeftID"}, RefBlueprint: "cycle_left"},
+		},
+		Defaults:  func() any { return cycleRight{} },
+		ModelType: reflect.TypeFor[cycleRight](),
+	})
 
 	// Act
 	_, err := planner.Plan(reg, reflect.TypeFor[cycleLeft](), nil)
