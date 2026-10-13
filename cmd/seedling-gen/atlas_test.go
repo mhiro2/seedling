@@ -398,7 +398,7 @@ table "items" {
 	}
 }
 
-func TestStripHCLComments(t *testing.T) {
+func TestMaskHCL(t *testing.T) {
 	// Arrange
 	tests := []struct {
 		name  string
@@ -408,33 +408,90 @@ func TestStripHCLComments(t *testing.T) {
 		{
 			name:  "hash comment",
 			input: "# comment\ntable \"t\" {",
-			want:  "\ntable \"t\" {",
+			want:  "         \ntable \" \" {",
 		},
 		{
 			name:  "double-slash comment",
 			input: "// comment\ntable \"t\" {",
-			want:  "\ntable \"t\" {",
+			want:  "          \ntable \" \" {",
 		},
 		{
-			name:  "comment inside string",
-			input: `column "name" { default = "# not a comment" }`,
-			want:  `column "name" { default = "# not a comment" }`,
+			name:  "block comment keeps newlines",
+			input: "/* a\n} */ x",
+			want:  "    \n     x",
 		},
 		{
-			name:  "no comments",
-			input: `table "t" { column "id" { type = int } }`,
-			want:  `table "t" { column "id" { type = int } }`,
+			name:  "comment markers inside string",
+			input: `default = "# not a comment // {"`,
+			want:  `default = "                    "`,
+		},
+		{
+			name:  "escaped quote and backslash",
+			input: `comment = "say \"hi\" {\\" }`,
+			want:  `comment = "              " }`,
+		},
+		{
+			name:  "unterminated string stops at newline",
+			input: "a = \"open\n}",
+			want:  "a = \"    \n}",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Act & Assert
-			got := stripHCLComments(tt.input)
+			// Act
+			got := maskHCL(tt.input)
+
+			// Assert
 			if got != tt.want {
-				t.Fatalf("stripHCLComments(%q) = %q, want %q", tt.input, got, tt.want)
+				t.Fatalf("maskHCL(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+			if len(got) != len(tt.input) {
+				t.Fatalf("maskHCL changed length from %d to %d", len(tt.input), len(got))
 			}
 		})
+	}
+}
+
+func TestParseAtlasHCL_IgnoresStructureInsideStringsAndComments(t *testing.T) {
+	// Arrange
+	hcl := `
+table "users" {
+  comment = "say \"hi\" } and { column \"ghost\" { type = text }"
+  /* column "commented" {
+    type = text
+  } */
+  column "id" {
+    comment = "null = true"
+    type = int
+    null = false
+  }
+  column "note" {
+    comment = "type = int # not a comment"
+    type = text
+    null = true
+  }
+  primary_key {
+    columns = [column.id]
+  }
+}
+`
+
+	// Act
+	tables := mustParseAtlasHCL(t, hcl)
+
+	// Assert
+	users := findTableByName(t, tables, "users")
+	if len(users.Columns) != 2 {
+		t.Fatalf("got columns %+v, want id and note", users.Columns)
+	}
+	id := findColumnByName(t, users, "id")
+	if !id.NotNull || !id.IsPK || id.SQLType != "INT" {
+		t.Fatalf("got id column %+v, want NOT NULL INT primary key", id)
+	}
+	note := findColumnByName(t, users, "note")
+	if note.NotNull || note.SQLType != "TEXT" {
+		t.Fatalf("got note column %+v, want nullable TEXT", note)
 	}
 }
 
