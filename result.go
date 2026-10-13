@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mhiro2/seedling/internal/clone"
 	"github.com/mhiro2/seedling/internal/debug"
 	"github.com/mhiro2/seedling/internal/errx"
 	"github.com/mhiro2/seedling/internal/executor"
@@ -174,9 +173,9 @@ func remainingDeadline(tb testing.TB) time.Duration {
 //
 // CleanupE is fail-fast: it stops at the first delete error and returns it.
 //
-// Delete receives each record as it was returned by Insert. For a pointer
-// blueprint the caller holds that same pointer, so later mutations to Root()
-// or a NodeAs result do not change which rows cleanup removes.
+// Delete receives each record as it was when its Insert returned. Later
+// inserts, and mutations to Root() or a NodeAs result of a pointer blueprint,
+// do not change which rows cleanup removes.
 func (r Result[T]) CleanupE(ctx context.Context, db DBTX) error {
 	return cleanupResultGraph(ctx, r.graph, r.deleteFns, r.cleanupValues, db)
 }
@@ -200,25 +199,6 @@ func snapshotDeleteFns(reg *Registry, nodes map[string]executor.NodeResult) map[
 		}
 	}
 	return fns
-}
-
-// snapshotCleanupValues captures each node's value as it was returned by
-// Insert. A pointer blueprint hands the caller the same pointer the graph
-// holds, so mutating Root() or a NodeAs result would otherwise change the
-// value Delete receives and target a different row during cleanup.
-func snapshotCleanupValues(g *graph.Graph) map[string]any {
-	if g == nil {
-		return nil
-	}
-	nodes := g.Nodes()
-	values := make(map[string]any, len(nodes))
-	for _, node := range nodes {
-		if node.IsProvided {
-			continue
-		}
-		values[node.ID] = clone.Value(node.Value)
-	}
-	return values
 }
 
 // NodeResult holds the result of a single node.

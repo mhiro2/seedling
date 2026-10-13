@@ -157,7 +157,7 @@ func (p *Plan[T]) resultFromExecutor(execResult *executor.Result, requireRoot bo
 		graph:         execResult.Graph,
 		registry:      p.registry,
 		deleteFns:     snapshotDeleteFns(p.registry, execResult.Nodes),
-		cleanupValues: snapshotCleanupValues(execResult.Graph),
+		cleanupValues: execResult.Inserted,
 	}
 	if execResult.Root == nil {
 		if requireRoot {

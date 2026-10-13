@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"sort"
 
+	"github.com/mhiro2/seedling/internal/clone"
 	"github.com/mhiro2/seedling/internal/errx"
 	"github.com/mhiro2/seedling/internal/field"
 	"github.com/mhiro2/seedling/internal/graph"
@@ -18,6 +19,11 @@ type Result struct {
 	Root  any
 	Nodes map[string]NodeResult
 	Graph *graph.Graph
+	// Inserted holds a copy of each inserted node's value, taken as soon as its
+	// Insert returned. Later inserts and callers can mutate the live values,
+	// for example through a pointer blueprint, so cleanup deletes from these.
+	// Provided nodes are not inserted and have no entry.
+	Inserted map[string]any
 }
 
 // NodeResult holds the result of a single inserted node.
@@ -57,7 +63,10 @@ type FKBinding struct {
 // contains those nodes so the caller can clean them up. If logFn is non-nil, it
 // is called for each step in the execution order.
 func Execute(ctx context.Context, db any, g *graph.Graph, lookup BlueprintLookup, logFn func(LogEntry)) (*Result, error) {
-	result := &Result{Nodes: make(map[string]NodeResult)}
+	result := &Result{
+		Nodes:    make(map[string]NodeResult),
+		Inserted: make(map[string]any),
+	}
 	if g == nil {
 		return finalizeResult(result, nil, false), fmt.Errorf("execute graph: %w: graph must not be nil", errx.ErrInvalidOption)
 	}
@@ -120,6 +129,7 @@ func Execute(ctx context.Context, db any, g *graph.Graph, lookup BlueprintLookup
 				return finalizeResult(result, g, false), fmt.Errorf("insert node %q: %w", node.ID, errx.InsertFailed(node.BlueprintName, err))
 			}
 			node.Value = inserted
+			result.Inserted[node.ID] = clone.Value(inserted)
 		}
 
 		result.Nodes[node.ID] = NodeResult{

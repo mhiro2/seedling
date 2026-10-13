@@ -163,7 +163,7 @@ func batchResultFromExecutor[T any](reg *Registry, rootIDs []string, execResult 
 		graph:         execResult.Graph,
 		registry:      reg,
 		deleteFns:     snapshotDeleteFns(reg, execResult.Nodes),
-		cleanupValues: snapshotCleanupValues(execResult.Graph),
+		cleanupValues: execResult.Inserted,
 	}
 	rootType := reflect.TypeFor[T]()
 	for rootIndex, rootID := range rootIDs {
