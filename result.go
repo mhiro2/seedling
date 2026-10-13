@@ -273,14 +273,16 @@ func (r BatchResult[T]) Nodes(name string) []NodeResult {
 
 // NodeAt returns the named node associated with the root at its original request
 // index. Shared belongs-to dependencies are included when that root references
-// them. It returns false when the root did not complete in a partial result.
+// them, together with the records planned under them, such as their has-many
+// children. It returns false when the root did not complete in a partial result.
 func (r BatchResult[T]) NodeAt(rootIndex int, name string) (NodeResult, bool) {
 	return lookupNodeResult(r.nodesForRoot(rootIndex), name)
 }
 
 // NodesForRoot returns all named nodes associated with the root at its original
 // request index, sorted by node ID. Shared belongs-to dependencies are included
-// when that root references them. It returns nil when the root did not complete
+// when that root references them, together with the records planned under them,
+// such as their has-many children. It returns nil when the root did not complete
 // in a partial result.
 func (r BatchResult[T]) NodesForRoot(rootIndex int, name string) []NodeResult {
 	return lookupNodeResults(r.nodesForRoot(rootIndex), name)
@@ -451,6 +453,12 @@ func emptyBatchResult[T any]() BatchResult[T] {
 	}
 }
 
+// nodesForRoot selects the nodes the root at rootIndex would have produced on
+// its own: everything planned under the root, every belongs-to parent those
+// nodes reference, including shared ones, and everything planned under such a
+// shared parent, like its has-many children. Nodes planned under another root
+// are never reached, because they are neither parents of this root's nodes nor
+// planned under them.
 func (r BatchResult[T]) nodesForRoot(rootIndex int) map[string]executor.NodeResult {
 	rootID, ok := r.rootNodeID(rootIndex)
 	if !ok {
@@ -459,14 +467,17 @@ func (r BatchResult[T]) nodesForRoot(rootIndex int) map[string]executor.NodeResu
 
 	selected := make(map[string]struct{})
 	var pending []string
+	selectID := func(id string) {
+		if _, exists := selected[id]; exists {
+			return
+		}
+		selected[id] = struct{}{}
+		pending = append(pending, id)
+	}
 
 	for id := range r.nodes {
 		if id == rootID || strings.HasPrefix(id, rootID+".") {
-			if _, exists := selected[id]; exists {
-				continue
-			}
-			selected[id] = struct{}{}
-			pending = append(pending, id)
+			selectID(id)
 		}
 	}
 
@@ -485,12 +496,15 @@ func (r BatchResult[T]) nodesForRoot(rootIndex int) map[string]executor.NodeResu
 		}
 
 		for _, edge := range node.Dependencies() {
-			parentID := edge.Parent.ID
-			if _, exists := selected[parentID]; exists {
-				continue
+			selectID(edge.Parent.ID)
+		}
+		// A dependent is planned under this node when its ID extends this
+		// node's ID, as has-many children and many-to-many join records do.
+		// Other dependents, like the roots sharing a parent, are left out.
+		for _, edge := range node.Dependents() {
+			if strings.HasPrefix(edge.Child.ID, id+".") {
+				selectID(edge.Child.ID)
 			}
-			selected[parentID] = struct{}{}
-			pending = append(pending, parentID)
 		}
 	}
 

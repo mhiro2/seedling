@@ -3221,3 +3221,88 @@ func TestSet_EmbeddedStructAndPromotedFieldApplyInOrder(t *testing.T) {
 		}
 	}
 }
+
+func TestBatchResult_NodesForRootIncludesHasManyChildrenOfSharedParent(t *testing.T) {
+	// Arrange: project -> company (shared across roots) -> users (has-many).
+	reg := seedling.NewRegistry()
+	ids := seedlingtest.NewIDSequence()
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
+		Name:    "company",
+		Table:   "companies",
+		PKField: "ID",
+		Relations: []seedling.Relation{
+			{Name: "users", Kind: seedling.HasMany, LocalField: "CompanyID", RefBlueprint: "user", Count: 1},
+		},
+		Insert: func(_ context.Context, _ seedling.DBTX, v Company) (Company, error) {
+			v.ID = ids.Next()
+			return v, nil
+		},
+	})
+	seedling.MustRegisterTo(reg, seedling.Blueprint[User]{
+		Name:    "user",
+		Table:   "users",
+		PKField: "ID",
+		Relations: []seedling.Relation{
+			{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
+		},
+		Insert: func(_ context.Context, _ seedling.DBTX, v User) (User, error) {
+			v.ID = ids.Next()
+			return v, nil
+		},
+	})
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Project]{
+		Name:    "project",
+		Table:   "projects",
+		PKField: "ID",
+		Relations: []seedling.Relation{
+			{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
+		},
+		Insert: func(_ context.Context, _ seedling.DBTX, v Project) (Project, error) {
+			v.ID = ids.Next()
+			return v, nil
+		},
+	})
+	useTestRegistry(t, reg)
+
+	// Act: roots 0 and 1 share one company; root 2 gets a company of its own.
+	result, err := insertManyE[Project](t.Context(), t, nil, 3,
+		seedling.SeqRef("company", func(i int) []seedling.Option {
+			name := "shared"
+			if i == 2 {
+				name = "own"
+			}
+			return []seedling.Option{seedling.Set("Name", name)}
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	if got := len(result.Nodes("user")); got != 2 {
+		t.Fatalf("got %d users in the batch, want 2", got)
+	}
+	for i := range 3 {
+		company := result.MustNodeAt(i, "company").Value().(Company)
+		users, err := seedling.NodesAs[User](nodesForRoot{result: result, index: i}, "user")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(users) != 1 || users[0].CompanyID != company.ID {
+			t.Fatalf("root %d users = %+v, want one user of company %d", i, users, company.ID)
+		}
+		if got := len(result.NodesForRoot(i, "project")); got != 1 {
+			t.Fatalf("root %d has %d projects, want 1", i, got)
+		}
+	}
+}
+
+// nodesForRoot adapts BatchResult.NodesForRoot to the lookup NodesAs accepts.
+type nodesForRoot struct {
+	result seedling.BatchResult[Project]
+	index  int
+}
+
+func (n nodesForRoot) Nodes(name string) []seedling.NodeResult {
+	return n.result.NodesForRoot(n.index, name)
+}
