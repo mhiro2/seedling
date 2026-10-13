@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"reflect"
+
+	"github.com/mhiro2/seedling/internal/planner"
 )
 
 // Option configures how a record is built and inserted.
@@ -14,7 +16,7 @@ type Option interface {
 
 // optionSet collects all options for a single node.
 type optionSet struct {
-	sets         map[string]any                     // field name → value
+	sets         []planner.FieldSet                 // Set options in the order they were written
 	uses         map[string]any                     // relation name → existing value
 	refs         map[string][]Option                // relation name → nested options
 	omits        map[string]bool                    // relation name → true
@@ -38,7 +40,6 @@ type generateFn func(r *rand.Rand, value any) (any, error)
 
 func newOptionSet() *optionSet {
 	return &optionSet{
-		sets:    make(map[string]any),
 		uses:    make(map[string]any),
 		refs:    make(map[string][]Option),
 		omits:   make(map[string]bool),
@@ -57,6 +58,9 @@ func collectOptions(opts []Option) *optionSet {
 }
 
 // Set overrides a struct field value by its Go field name.
+// Sets apply in the order they are written, so a later Set wins over an
+// earlier one, including when one replaces an embedded struct and the other
+// sets a field promoted from it.
 //
 //	seedling.Set("Title", "urgent task")
 func Set(field string, value any) Option {
@@ -69,7 +73,7 @@ type setOption struct {
 }
 
 func (s setOption) applyOption(o *optionSet) {
-	o.sets[s.field] = s.value
+	o.sets = append(o.sets, planner.FieldSet{Field: s.field, Value: s.value})
 }
 
 // Use provides an existing record for a direct relation, skipping auto-creation.

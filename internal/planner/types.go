@@ -53,9 +53,16 @@ type WithFn func(value any) (any, error)
 
 type GenerateFn func(r *rand.Rand, value any) (any, error)
 
+// FieldSet is one Set option. Sets apply in order, so a later Set wins even
+// when it targets a promoted field of a struct an earlier Set replaced.
+type FieldSet struct {
+	Field string
+	Value any
+}
+
 // OptionSet holds parsed options for a single node.
 type OptionSet struct {
-	Sets    map[string]any                     // field name → value
+	Sets    []FieldSet                         // Set options in the order they were written
 	Uses    map[string]any                     // relation name → existing value
 	Refs    map[string]*OptionSet              // relation name → nested options
 	Omits   map[string]bool                    // relation name → true

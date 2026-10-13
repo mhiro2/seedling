@@ -39,7 +39,6 @@ func newMockRegistry() *mockRegistry {
 
 func newEmptyOptionSet() *planner.OptionSet {
 	return &planner.OptionSet{
-		Sets:  make(map[string]any),
 		Uses:  make(map[string]any),
 		Refs:  make(map[string]*planner.OptionSet),
 		Omits: make(map[string]bool),
@@ -100,7 +99,7 @@ func TestPlan_OptionalBelongsToRefExpandsRelation(t *testing.T) {
 
 	opts := newEmptyOptionSet()
 	opts.Refs["company"] = &planner.OptionSet{
-		Sets:  map[string]any{"Name": "custom-company"},
+		Sets:  []planner.FieldSet{{Field: "Name", Value: "custom-company"}},
 		Uses:  make(map[string]any),
 		Refs:  make(map[string]*planner.OptionSet),
 		Omits: make(map[string]bool),
@@ -132,7 +131,7 @@ func TestPlan_OptionalBelongsToWhenTrueExpandsRelation(t *testing.T) {
 	userBP.Relations[0].Required = false
 
 	opts := newEmptyOptionSet()
-	opts.Sets["Name"] = "expand-company"
+	opts.Sets = append(opts.Sets, planner.FieldSet{Field: "Name", Value: "expand-company"})
 	opts.Whens = map[string]func(any) (bool, error){
 		"company": func(v any) (bool, error) {
 			user, ok := v.(User)
@@ -184,7 +183,7 @@ func TestPlan_SetOption(t *testing.T) {
 	// Arrange
 	reg := newMockRegistry()
 	opts := &planner.OptionSet{
-		Sets:  map[string]any{"Title": "custom title"},
+		Sets:  []planner.FieldSet{{Field: "Title", Value: "custom title"}},
 		Uses:  make(map[string]any),
 		Refs:  make(map[string]*planner.OptionSet),
 		Omits: make(map[string]bool),
@@ -207,11 +206,10 @@ func TestPlan_RefOption(t *testing.T) {
 	// Arrange
 	reg := newMockRegistry()
 	opts := &planner.OptionSet{
-		Sets: make(map[string]any),
 		Uses: make(map[string]any),
 		Refs: map[string]*planner.OptionSet{
 			"project": {
-				Sets:  map[string]any{"Name": "custom-project"},
+				Sets:  []planner.FieldSet{{Field: "Name", Value: "custom-project"}},
 				Uses:  make(map[string]any),
 				Refs:  make(map[string]*planner.OptionSet),
 				Omits: make(map[string]bool),
@@ -241,11 +239,9 @@ func TestPlan_UseOption(t *testing.T) {
 	reg := newMockRegistry()
 	existingCompany := Company{ID: 99, Name: "existing-company"}
 	opts := &planner.OptionSet{
-		Sets: make(map[string]any),
 		Uses: make(map[string]any),
 		Refs: map[string]*planner.OptionSet{
 			"project": {
-				Sets: make(map[string]any),
 				Uses: map[string]any{
 					"company": existingCompany,
 				},
@@ -280,11 +276,9 @@ func TestPlan_UseOptionTypeMismatch(t *testing.T) {
 	// Arrange
 	reg := newMockRegistry()
 	opts := &planner.OptionSet{
-		Sets: make(map[string]any),
 		Uses: make(map[string]any),
 		Refs: map[string]*planner.OptionSet{
 			"project": {
-				Sets: make(map[string]any),
 				Uses: map[string]any{
 					"company": Tag{},
 				},
@@ -306,7 +300,6 @@ func TestPlan_InvalidRelation(t *testing.T) {
 	// Arrange
 	reg := newMockRegistry()
 	opts := &planner.OptionSet{
-		Sets: make(map[string]any),
 		Uses: map[string]any{
 			"nonexistent": Company{},
 		},
@@ -349,7 +342,6 @@ func TestPlan_NestedOnlyIsInvalid(t *testing.T) {
 	reg := newMockRegistry()
 	opts := newEmptyOptionSet()
 	opts.Refs["project"] = &planner.OptionSet{
-		Sets:  make(map[string]any),
 		Uses:  make(map[string]any),
 		Refs:  make(map[string]*planner.OptionSet),
 		Omits: make(map[string]bool),
@@ -370,7 +362,7 @@ func TestPlan_OnlyWithRefOnExcludedRelationIsInvalid(t *testing.T) {
 	opts := newEmptyOptionSet()
 	opts.Only = map[string]bool{"project": true}
 	opts.Refs["assignee"] = &planner.OptionSet{
-		Sets:  map[string]any{"Name": "ignored"},
+		Sets:  []planner.FieldSet{{Field: "Name", Value: "ignored"}},
 		Uses:  make(map[string]any),
 		Refs:  make(map[string]*planner.OptionSet),
 		Omits: make(map[string]bool),
@@ -393,7 +385,6 @@ func TestPlan_EmptyOnlyWithRefIsInvalid(t *testing.T) {
 	opts := newEmptyOptionSet()
 	opts.Only = map[string]bool{}
 	opts.Refs["project"] = &planner.OptionSet{
-		Sets:  make(map[string]any),
 		Uses:  make(map[string]any),
 		Refs:  make(map[string]*planner.OptionSet),
 		Omits: make(map[string]bool),
@@ -432,7 +423,7 @@ func TestPlan_OmitAndRefConflict(t *testing.T) {
 	opts := newEmptyOptionSet()
 	opts.Omits["company"] = true
 	opts.Refs["company"] = &planner.OptionSet{
-		Sets:  map[string]any{"Name": "custom-company"},
+		Sets:  []planner.FieldSet{{Field: "Name", Value: "custom-company"}},
 		Uses:  make(map[string]any),
 		Refs:  make(map[string]*planner.OptionSet),
 		Omits: make(map[string]bool),
@@ -506,7 +497,6 @@ func TestPlan_HasManyChildBackReferenceBindsDespiteWhen(t *testing.T) {
 	reg := newMockRegistry()
 	opts := newEmptyOptionSet()
 	opts.Refs["employees"] = &planner.OptionSet{
-		Sets:  make(map[string]any),
 		Uses:  make(map[string]any),
 		Refs:  make(map[string]*planner.OptionSet),
 		Omits: make(map[string]bool),
@@ -540,11 +530,10 @@ func TestPlan_HasManyRefAppliesToChildren(t *testing.T) {
 	// Arrange
 	reg := newMockRegistry()
 	opts := &planner.OptionSet{
-		Sets: make(map[string]any),
 		Uses: make(map[string]any),
 		Refs: map[string]*planner.OptionSet{
 			"employees": {
-				Sets:  map[string]any{"Name": "custom-employee"},
+				Sets:  []planner.FieldSet{{Field: "Name", Value: "custom-employee"}},
 				Uses:  make(map[string]any),
 				Refs:  make(map[string]*planner.OptionSet),
 				Omits: make(map[string]bool),
@@ -582,7 +571,7 @@ func TestPlan_OptionalHasManyRefExpandsRelation(t *testing.T) {
 
 	opts := newEmptyOptionSet()
 	opts.Refs["employees"] = &planner.OptionSet{
-		Sets:  map[string]any{"Name": "custom-employee"},
+		Sets:  []planner.FieldSet{{Field: "Name", Value: "custom-employee"}},
 		Uses:  make(map[string]any),
 		Refs:  make(map[string]*planner.OptionSet),
 		Omits: make(map[string]bool),
@@ -610,15 +599,13 @@ func TestPlan_NestedRefValidation(t *testing.T) {
 	// Arrange
 	reg := newMockRegistry()
 	opts := &planner.OptionSet{
-		Sets: make(map[string]any),
 		Uses: make(map[string]any),
 		Refs: map[string]*planner.OptionSet{
 			"project": {
-				Sets: make(map[string]any),
 				Uses: make(map[string]any),
 				Refs: map[string]*planner.OptionSet{
 					"missing": {
-						Sets:  map[string]any{"Name": "x"},
+						Sets:  []planner.FieldSet{{Field: "Name", Value: "x"}},
 						Uses:  make(map[string]any),
 						Refs:  make(map[string]*planner.OptionSet),
 						Omits: make(map[string]bool),
@@ -641,7 +628,6 @@ func TestPlan_UseOnHasManyIsInvalid(t *testing.T) {
 	// Arrange
 	reg := newMockRegistry()
 	opts := &planner.OptionSet{
-		Sets: make(map[string]any),
 		Uses: map[string]any{
 			"employees": []Employee{{ID: 1, Name: "existing"}},
 		},
@@ -693,13 +679,13 @@ func TestPlanMany_MultipleRoots(t *testing.T) {
 	reg := newMockRegistry()
 	opts := []*planner.OptionSet{
 		{
-			Sets:  map[string]any{"Name": "user-1"},
+			Sets:  []planner.FieldSet{{Field: "Name", Value: "user-1"}},
 			Uses:  make(map[string]any),
 			Refs:  make(map[string]*planner.OptionSet),
 			Omits: make(map[string]bool),
 		},
 		{
-			Sets:  map[string]any{"Name": "user-2"},
+			Sets:  []planner.FieldSet{{Field: "Name", Value: "user-2"}},
 			Uses:  make(map[string]any),
 			Refs:  make(map[string]*planner.OptionSet),
 			Omits: make(map[string]bool),
@@ -748,11 +734,11 @@ func TestPlanMany_NonShareableOptions(t *testing.T) {
 	reg := newMockRegistry()
 	opts := []*planner.OptionSet{
 		{
-			Sets: map[string]any{"Name": "user-1"},
+			Sets: []planner.FieldSet{{Field: "Name", Value: "user-1"}},
 			Uses: make(map[string]any),
 			Refs: map[string]*planner.OptionSet{
 				"company": {
-					Sets:    map[string]any{"Name": "company-a"},
+					Sets:    []planner.FieldSet{{Field: "Name", Value: "company-a"}},
 					Uses:    make(map[string]any),
 					Refs:    make(map[string]*planner.OptionSet),
 					Omits:   make(map[string]bool),
@@ -762,11 +748,11 @@ func TestPlanMany_NonShareableOptions(t *testing.T) {
 			Omits: make(map[string]bool),
 		},
 		{
-			Sets: map[string]any{"Name": "user-2"},
+			Sets: []planner.FieldSet{{Field: "Name", Value: "user-2"}},
 			Uses: make(map[string]any),
 			Refs: map[string]*planner.OptionSet{
 				"company": {
-					Sets:    map[string]any{"Name": "company-b"},
+					Sets:    []planner.FieldSet{{Field: "Name", Value: "company-b"}},
 					Uses:    make(map[string]any),
 					Refs:    make(map[string]*planner.OptionSet),
 					Omits:   make(map[string]bool),
@@ -804,20 +790,20 @@ func TestPlanMany_ShareableWithSets(t *testing.T) {
 	// Arrange: both roots have the exact same static Ref opts, so companies should be shared
 	reg := newMockRegistry()
 	sharedRef := &planner.OptionSet{
-		Sets:  map[string]any{"Name": "shared-company"},
+		Sets:  []planner.FieldSet{{Field: "Name", Value: "shared-company"}},
 		Uses:  make(map[string]any),
 		Refs:  make(map[string]*planner.OptionSet),
 		Omits: make(map[string]bool),
 	}
 	opts := []*planner.OptionSet{
 		{
-			Sets:  map[string]any{"Name": "user-1"},
+			Sets:  []planner.FieldSet{{Field: "Name", Value: "user-1"}},
 			Uses:  make(map[string]any),
 			Refs:  map[string]*planner.OptionSet{"company": sharedRef},
 			Omits: make(map[string]bool),
 		},
 		{
-			Sets:  map[string]any{"Name": "user-2"},
+			Sets:  []planner.FieldSet{{Field: "Name", Value: "user-2"}},
 			Uses:  make(map[string]any),
 			Refs:  map[string]*planner.OptionSet{"company": sharedRef},
 			Omits: make(map[string]bool),
@@ -853,11 +839,10 @@ func TestPlanMany_NonShareableSeqs(t *testing.T) {
 	}
 	opts := []*planner.OptionSet{
 		{
-			Sets: map[string]any{"Name": "user-1"},
+			Sets: []planner.FieldSet{{Field: "Name", Value: "user-1"}},
 			Uses: make(map[string]any),
 			Refs: map[string]*planner.OptionSet{
 				"company": {
-					Sets:  make(map[string]any),
 					Uses:  make(map[string]any),
 					Refs:  make(map[string]*planner.OptionSet),
 					Omits: make(map[string]bool),
@@ -867,11 +852,10 @@ func TestPlanMany_NonShareableSeqs(t *testing.T) {
 			Omits: make(map[string]bool),
 		},
 		{
-			Sets: map[string]any{"Name": "user-2"},
+			Sets: []planner.FieldSet{{Field: "Name", Value: "user-2"}},
 			Uses: make(map[string]any),
 			Refs: map[string]*planner.OptionSet{
 				"company": {
-					Sets:  make(map[string]any),
 					Uses:  make(map[string]any),
 					Refs:  make(map[string]*planner.OptionSet),
 					Omits: make(map[string]bool),
@@ -903,11 +887,10 @@ func TestPlan_ManyToManyRefAppliesToChildren(t *testing.T) {
 	// Arrange
 	reg := newMockRegistry()
 	opts := &planner.OptionSet{
-		Sets: make(map[string]any),
 		Uses: make(map[string]any),
 		Refs: map[string]*planner.OptionSet{
 			"tags": {
-				Sets:  map[string]any{"Name": "custom-tag"},
+				Sets:  []planner.FieldSet{{Field: "Name", Value: "custom-tag"}},
 				Uses:  make(map[string]any),
 				Refs:  make(map[string]*planner.OptionSet),
 				Omits: make(map[string]bool),
@@ -1158,7 +1141,7 @@ func TestPlan_OptionalManyToManyRefExpandsRelation(t *testing.T) {
 
 	opts := newEmptyOptionSet()
 	opts.Refs["tags"] = &planner.OptionSet{
-		Sets:  map[string]any{"Name": "custom-tag"},
+		Sets:  []planner.FieldSet{{Field: "Name", Value: "custom-tag"}},
 		Uses:  make(map[string]any),
 		Refs:  make(map[string]*planner.OptionSet),
 		Omits: make(map[string]bool),

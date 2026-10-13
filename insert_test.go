@@ -3147,3 +3147,40 @@ func TestInsertMany_ResolvesSequenceOptionsInBlueprintTraits(t *testing.T) {
 		}
 	})
 }
+
+type SetOrderEmbedded struct {
+	Name string
+}
+
+type setOrderRecord struct {
+	ID int
+	SetOrderEmbedded
+}
+
+func TestSet_EmbeddedStructAndPromotedFieldApplyInOrder(t *testing.T) {
+	// Arrange
+	reg := seedling.NewRegistry()
+	seedling.MustRegisterTo(reg, seedling.Blueprint[setOrderRecord]{
+		Name:    "set_order_record",
+		Table:   "set_order_records",
+		PKField: "ID",
+		Insert: func(_ context.Context, _ seedling.DBTX, v setOrderRecord) (setOrderRecord, error) {
+			v.ID = 1
+			return v, nil
+		},
+	})
+	useTestRegistry(t, reg)
+	whole := seedling.Set("SetOrderEmbedded", SetOrderEmbedded{Name: "embedded"})
+	promoted := seedling.Set("Name", "explicit")
+
+	// Act / Assert
+	// Repeat to catch order that depends on map iteration.
+	for range 50 {
+		if got := insertOne[setOrderRecord](t, nil, whole, promoted).Name; got != "explicit" {
+			t.Fatalf("struct then field: Name = %q, want %q", got, "explicit")
+		}
+		if got := insertOne[setOrderRecord](t, nil, promoted, whole).Name; got != "embedded" {
+			t.Fatalf("field then struct: Name = %q, want %q", got, "embedded")
+		}
+	}
+}

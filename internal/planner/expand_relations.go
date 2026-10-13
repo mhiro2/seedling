@@ -410,8 +410,8 @@ func shareableOptionSet(opts *OptionSet) bool {
 	if len(opts.Seqs) > 0 {
 		return false
 	}
-	for _, value := range opts.Sets {
-		if !shareableValue(value) {
+	for _, set := range opts.Sets {
+		if !shareableValue(set.Value) {
 			return false
 		}
 	}

@@ -107,9 +107,9 @@ func validateOptions(reg Registry, bp *BlueprintDef, opts *OptionSet, allowOnly 
 	}
 
 	// Check contradiction: Set on a FK field.
-	for field := range opts.Sets {
-		if relName, ok := rels.localFieldToRel[field]; ok {
-			return fmt.Errorf("validate set %q: %w", field, errx.SetOnFKField(bp.Name, field, relName))
+	for _, set := range opts.Sets {
+		if relName, ok := rels.localFieldToRel[set.Field]; ok {
+			return fmt.Errorf("validate set %q: %w", set.Field, errx.SetOnFKField(bp.Name, set.Field, relName))
 		}
 	}
 
