@@ -96,8 +96,7 @@ func (s Session[T]) InsertManyE(ctx context.Context, db DBTX, n int, opts ...Opt
 	internalOpts := make([]*planner.OptionSet, n)
 
 	for i := range n {
-		resolved := resolveSeqs(opts, i)
-		prepared, err := prepareRootOptions(s.registry, rootType, resolved)
+		prepared, err := prepareRootOptions(s.registry, rootType, opts, i)
 		if err != nil {
 			return zero, err
 		}
@@ -194,27 +193,4 @@ func insertContext(ctx, override context.Context) context.Context {
 		return context.Background()
 	}
 	return ctx
-}
-
-// resolveSeqs converts Seq options into Set options by calling the sequence
-// function with the given index. Non-Seq options are passed through.
-func resolveSeqs(opts []Option, index int) []Option {
-	resolved := make([]Option, 0, len(opts))
-	for _, o := range opts {
-		switch sq := o.(type) {
-		case seqOption:
-			resolved = append(resolved, Set(sq.field, sq.fn(index)))
-		case seqRefOption:
-			resolved = append(resolved, Ref(sq.name, resolveSeqs(sq.fn(index), index)...))
-		case seqUseOption:
-			resolved = append(resolved, Use(sq.name, sq.fn(index)))
-		case refOption:
-			resolved = append(resolved, Ref(sq.name, resolveSeqs(sq.opts, index)...))
-		case inlineTraitOption:
-			resolved = append(resolved, InlineTrait(resolveSeqs(sq.opts, index)...))
-		default:
-			resolved = append(resolved, o)
-		}
-	}
-	return resolved
 }

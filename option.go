@@ -27,7 +27,7 @@ type optionSet struct {
 	afterInserts []any                              // func(T, DBTX) closures run after insert
 	genFns       []generateFn                       // typed rand-driven mutators
 	rand         *rand.Rand                         // optional RNG for Generate options
-	traits       []string                           // blueprint trait names left unexpanded (always empty after expandTraits)
+	traits       []string                           // blueprint trait names left unexpanded (always empty after optionExpander)
 	logFn        func(InsertLog)                    // optional insert log callback
 	only         map[string]bool                    // Only option: nil = insert all, non-nil = insert only specified relations
 }

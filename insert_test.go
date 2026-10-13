@@ -3028,3 +3028,122 @@ func TestWithContext_TraitContextValueReachesInsert(t *testing.T) {
 		t.Fatalf("context value = %q, want %q", got, "from-trait")
 	}
 }
+
+func registerSequenceTraitBlueprints(tb testing.TB) {
+	tb.Helper()
+	reg := seedling.NewRegistry()
+	ids := seedlingtest.NewIDSequence()
+	existing := []Company{{ID: 100, Name: "existing-0"}, {ID: 101, Name: "existing-1"}}
+
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
+		Name:    "company",
+		Table:   "companies",
+		PKField: "ID",
+		Defaults: func() Company {
+			return Company{Name: "test-company"}
+		},
+		Traits: map[string][]seedling.Option{
+			"numbered": {seedling.Seq("Name", func(i int) string { return fmt.Sprintf("company-%d", i) })},
+		},
+		Insert: func(_ context.Context, _ seedling.DBTX, v Company) (Company, error) {
+			v.ID = ids.Next()
+			return v, nil
+		},
+	})
+	seedling.MustRegisterTo(reg, seedling.Blueprint[User]{
+		Name:    "user",
+		Table:   "users",
+		PKField: "ID",
+		Relations: []seedling.Relation{
+			{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
+		},
+		Traits: map[string][]seedling.Option{
+			"numbered": {seedling.Seq("Name", func(i int) string { return fmt.Sprintf("user-%d", i) })},
+			"numbered_company": {seedling.SeqRef("company", func(int) []seedling.Option {
+				return []seedling.Option{seedling.BlueprintTrait("numbered")}
+			})},
+			"existing_company": {seedling.SeqUse("company", func(i int) Company { return existing[i] })},
+		},
+		Insert: func(_ context.Context, _ seedling.DBTX, v User) (User, error) {
+			v.ID = ids.Next()
+			return v, nil
+		},
+	})
+	useTestRegistry(tb, reg)
+}
+
+func TestInsertMany_ResolvesSequenceOptionsInBlueprintTraits(t *testing.T) {
+	t.Run("seq", func(t *testing.T) {
+		// Arrange
+		registerSequenceTraitBlueprints(t)
+
+		// Act
+		users := insertMany[User](t, nil, 2, seedling.BlueprintTrait("numbered"))
+
+		// Assert
+		if users[0].Name != "user-0" || users[1].Name != "user-1" {
+			t.Fatalf("got names %q and %q, want user-0 and user-1", users[0].Name, users[1].Name)
+		}
+	})
+
+	t.Run("seq ref returning a trait", func(t *testing.T) {
+		// Arrange
+		registerSequenceTraitBlueprints(t)
+
+		// Act
+		result, err := insertManyE[User](t.Context(), t, nil, 2, seedling.BlueprintTrait("numbered_company"))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Assert
+		for i := range 2 {
+			company := result.MustNodeAt(i, "company").Value().(Company)
+			if want := fmt.Sprintf("company-%d", i); company.Name != want {
+				t.Fatalf("root %d company name = %q, want %q", i, company.Name, want)
+			}
+		}
+	})
+
+	t.Run("seq use", func(t *testing.T) {
+		// Arrange
+		registerSequenceTraitBlueprints(t)
+
+		// Act
+		users := insertMany[User](t, nil, 2, seedling.BlueprintTrait("existing_company"))
+
+		// Assert
+		if users[0].CompanyID != 100 || users[1].CompanyID != 101 {
+			t.Fatalf("got company IDs %d and %d, want 100 and 101", users[0].CompanyID, users[1].CompanyID)
+		}
+	})
+
+	t.Run("nested ref", func(t *testing.T) {
+		// Arrange
+		registerSequenceTraitBlueprints(t)
+
+		// Act
+		result, err := insertManyE[User](t.Context(), t, nil, 2, seedling.Ref("company", seedling.BlueprintTrait("numbered")))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Assert
+		if got := len(result.Nodes("company")); got != 2 {
+			t.Fatalf("got %d companies, want 2", got)
+		}
+	})
+
+	t.Run("outside InsertMany", func(t *testing.T) {
+		// Arrange
+		registerSequenceTraitBlueprints(t)
+
+		// Act
+		_, err := buildE[User](t, seedling.BlueprintTrait("numbered"))
+
+		// Assert
+		if !errors.Is(err, seedling.ErrInvalidOption) {
+			t.Fatalf("got %v, want %v", err, seedling.ErrInvalidOption)
+		}
+	})
+}
