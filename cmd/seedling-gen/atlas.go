@@ -4,19 +4,22 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 var (
 	atlasTableRE  = regexp.MustCompile(`(?m)^table\s+"([^"]+)"\s*\{`)
 	atlasColumnRE = regexp.MustCompile(`(?m)^\s*column\s+"([^"]+)"\s*\{`)
-	// Attribute names are anchored with \b so that one attribute never matches
-	// inside a longer one, such as columns inside ref_columns.
-	atlasTypeRE   = regexp.MustCompile(`(?mi)\btype\s*=\s*(\S+)`)
-	atlasNullRE   = regexp.MustCompile(`(?mi)\bnull\s*=\s*(true|false)`)
-	atlasPKRE     = regexp.MustCompile(`(?mi)\bprimary_key\s*\{[^}]*\bcolumns\s*=\s*\[([^\]]+)\]`)
-	atlasFK_RE    = regexp.MustCompile(`(?mis)\bforeign_key\s+"([^"]*)"\s*\{([^}]+)\}`)
-	atlasFKColsRE = regexp.MustCompile(`(?mi)\bcolumns\s*=\s*\[([^\]]+)\]`)
-	atlasFKRefRE  = regexp.MustCompile(`(?mi)\bref_columns\s*=\s*\[([^\]]+)\]`)
+	// Attribute names must not be preceded by an identifier character, so one
+	// attribute never matches inside a longer one, such as columns inside
+	// ref_columns or null inside allow-null. HCL identifiers may contain '-',
+	// which \b would treat as a boundary.
+	atlasTypeRE   = regexp.MustCompile(`(?mi)(?:^|[^\w-])type\s*=\s*(\S+)`)
+	atlasNullRE   = regexp.MustCompile(`(?mi)(?:^|[^\w-])null\s*=\s*(true|false)`)
+	atlasPKRE     = regexp.MustCompile(`(?mi)(?:^|[^\w-])primary_key\s*\{[^}]*?(?:^|[^\w-])columns\s*=\s*\[([^\]]+)\]`)
+	atlasFK_RE    = regexp.MustCompile(`(?mis)(?:^|[^\w-])foreign_key\s+"([^"]*)"\s*\{([^}]+)\}`)
+	atlasFKColsRE = regexp.MustCompile(`(?mi)(?:^|[^\w-])columns\s*=\s*\[([^\]]+)\]`)
+	atlasFKRefRE  = regexp.MustCompile(`(?mi)(?:^|[^\w-])ref_columns\s*=\s*\[([^\]]+)\]`)
 )
 
 // ParseAtlasHCL parses an Atlas HCL schema file and returns []Table.
@@ -133,28 +136,34 @@ func parseAtlasTable(block atlasTableBlock) (Table, error) {
 }
 
 // parseAtlasForeignKey reads one foreign_key block and marks its local columns
-// as foreign keys. A block whose columns or ref_columns are missing, or whose
-// local columns are not declared on the table, is rejected rather than dropped,
-// since generating without the relation would silently skip its parent.
+// as foreign keys. A block that cannot be resolved to one referenced column per
+// local column, all on one table, is rejected rather than dropped, since
+// generating without the relation would silently skip its parent.
 func parseAtlasForeignKey(tableName, fkName, fkBody string, columns []Column, columnIndex map[string]int) (ForeignKey, error) {
+	fail := func(format string, args ...any) (ForeignKey, error) {
+		return ForeignKey{}, fmt.Errorf("parse table %q foreign key %q: %s", tableName, fkName, fmt.Sprintf(format, args...))
+	}
+
 	colsMatch := atlasFKColsRE.FindStringSubmatch(fkBody)
 	refMatch := atlasFKRefRE.FindStringSubmatch(fkBody)
 	if colsMatch == nil || refMatch == nil {
-		return ForeignKey{}, fmt.Errorf("parse table %q foreign key %q: columns and ref_columns are required", tableName, fkName)
+		return fail("columns and ref_columns are required")
 	}
 
 	fkCols := splitAtlasColumnRefs(colsMatch[1])
-	refTable := extractAtlasRefTable(refMatch[1])
-	refColumns := extractAtlasRefColumns(refMatch[1])
-	if len(fkCols) == 0 || refTable == "" {
-		return ForeignKey{}, fmt.Errorf("parse table %q foreign key %q: columns and ref_columns must reference columns", tableName, fkName)
+	refTable, refColumns, err := parseAtlasRefColumns(refMatch[1], tableName)
+	if err != nil {
+		return fail("%v", err)
+	}
+	if len(fkCols) == 0 || len(fkCols) != len(refColumns) {
+		return fail("columns lists %d columns but ref_columns lists %d", len(fkCols), len(refColumns))
 	}
 
 	notNull := true
 	for _, colName := range fkCols {
 		idx, ok := columnIndex[colName]
 		if !ok {
-			return ForeignKey{}, fmt.Errorf("parse table %q foreign key %q: column %q is not defined on the table", tableName, fkName, colName)
+			return fail("column %q is not defined on the table", colName)
 		}
 		columns[idx].IsFK = true
 		columns[idx].FKRefTable = refTable
@@ -230,7 +239,8 @@ func normalizeAtlasType(t string) string {
 // masked text maps back to the same bytes of data. Patterns run on the masked
 // text cannot match a keyword, brace, or comment marker that sits inside a
 // string, and a string cannot hide structure behind an escaped quote (\").
-// Quoted strings end at a newline, as HCL does not allow them to span lines.
+// Quoted strings end at a newline, as HCL does not allow them to span lines;
+// heredoc strings (<<EOT or <<-EOT) are masked up to their closing marker.
 func maskHCL(data string) string {
 	b := []byte(data)
 	blank := func(from, to int) {
@@ -256,6 +266,14 @@ func maskHCL(data string) string {
 			if i < len(b) && b[i] == '"' {
 				i++
 			}
+		case b[i] == '<' && i+1 < len(b) && b[i+1] == '<':
+			start, end, ok := hclHeredocBody(data, i)
+			if !ok {
+				i += 2
+				continue
+			}
+			blank(start, end)
+			i = end
 		case b[i] == '#', b[i] == '/' && i+1 < len(b) && b[i+1] == '/':
 			start := i
 			for i < len(b) && b[i] != '\n' {
@@ -278,6 +296,45 @@ func maskHCL(data string) string {
 	return string(b)
 }
 
+// hclHeredocBody reports the body of the heredoc that opens at i, from the
+// line after <<MARKER (or <<-MARKER) up to the line holding only MARKER. A body
+// whose closing marker is missing runs to the end of the input.
+func hclHeredocBody(data string, i int) (start, end int, ok bool) {
+	j := i + 2
+	if j < len(data) && data[j] == '-' {
+		j++
+	}
+	markerStart := j
+	for j < len(data) && (data[j] == '_' || data[j] == '-' || unicode.IsLetter(rune(data[j])) || j > markerStart && unicode.IsDigit(rune(data[j]))) {
+		j++
+	}
+	marker := data[markerStart:j]
+	if marker == "" {
+		return 0, 0, false
+	}
+	lineEnd := strings.IndexByte(data[j:], '\n')
+	if lineEnd == -1 || strings.TrimSpace(data[j:j+lineEnd]) != "" {
+		return 0, 0, false
+	}
+
+	start = j + lineEnd + 1
+	for pos := start; pos < len(data); {
+		next := strings.IndexByte(data[pos:], '\n')
+		line := data[pos:]
+		if next != -1 {
+			line = data[pos : pos+next]
+		}
+		if strings.TrimSpace(line) == marker {
+			return start, pos, true
+		}
+		if next == -1 {
+			break
+		}
+		pos += next + 1
+	}
+	return start, len(data), true
+}
+
 // splitAtlasColumnRefs splits "[column.id, column.name]" content into column names.
 func splitAtlasColumnRefs(s string) []string {
 	parts := strings.Split(s, ",")
@@ -294,38 +351,36 @@ func splitAtlasColumnRefs(s string) []string {
 	return names
 }
 
-// extractAtlasRefTable extracts the table name from ref_columns like
-// "table.companies.column.id".
-func extractAtlasRefTable(s string) string {
-	parts := strings.Split(s, ",")
-	if len(parts) == 0 {
-		return ""
-	}
-	// Take the first reference and extract table name.
-	ref := strings.TrimSpace(parts[0])
-	// Format: table.tablename.column.colname
-	segments := strings.Split(ref, ".")
-	for i, seg := range segments {
-		if seg == "table" && i+1 < len(segments) {
-			return segments[i+1]
+// parseAtlasRefColumns resolves ref_columns content such as
+// "table.companies.column.id, table.companies.column.code" into the referenced
+// table and its columns. A bare "column.id" references selfTable. Every entry
+// must name a column, and all of them the same table.
+func parseAtlasRefColumns(s, selfTable string) (string, []string, error) {
+	var table string
+	var columns []string
+	for ref := range strings.SplitSeq(s, ",") {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			continue
 		}
-	}
-	return ""
-}
-
-// extractAtlasRefColumns extracts column names from Atlas references like
-// "table.companies.column.code".
-func extractAtlasRefColumns(s string) []string {
-	parts := strings.Split(s, ",")
-	columns := make([]string, 0, len(parts))
-	for _, ref := range parts {
-		segments := strings.Split(strings.TrimSpace(ref), ".")
-		for i, segment := range segments {
-			if segment == "column" && i+1 < len(segments) {
-				columns = append(columns, segments[i+1])
-				break
+		refTable, column := selfTable, ""
+		segments := strings.Split(ref, ".")
+		for i := 0; i+1 < len(segments); i += 2 {
+			switch segments[i] {
+			case "table":
+				refTable = segments[i+1]
+			case "column":
+				column = segments[i+1]
 			}
 		}
+		if column == "" {
+			return "", nil, fmt.Errorf("ref_columns entry %q does not name a column", ref)
+		}
+		if table != "" && refTable != table {
+			return "", nil, fmt.Errorf("ref_columns references both %q and %q", table, refTable)
+		}
+		table = refTable
+		columns = append(columns, column)
 	}
-	return columns
+	return table, columns, nil
 }

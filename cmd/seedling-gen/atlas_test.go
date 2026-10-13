@@ -245,31 +245,38 @@ func TestSplitAtlasColumnRefs(t *testing.T) {
 	}
 }
 
-func TestExtractAtlasRefTable(t *testing.T) {
-	// Arrange
+func TestParseAtlasRefColumns(t *testing.T) {
 	tests := []struct {
-		name  string
-		input string
-		want  string
+		name        string
+		input       string
+		wantTable   string
+		wantColumns []string
+		wantErr     string
 	}{
-		{
-			name:  "simple ref",
-			input: "table.companies.column.id",
-			want:  "companies",
-		},
-		{
-			name:  "empty",
-			input: "",
-			want:  "",
-		},
+		{name: "qualified", input: "table.companies.column.id", wantTable: "companies", wantColumns: []string{"id"}},
+		{name: "composite with trailing comma", input: "table.regions.column.country, table.regions.column.code,\n", wantTable: "regions", wantColumns: []string{"country", "code"}},
+		{name: "same table", input: "column.id", wantTable: "users", wantColumns: []string{"id"}},
+		{name: "table without column", input: "table.companies", wantErr: "does not name a column"},
+		{name: "two tables", input: "table.a.column.id, table.b.column.id", wantErr: `references both "a" and "b"`},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Act & Assert
-			got := extractAtlasRefTable(tt.input)
-			if got != tt.want {
-				t.Fatalf("got %q, want %q", got, tt.want)
+			// Act
+			table, columns, err := parseAtlasRefColumns(tt.input, "users")
+
+			// Assert
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("got error %v, want one containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if table != tt.wantTable || strings.Join(columns, ",") != strings.Join(tt.wantColumns, ",") {
+				t.Fatalf("got %q %v, want %q %v", table, columns, tt.wantTable, tt.wantColumns)
 			}
 		})
 	}
@@ -431,6 +438,11 @@ func TestMaskHCL(t *testing.T) {
 			want:  `comment = "              " }`,
 		},
 		{
+			name:  "heredoc",
+			input: "c = <<-EOT\n  } table \"x\" {\n  EOT\n}",
+			want:  "c = <<-EOT\n" + strings.Repeat(" ", len(`  } table "x" {`)) + "\n  EOT\n}",
+		},
+		{
 			name:  "unterminated string stops at newline",
 			input: "a = \"open\n}",
 			want:  "a = \"    \n}",
@@ -470,6 +482,15 @@ table "users" {
     comment = "type = int # not a comment"
     type = text
     null = true
+    allow-null = false
+  }
+  column "body" {
+    comment = <<-EOT
+      } column "heredoc" {
+        null = false
+    EOT
+    sql-type = int
+    type = text
   }
   primary_key {
     columns = [column.id]
@@ -482,8 +503,11 @@ table "users" {
 
 	// Assert
 	users := findTableByName(t, tables, "users")
-	if len(users.Columns) != 2 {
-		t.Fatalf("got columns %+v, want id and note", users.Columns)
+	if len(users.Columns) != 3 {
+		t.Fatalf("got columns %+v, want id, note, and body", users.Columns)
+	}
+	if body := findColumnByName(t, users, "body"); body.SQLType != "TEXT" || !body.NotNull {
+		t.Fatalf("got body column %+v, want NOT NULL TEXT", body)
 	}
 	id := findColumnByName(t, users, "id")
 	if !id.NotNull || !id.IsPK || id.SQLType != "INT" {
@@ -811,10 +835,16 @@ func TestParseAtlasHCL_RejectsUnresolvableForeignKeys(t *testing.T) {
 			want: "columns and ref_columns are required",
 		},
 		{
-			name: "ref_columns without a table",
+			name: "ref_columns without a column",
 			fk: `    columns     = [column.company_id]
-    ref_columns = [column.id]`,
-			want: "must reference columns",
+    ref_columns = [table.companies]`,
+			want: "does not name a column",
+		},
+		{
+			name: "column count mismatch",
+			fk: `    columns     = [column.company_id]
+    ref_columns = [table.companies.column.id, table.companies.column.code]`,
+			want: "columns lists 1 columns but ref_columns lists 2",
 		},
 	}
 
