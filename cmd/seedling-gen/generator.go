@@ -13,9 +13,6 @@ func Generate(w io.Writer, pkg string, tables []Table) error {
 		`"context"`,
 		`"github.com/mhiro2/seedling"`,
 	}
-	if normalizedModelsNeedTimeImport(models) {
-		imports = append(imports, `"time"`)
-	}
 
 	return generateNormalizedCode(w, "sql", pkg, imports, models, true)
 }
@@ -34,9 +31,6 @@ func GenerateSqlc(w io.Writer, pkg, sqlcImportPath string, tables []Table, sqlcI
 		`"context"`,
 		`"github.com/mhiro2/seedling"`,
 		spec,
-	}
-	if normalizedModelsNeedTimeImport(models) {
-		imports = append(imports, `"time"`)
 	}
 	return generateNormalizedCode(w, "sqlc", pkg, imports, models, false)
 }

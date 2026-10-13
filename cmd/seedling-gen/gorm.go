@@ -326,8 +326,5 @@ func GenerateGorm(w io.Writer, pkg, modelImportPath string, models []GormModel) 
 		`"gorm.io/gorm"`,
 		spec,
 	}
-	if normalizedModelsNeedTimeImport(normalized) {
-		imports = append(imports, `"time"`)
-	}
 	return generateNormalizedCode(w, "gorm", pkg, imports, normalized, false)
 }

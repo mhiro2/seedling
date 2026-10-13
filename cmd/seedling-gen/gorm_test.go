@@ -453,6 +453,32 @@ type Item struct {
 	}
 }
 
+func TestGenerateGorm_OmitsTimeImportForTimeKeysOnly(t *testing.T) {
+	// Arrange: the only time.Time field is a primary key, which never receives
+	// a generated default.
+	models := []GormModel{
+		{
+			Name:  "Snapshot",
+			Table: "snapshots",
+			Fields: []GormField{
+				{Name: "TakenAt", Type: "time.Time", IsPK: true},
+				{Name: "Label", Type: "string"},
+			},
+		},
+	}
+
+	// Act
+	var buf bytes.Buffer
+	if err := GenerateGorm(&buf, "testutil", "github.com/myapp/models", models); err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	if output := buf.String(); strings.Contains(output, `"time"`) {
+		t.Fatalf("expected no time import\n\nGot:\n%s", output)
+	}
+}
+
 func TestToSnakeCase(t *testing.T) {
 	tests := []struct {
 		input, want string

@@ -152,6 +152,30 @@ func TestGeneratorOutputsCompile(t *testing.T) {
 		ensureCompiles(t, "gorm_composite_pk", buf.String())
 	})
 
+	t.Run("gorm time key only", func(t *testing.T) {
+		// Arrange: a time.Time key is never defaulted, so nothing in the
+		// generated file references the time package.
+		models := []GormModel{
+			{
+				Name:  "Company",
+				Table: "companies",
+				Fields: []GormField{
+					{Name: "CreatedAt", Type: "time.Time", IsPK: true},
+					{Name: "Name", Type: "string"},
+				},
+			},
+		}
+
+		// Act
+		var buf strings.Builder
+		if err := GenerateGorm(&buf, "compile", "github.com/mhiro2/seedling/cmd/seedling-gen/testmodels", models); err != nil {
+			t.Fatalf("GenerateGorm: %v", err)
+		}
+
+		// Assert
+		ensureCompiles(t, "gorm_time_key_only", buf.String())
+	})
+
 	t.Run("ent", func(t *testing.T) {
 		schemas, err := ParseEntSchemaDir(filepath.Join("testdata", "ent", "schema"))
 		if err != nil {

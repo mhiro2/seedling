@@ -76,9 +76,10 @@ func TestBuildDefaultLiteral_FallsBackToZeroValueWhenNothingIsFillable(t *testin
 
 func TestNormalizedModelsNeedTimeImport(t *testing.T) {
 	tests := []struct {
-		name   string
-		models []normalizedModel
-		want   bool
+		name        string
+		models      []normalizedModel
+		emitStructs bool
+		want        bool
 	}{
 		{
 			name: "without time fields",
@@ -88,18 +89,36 @@ func TestNormalizedModelsNeedTimeImport(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "with time field",
+			name: "with time default",
 			models: []normalizedModel{
 				{Fields: []normalizedField{{GoName: "CreatedAt", GoType: "time.Time"}}},
 			},
 			want: true,
+		},
+		{
+			name: "time key on existing model type",
+			models: []normalizedModel{
+				{Fields: []normalizedField{
+					{GoName: "ID", GoType: "time.Time", IsPK: true},
+					{GoName: "ParentID", GoType: "time.Time", IsRelationFK: true},
+				}},
+			},
+			want: false,
+		},
+		{
+			name: "time key on emitted struct",
+			models: []normalizedModel{
+				{Fields: []normalizedField{{GoName: "ID", GoType: "time.Time", IsPK: true}}},
+			},
+			emitStructs: true,
+			want:        true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Act
-			got := normalizedModelsNeedTimeImport(tt.models)
+			got := normalizedModelsNeedTimeImport(tt.models, tt.emitStructs)
 
 			// Assert
 			if got != tt.want {

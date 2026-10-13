@@ -123,6 +123,9 @@ func generateNormalizedCode(w io.Writer, kind, pkg string, imports []string, mod
 	buf.WriteString(pkg)
 	buf.WriteString("\n\n")
 
+	if normalizedModelsNeedTimeImport(models, emitStructs) {
+		imports = append(imports, `"time"`)
+	}
 	renderImports(&buf, imports)
 
 	if emitStructs {
@@ -1000,6 +1003,9 @@ func buildDefaultLiteral(model normalizedModel) string {
 	return prefix + "{" + strings.Join(assignments, ", ") + "}"
 }
 
+// timeDefaultExpr is the generated default for time.Time fields.
+const timeDefaultExpr = "time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)"
+
 func defaultFieldExpr(blueprintID string, field normalizedField) string {
 	if field.IsPK || field.IsRelationFK {
 		return ""
@@ -1024,16 +1030,23 @@ func defaultFieldExpr(blueprintID string, field normalizedField) string {
 	case "[]byte":
 		return "[]byte(" + strconv.Quote(label) + ")"
 	case "time.Time":
-		return "time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)"
+		return timeDefaultExpr
 	default:
 		return ""
 	}
 }
 
-func normalizedModelsNeedTimeImport(models []normalizedModel) bool {
+// normalizedModelsNeedTimeImport reports whether the generated file references
+// the time package: through emitted struct field types, or through a default
+// that is actually rendered. A time.Time field skipped by the defaults (a key or
+// relation field) on an existing model type needs no import.
+func normalizedModelsNeedTimeImport(models []normalizedModel, emitStructs bool) bool {
 	for _, model := range models {
 		for _, field := range model.Fields {
-			if field.GoType == "time.Time" {
+			if emitStructs && field.GoType == "time.Time" {
+				return true
+			}
+			if defaultFieldExpr(model.BlueprintID, field) == timeDefaultExpr {
 				return true
 			}
 		}
