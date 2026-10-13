@@ -237,7 +237,10 @@ seedling-gen atlas --pkg blueprints schema.hcl
 
 Only some adapters can emit a `Delete` callback, which `Result.Cleanup` requires on every blueprint in the graph: `gorm` and `ent` always generate one, `sqlc` generates one when the queries define a unique `Delete<Table>` / `Delete<Model>` query taking the primary key, and `sql` / `atlas` generate none because they see only DDL. Add `Delete` by hand when you rely on `Cleanup` instead of `WithTx`.
 
-All subcommands support `--pkg` (generated package name) and `--out` (output file path). The `sql` and `sqlc` subcommands also support `--dialect` (`auto`, `postgres`, `mysql`, `sqlite`) as a validation hint. The SQL parser itself uses the same logic for all dialects, so `--dialect` does not change parsing behavior.
+All subcommands support `--pkg` (generated package name) and `--out` (output file path). The `sql` and `sqlc` subcommands also support `--dialect` (`auto`, `postgres`, `mysql`, `sqlite`). The dialect selects how string literals are read and what a primary key implies:
+
+- `postgres` recognizes dollar-quoted strings (`$$...$$`, `$tag$...$tag$`), `E'...'` escape strings, and nested block comments; `mysql` treats a backslash inside a string literal as an escape and `#` as a line comment; `sqlite` uses standard quoting only; `auto` follows `postgres` and also reads a `#` that starts a line as a comment. Comments, string literals, and quoted identifiers never count as schema structure, so a `CREATE TABLE` or `NOT NULL` inside them is ignored
+- A primary key column is `NOT NULL`, so a column that is both primary key and foreign key yields a required relation. Under `sqlite` this holds only for an `INTEGER PRIMARY KEY` rowid alias (not declared `DESC` inline) and for `WITHOUT ROWID` tables, following SQLite's own rule
 
 All subcommands also support diagnostic output modes:
 

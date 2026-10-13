@@ -174,7 +174,7 @@ func runSQLCmd(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("sql", stderr, "seedling-gen sql [flags] <schema.sql>")
 	pkg := fs.String("pkg", "blueprints", "package name for generated code")
 	out := fs.String("out", "", "output file path (default: stdout)")
-	dialect := fs.String("dialect", "auto", "schema dialect hint for validation (auto, postgres, mysql, sqlite)")
+	dialect := fs.String("dialect", "auto", "schema dialect for string quoting and primary key rules (auto, postgres, mysql, sqlite)")
 	explain := fs.Bool("explain", false, "print parsed tables and inferred blueprints instead of generated code")
 	jsonOutput := fs.Bool("json", false, "print diagnostic output as JSON instead of generated code")
 
@@ -209,7 +209,7 @@ func runSQLCCmd(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	pkg := fs.String("pkg", "blueprints", "package name for generated code")
 	out := fs.String("out", "", "output file path (default: stdout)")
-	dialect := fs.String("dialect", "auto", "schema dialect hint for validation (auto, postgres, mysql, sqlite)")
+	dialect := fs.String("dialect", "auto", "schema dialect for string quoting and primary key rules (auto, postgres, mysql, sqlite)")
 	configPath := fs.String("config", "", "path to sqlc config file (auto-resolves schema, output, and import path)")
 	sqlcDir := fs.String("dir", "", "path to sqlc-generated Go files directory")
 	importPath := fs.String("import-path", "", "Go import path for sqlc package")
