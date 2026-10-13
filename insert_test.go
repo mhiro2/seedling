@@ -3306,3 +3306,21 @@ type nodesForRoot struct {
 func (n nodesForRoot) Nodes(name string) []seedling.NodeResult {
 	return n.result.NodesForRoot(n.index, name)
 }
+
+func TestWithContext_NilOverridesCallerContext(t *testing.T) {
+	// Arrange
+	setupBlueprints(t)
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	// Act
+	//nolint:staticcheck // a nil WithContext is the case under test
+	result, err := session[Company](t).InsertOneE(canceled, nil, seedling.WithContext(nil))
+	// Assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Root().ID == 0 {
+		t.Fatal("expected non-zero ID")
+	}
+}

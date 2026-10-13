@@ -187,8 +187,9 @@ func (w withOption[T]) applyOption(o *optionSet) {
 // WithContext sets the context used for insert operations. It applies wherever
 // it appears among the root options, including inside a [BlueprintTrait] or
 // [InlineTrait], and overrides the ctx passed to InsertOneE, InsertManyE, or
-// Plan.InsertE. If not specified, testing-based APIs use t.Context() and
-// error-returning APIs use the ctx they were given.
+// Plan.InsertE; WithContext(nil) runs with context.Background(). If not
+// specified, testing-based APIs use t.Context() and error-returning APIs use
+// the ctx they were given.
 //
 //	seedling.InsertOne[Task](t, db, seedling.WithContext(ctx))
 func WithContext(ctx context.Context) Option {
@@ -200,7 +201,12 @@ type contextOption struct {
 }
 
 func (c contextOption) applyOption(o *optionSet) {
+	// A nil context still counts as given, so it overrides the caller's ctx
+	// the same way any other WithContext does.
 	o.ctx = c.ctx
+	if o.ctx == nil {
+		o.ctx = context.Background()
+	}
 }
 
 // Seq sets a field value based on the index when used with InsertMany.
