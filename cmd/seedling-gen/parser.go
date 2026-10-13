@@ -53,11 +53,11 @@ func ParseSchema(sql string) ([]Table, error) {
 // The dialect selects the lexical rules for string literals: PostgreSQL
 // dollar quotes and E'...' escape strings, and MySQL backslash escapes.
 func ParseSchemaWithDialect(sql, dialect string) ([]Table, error) {
-	lexer, err := newSQLLexer(dialect)
+	d, err := newSQLDialect(dialect)
 	if err != nil {
 		return nil, err
 	}
-	sql, masked := lexer.mask(sql)
+	sql, masked := d.mask(sql)
 
 	var tables []Table
 	enumTypes := extractEnumTypes(sql, masked)
@@ -68,7 +68,7 @@ func ParseSchemaWithDialect(sql, dialect string) ([]Table, error) {
 	}
 	for _, block := range blocks {
 		tableName := normalizeIdent(block.Name)
-		columns, foreignKeys := parseColumns(block, enumTypes)
+		columns, foreignKeys := parseColumns(block, enumTypes, d)
 		t := Table{
 			Name:        tableName,
 			GoName:      toGoStructName(tableName),
@@ -95,9 +95,12 @@ func (t sqlText) slice(from, to int) sqlText {
 }
 
 type createTableBlock struct {
-	Name string
-	Body sqlText
+	Name         string
+	Body         sqlText
+	WithoutRowID bool // SQLite WITHOUT ROWID table option
 }
+
+var withoutRowIDRE = regexp.MustCompile(`(?i)\bWITHOUT\s+ROWID\b`)
 
 func extractCreateTableBlocks(sql, masked string) ([]createTableBlock, error) {
 	var blocks []createTableBlock
@@ -120,12 +123,17 @@ func extractCreateTableBlocks(sql, masked string) ([]createTableBlock, error) {
 			return nil, fmt.Errorf("parse CREATE TABLE %s: unclosed parenthesis", tableName)
 		}
 
+		stmtEnd := strings.IndexByte(masked[bodyEnd:], ';')
+		options := masked[bodyEnd+1:]
+		if stmtEnd != -1 {
+			options = masked[bodyEnd+1 : bodyEnd+stmtEnd]
+		}
 		blocks = append(blocks, createTableBlock{
-			Name: tableName,
-			Body: sqlText{Text: sql[bodyStart:bodyEnd], Masked: masked[bodyStart:bodyEnd]},
+			Name:         tableName,
+			Body:         sqlText{Text: sql[bodyStart:bodyEnd], Masked: masked[bodyStart:bodyEnd]},
+			WithoutRowID: withoutRowIDRE.MatchString(options),
 		})
 
-		stmtEnd := strings.IndexByte(masked[bodyEnd:], ';')
 		if stmtEnd == -1 {
 			searchFrom = bodyEnd
 		} else {
@@ -138,7 +146,7 @@ func extractCreateTableBlocks(sql, masked string) ([]createTableBlock, error) {
 }
 
 // findMatchingParen returns the index of the parenthesis closing the one at
-// openIdx. masked comes from sqlLexer.mask, so every parenthesis is structural.
+// openIdx. masked comes from sqlDialect.mask, so every parenthesis is structural.
 func findMatchingParen(masked string, openIdx int) int {
 	depth := 0
 	for i := openIdx; i < len(masked); i++ {
@@ -169,7 +177,7 @@ func extractEnumTypes(sql, masked string) map[string]struct{} {
 	return enumTypes
 }
 
-func parseColumns(block createTableBlock, enumTypes map[string]struct{}) ([]Column, []ForeignKey) {
+func parseColumns(block createTableBlock, enumTypes map[string]struct{}, d sqlDialect) ([]Column, []ForeignKey) {
 	items := splitSQLItems(block.Body)
 	columns := make([]Column, 0, len(items))
 	foreignKeys := make([]ForeignKey, 0, len(items))
@@ -198,7 +206,6 @@ func parseColumns(block createTableBlock, enumTypes map[string]struct{}) ([]Colu
 				Columns:    []string{col.Name},
 				RefTable:   col.FKRefTable,
 				RefColumns: append([]string(nil), col.FKRefColumns...),
-				NotNull:    col.NotNull,
 			})
 		}
 	}
@@ -209,7 +216,47 @@ func parseColumns(block createTableBlock, enumTypes map[string]struct{}) ([]Colu
 		}
 	}
 
+	// Nullability is settled only once every constraint is known, because a
+	// table-level PRIMARY KEY can make a column NOT NULL after its foreign key
+	// was read.
+	markPrimaryKeysNotNull(columns, block.WithoutRowID, d)
+	for i := range foreignKeys {
+		foreignKeys[i].NotNull = columnsNotNull(columns, columnIndex, foreignKeys[i].Columns)
+	}
+
 	return columns, foreignKeys
+}
+
+// markPrimaryKeysNotNull applies the NOT NULL that a primary key implies. In
+// SQLite a key column may hold NULL unless it is the INTEGER PRIMARY KEY rowid
+// alias or the table is WITHOUT ROWID; every other dialect follows standard SQL.
+func markPrimaryKeysNotNull(columns []Column, withoutRowID bool, d sqlDialect) {
+	var keys []int
+	for i, col := range columns {
+		if col.IsPK {
+			keys = append(keys, i)
+		}
+	}
+	if d.sqliteKeys && !withoutRowID {
+		if len(keys) == 1 && columns[keys[0]].SQLType == "INTEGER" {
+			columns[keys[0]].NotNull = true
+		}
+		return
+	}
+	for _, i := range keys {
+		columns[i].NotNull = true
+	}
+}
+
+// columnsNotNull reports whether every named column is NOT NULL, and so
+// whether a foreign key over them always references a parent.
+func columnsNotNull(columns []Column, columnIndex map[string]int, names []string) bool {
+	for _, name := range names {
+		if idx, ok := columnIndex[name]; ok && !columns[idx].NotNull {
+			return false
+		}
+	}
+	return true
 }
 
 func parseColumn(item sqlText, enumTypes map[string]struct{}) (Column, bool) {
@@ -269,15 +316,13 @@ func applyTableConstraint(columns []Column, columnIndex map[string]int, constrai
 		if loc[6] >= 0 {
 			refColumns = splitIdentifierList(constraint.Text[loc[6]:loc[7]])
 		}
-		notNull := true
 		for _, colName := range cols {
 			if idx, ok := columnIndex[colName]; ok {
 				columns[idx].IsFK = true
 				columns[idx].FKRefTable = refTable
-				notNull = notNull && columns[idx].NotNull
 			}
 		}
-		return ForeignKey{Columns: cols, RefTable: refTable, RefColumns: refColumns, NotNull: notNull}, true
+		return ForeignKey{Columns: cols, RefTable: refTable, RefColumns: refColumns}, true
 	}
 
 	return ForeignKey{}, false
@@ -463,26 +508,28 @@ func singularize(s string) string {
 	return s
 }
 
-// sqlLexer masks the parts of a schema that are not SQL structure. Its rules
-// follow the dialect: PostgreSQL (and auto) recognizes dollar-quoted strings
-// and E'...' strings with backslash escapes, MySQL treats a backslash inside a
-// string literal as an escape, and SQLite uses only the standard quoting.
-type sqlLexer struct {
+// sqlDialect holds the rules that differ between SQL dialects. Lexically,
+// PostgreSQL (and auto) recognizes dollar-quoted strings and E'...' strings
+// with backslash escapes, MySQL treats a backslash inside a string literal as
+// an escape, and SQLite uses only the standard quoting. sqliteKeys selects
+// SQLite's primary key semantics, under which a key column may hold NULL.
+type sqlDialect struct {
 	dollarQuotes      bool
 	backslashEscapes  bool
 	escapeStringConst bool
+	sqliteKeys        bool
 }
 
-func newSQLLexer(dialect string) (sqlLexer, error) {
+func newSQLDialect(dialect string) (sqlDialect, error) {
 	switch strings.ToLower(strings.TrimSpace(dialect)) {
 	case "", "auto", "postgres":
-		return sqlLexer{dollarQuotes: true, escapeStringConst: true}, nil
+		return sqlDialect{dollarQuotes: true, escapeStringConst: true}, nil
 	case "mysql":
-		return sqlLexer{backslashEscapes: true}, nil
+		return sqlDialect{backslashEscapes: true}, nil
 	case "sqlite":
-		return sqlLexer{}, nil
+		return sqlDialect{sqliteKeys: true}, nil
 	default:
-		return sqlLexer{}, fmt.Errorf("unsupported dialect %q", dialect)
+		return sqlDialect{}, fmt.Errorf("unsupported dialect %q", dialect)
 	}
 }
 
@@ -492,7 +539,7 @@ func newSQLLexer(dialect string) (sqlLexer, error) {
 // quoted identifiers ("..." and `...`) become underscores, so they still read
 // as one identifier token. Keywords, parentheses, commas, and semicolons left
 // in masked are all structural; names and types are read from text.
-func (l sqlLexer) mask(sql string) (text, masked string) {
+func (l sqlDialect) mask(sql string) (text, masked string) {
 	t := []byte(sql)
 	b := []byte(sql)
 	fill := func(from, to int, c byte) {

@@ -369,7 +369,7 @@ func TestTrimIdentifierQuotes_UnescapesDoubledQuotes(t *testing.T) {
 	}
 }
 
-func TestSQLLexerMask(t *testing.T) {
+func TestSQLDialectMask(t *testing.T) {
 	tests := []struct {
 		name       string
 		dialect    string
@@ -438,13 +438,13 @@ func TestSQLLexerMask(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Arrange
-			lexer, err := newSQLLexer(tt.dialect)
+			d, err := newSQLDialect(tt.dialect)
 			if err != nil {
 				t.Fatal(err)
 			}
 
 			// Act
-			text, masked := lexer.mask(tt.in)
+			text, masked := d.mask(tt.in)
 
 			// Assert
 			if text != tt.wantText {
@@ -533,6 +533,93 @@ func TestParseSchema_IgnoresConstraintsInsideQuotedDefaults(t *testing.T) {
 			}
 			if !findColumnByName(t, notes, "owner_id").NotNull {
 				t.Fatal("expected owner_id to stay NOT NULL")
+			}
+		})
+	}
+}
+
+func TestParseSchema_PrimaryKeyForeignKeyIsRequired(t *testing.T) {
+	const users = "CREATE TABLE users (id INTEGER PRIMARY KEY);\n"
+	tests := []struct {
+		name        string
+		dialect     string
+		sql         string
+		fkColumns   []string
+		wantNotNull bool
+	}{
+		{
+			name:        "postgres inline key",
+			dialect:     "postgres",
+			sql:         "CREATE TABLE profiles (user_id INTEGER PRIMARY KEY REFERENCES users(id));",
+			fkColumns:   []string{"user_id"},
+			wantNotNull: true,
+		},
+		{
+			name:        "postgres table-level key",
+			dialect:     "postgres",
+			sql:         "CREATE TABLE profiles (user_id INTEGER REFERENCES users(id), PRIMARY KEY (user_id));",
+			fkColumns:   []string{"user_id"},
+			wantNotNull: true,
+		},
+		{
+			name:        "mysql composite key with table-level foreign key",
+			dialect:     "mysql",
+			sql:         "CREATE TABLE memberships (user_id INT, team_id INT, PRIMARY KEY (user_id, team_id), FOREIGN KEY (user_id) REFERENCES users(id));",
+			fkColumns:   []string{"user_id"},
+			wantNotNull: true,
+		},
+		{
+			name:        "auto follows standard SQL",
+			dialect:     "auto",
+			sql:         "CREATE TABLE profiles (user_id INT PRIMARY KEY REFERENCES users(id));",
+			fkColumns:   []string{"user_id"},
+			wantNotNull: true,
+		},
+		{
+			name:        "sqlite INTEGER PRIMARY KEY is the rowid",
+			dialect:     "sqlite",
+			sql:         "CREATE TABLE profiles (user_id INTEGER PRIMARY KEY REFERENCES users(id));",
+			fkColumns:   []string{"user_id"},
+			wantNotNull: true,
+		},
+		{
+			name:        "sqlite non-rowid key may be NULL",
+			dialect:     "sqlite",
+			sql:         "CREATE TABLE profiles (user_id INT PRIMARY KEY REFERENCES users(id));",
+			fkColumns:   []string{"user_id"},
+			wantNotNull: false,
+		},
+		{
+			name:        "sqlite composite key may be NULL",
+			dialect:     "sqlite",
+			sql:         "CREATE TABLE memberships (user_id INTEGER REFERENCES users(id), team_id INTEGER, PRIMARY KEY (user_id, team_id));",
+			fkColumns:   []string{"user_id"},
+			wantNotNull: false,
+		},
+		{
+			name:        "sqlite WITHOUT ROWID key is NOT NULL",
+			dialect:     "sqlite",
+			sql:         "CREATE TABLE memberships (user_id INT REFERENCES users(id), team_id INT, PRIMARY KEY (user_id, team_id)) WITHOUT ROWID;",
+			fkColumns:   []string{"user_id"},
+			wantNotNull: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Act
+			tables, err := ParseSchemaWithDialect(users+tt.sql, tt.dialect)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// Assert
+			fk := findForeignKeyByColumns(t, tables[1], tt.fkColumns...)
+			if fk.NotNull != tt.wantNotNull {
+				t.Fatalf("foreign key NotNull = %v, want %v", fk.NotNull, tt.wantNotNull)
+			}
+			if got := findColumnByName(t, tables[1], tt.fkColumns[0]).NotNull; got != tt.wantNotNull {
+				t.Fatalf("column NotNull = %v, want %v", got, tt.wantNotNull)
 			}
 		})
 	}

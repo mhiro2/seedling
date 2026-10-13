@@ -79,7 +79,7 @@ func TestParseSchema_UserColumnMetadata(t *testing.T) {
 		refTable string
 		notNull  bool
 	}{
-		{name: "id", goName: "ID", goType: "int", isPK: true},
+		{name: "id", goName: "ID", goType: "int", isPK: true, notNull: true},
 		{name: "name", goName: "Name", goType: "string", notNull: true},
 		{name: "email", goName: "Email", goType: "string", notNull: true},
 		{name: "company_id", goName: "CompanyID", goType: "int", isFK: true, refTable: "companies", notNull: true},
