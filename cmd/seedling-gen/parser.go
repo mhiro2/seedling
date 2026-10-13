@@ -25,6 +25,10 @@ type Column struct {
 	FKRefTable   string
 	FKRefColumns []string
 	NotNull      bool
+
+	// descendingKey marks an inline PRIMARY KEY DESC, which in SQLite is not an
+	// alias for the rowid even on an INTEGER column.
+	descendingKey bool
 }
 
 // ForeignKey represents a table-level or inline foreign key constraint.
@@ -100,7 +104,10 @@ type createTableBlock struct {
 	WithoutRowID bool // SQLite WITHOUT ROWID table option
 }
 
-var withoutRowIDRE = regexp.MustCompile(`(?i)\bWITHOUT\s+ROWID\b`)
+var (
+	withoutRowIDRE  = regexp.MustCompile(`(?i)\bWITHOUT\s+ROWID\b`)
+	descendingKeyRE = regexp.MustCompile(`(?i)\bPRIMARY\s+KEY\s+DESC\b`)
+)
 
 func extractCreateTableBlocks(sql, masked string) ([]createTableBlock, error) {
 	var blocks []createTableBlock
@@ -229,7 +236,8 @@ func parseColumns(block createTableBlock, enumTypes map[string]struct{}, d sqlDi
 
 // markPrimaryKeysNotNull applies the NOT NULL that a primary key implies. In
 // SQLite a key column may hold NULL unless it is the INTEGER PRIMARY KEY rowid
-// alias or the table is WITHOUT ROWID; every other dialect follows standard SQL.
+// alias (not declared DESC inline) or the table is WITHOUT ROWID; every other
+// dialect follows standard SQL.
 func markPrimaryKeysNotNull(columns []Column, withoutRowID bool, d sqlDialect) {
 	var keys []int
 	for i, col := range columns {
@@ -238,7 +246,7 @@ func markPrimaryKeysNotNull(columns []Column, withoutRowID bool, d sqlDialect) {
 		}
 	}
 	if d.sqliteKeys && !withoutRowID {
-		if len(keys) == 1 && columns[keys[0]].SQLType == "INTEGER" {
+		if len(keys) == 1 && columns[keys[0]].SQLType == "INTEGER" && !columns[keys[0]].descendingKey {
 			columns[keys[0]].NotNull = true
 		}
 		return
@@ -284,6 +292,8 @@ func parseColumn(item sqlText, enumTypes map[string]struct{}) (Column, bool) {
 		GoType:  sqlTypeToGoType(sqlType, enumTypes),
 		IsPK:    strings.Contains(upper, "PRIMARY KEY"),
 		NotNull: strings.Contains(upper, "NOT NULL"),
+
+		descendingKey: descendingKeyRE.MatchString(upper),
 	}
 
 	if loc := inlineRefRE.FindStringSubmatchIndex(item.Masked); loc != nil {
@@ -509,23 +519,30 @@ func singularize(s string) string {
 }
 
 // sqlDialect holds the rules that differ between SQL dialects. Lexically,
-// PostgreSQL (and auto) recognizes dollar-quoted strings and E'...' strings
-// with backslash escapes, MySQL treats a backslash inside a string literal as
-// an escape, and SQLite uses only the standard quoting. sqliteKeys selects
-// SQLite's primary key semantics, under which a key column may hold NULL.
+// PostgreSQL recognizes dollar-quoted strings, E'...' strings with backslash
+// escapes, and nested block comments; MySQL treats a backslash inside a string
+// literal as an escape and # as a line comment; SQLite uses only the standard
+// quoting. auto follows PostgreSQL and also reads a # that starts a line as a
+// MySQL comment. sqliteKeys selects SQLite's primary key semantics, under
+// which a key column may hold NULL.
 type sqlDialect struct {
-	dollarQuotes      bool
-	backslashEscapes  bool
-	escapeStringConst bool
-	sqliteKeys        bool
+	dollarQuotes          bool
+	backslashEscapes      bool
+	escapeStringConst     bool
+	nestedComments        bool
+	hashComments          bool // # starts a comment anywhere
+	lineStartHashComments bool // # starts a comment only as the first token of a line
+	sqliteKeys            bool
 }
 
 func newSQLDialect(dialect string) (sqlDialect, error) {
 	switch strings.ToLower(strings.TrimSpace(dialect)) {
-	case "", "auto", "postgres":
-		return sqlDialect{dollarQuotes: true, escapeStringConst: true}, nil
+	case "", "auto":
+		return sqlDialect{dollarQuotes: true, escapeStringConst: true, nestedComments: true, lineStartHashComments: true}, nil
+	case "postgres":
+		return sqlDialect{dollarQuotes: true, escapeStringConst: true, nestedComments: true}, nil
 	case "mysql":
-		return sqlDialect{backslashEscapes: true}, nil
+		return sqlDialect{backslashEscapes: true, hashComments: true}, nil
 	case "sqlite":
 		return sqlDialect{sqliteKeys: true}, nil
 	default:
@@ -560,15 +577,13 @@ func (l sqlDialect) mask(sql string) (text, masked string) {
 
 	for i := 0; i < len(b); {
 		switch c := b[i]; {
-		case c == '-' && i+1 < len(b) && b[i+1] == '-':
+		case c == '-' && i+1 < len(b) && b[i+1] == '-',
+			c == '#' && (l.hashComments || l.lineStartHashComments && startsLine(sql, i)):
 			end := indexByteFrom(sql, '\n', i)
 			comment(i, end)
 			i = end
 		case c == '/' && i+1 < len(b) && b[i+1] == '*':
-			end := len(b)
-			if j := strings.Index(sql[i+2:], "*/"); j != -1 {
-				end = i + 2 + j + 2
-			}
+			end := blockCommentEnd(sql, i, l.nestedComments)
 			comment(i, end)
 			i = end
 		case c == '\'':
@@ -598,6 +613,37 @@ func (l sqlDialect) mask(sql string) (text, masked string) {
 		}
 	}
 	return string(t), string(b)
+}
+
+// blockCommentEnd returns the index just past the block comment opening at i.
+// With nested, an inner /* ... */ must close before the outer one does, as in
+// PostgreSQL. An unterminated comment runs to the end of the input.
+func blockCommentEnd(s string, i int, nested bool) int {
+	depth := 0
+	for j := i; j+1 < len(s); j++ {
+		switch {
+		case s[j] == '/' && s[j+1] == '*' && (nested || depth == 0):
+			depth++
+			j++
+		case s[j] == '*' && s[j+1] == '/':
+			depth--
+			j++
+			if depth == 0 {
+				return j + 1
+			}
+		}
+	}
+	return len(s)
+}
+
+// startsLine reports whether only spaces or tabs precede i on its line.
+func startsLine(s string, i int) bool {
+	for j := i - 1; j >= 0 && s[j] != '\n'; j-- {
+		if s[j] != ' ' && s[j] != '\t' && s[j] != '\r' {
+			return false
+		}
+	}
+	return true
 }
 
 func indexByteFrom(s string, c byte, from int) int {

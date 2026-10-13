@@ -427,6 +427,34 @@ func TestSQLDialectMask(t *testing.T) {
 			wantMasked: `'     ' NOT NULL`,
 		},
 		{
+			name:       "postgres nested block comment",
+			dialect:    "postgres",
+			in:         "/* a /* b */ c */ d",
+			wantText:   "                  d",
+			wantMasked: "                  d",
+		},
+		{
+			name:       "mysql block comments do not nest",
+			dialect:    "mysql",
+			in:         "/* a /* b */ c",
+			wantText:   strings.Repeat(" ", len("/* a /* b */ ")) + "c",
+			wantMasked: strings.Repeat(" ", len("/* a /* b */ ")) + "c",
+		},
+		{
+			name:       "mysql hash comment",
+			dialect:    "mysql",
+			in:         "a # b (\nc",
+			wantText:   "a      \nc",
+			wantMasked: "a      \nc",
+		},
+		{
+			name:       "auto hash comment only at line start",
+			dialect:    "auto",
+			in:         "  # x\na # b",
+			wantText:   "     \na # b",
+			wantMasked: "     \na # b",
+		},
+		{
 			name:       "sqlite has no dollar quotes",
 			dialect:    "sqlite",
 			in:         `$$x$$`,
@@ -477,6 +505,16 @@ func TestParseSchema_IgnoresSQLInsideStringLiterals(t *testing.T) {
 			name:    "CREATE TABLE inside a comment",
 			dialect: "auto",
 			sql:     "/* CREATE TABLE ghosts (id INT); */ -- CREATE TABLE ghosts (id INT);\n",
+		},
+		{
+			name:    "CREATE TABLE inside a nested comment",
+			dialect: "postgres",
+			sql:     "/* outer /* inner */ CREATE TABLE ghosts (id INT); */",
+		},
+		{
+			name:    "CREATE TABLE inside a mysql hash comment",
+			dialect: "mysql",
+			sql:     "# CREATE TABLE ghosts (id INT);\n",
 		},
 	}
 
@@ -581,6 +619,13 @@ func TestParseSchema_PrimaryKeyForeignKeyIsRequired(t *testing.T) {
 			sql:         "CREATE TABLE profiles (user_id INTEGER PRIMARY KEY REFERENCES users(id));",
 			fkColumns:   []string{"user_id"},
 			wantNotNull: true,
+		},
+		{
+			name:        "sqlite descending INTEGER key is not the rowid",
+			dialect:     "sqlite",
+			sql:         "CREATE TABLE profiles (user_id INTEGER PRIMARY KEY DESC REFERENCES users(id));",
+			fkColumns:   []string{"user_id"},
+			wantNotNull: false,
 		},
 		{
 			name:        "sqlite non-rowid key may be NULL",
