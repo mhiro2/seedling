@@ -9,12 +9,14 @@ import (
 var (
 	atlasTableRE  = regexp.MustCompile(`(?m)^table\s+"([^"]+)"\s*\{`)
 	atlasColumnRE = regexp.MustCompile(`(?m)^\s*column\s+"([^"]+)"\s*\{`)
-	atlasTypeRE   = regexp.MustCompile(`(?mi)type\s*=\s*(\S+)`)
-	atlasNullRE   = regexp.MustCompile(`(?mi)null\s*=\s*(true|false)`)
-	atlasPKRE     = regexp.MustCompile(`(?mi)primary_key\s*\{[^}]*columns\s*=\s*\[([^\]]+)\]`)
-	atlasFK_RE    = regexp.MustCompile(`(?mis)foreign_key\s+"[^"]*"\s*\{([^}]+)\}`)
-	atlasFKColsRE = regexp.MustCompile(`(?mi)columns\s*=\s*\[([^\]]+)\]`)
-	atlasFKRefRE  = regexp.MustCompile(`(?mi)ref_columns\s*=\s*\[([^\]]+)\]`)
+	// Attribute names are anchored with \b so that one attribute never matches
+	// inside a longer one, such as columns inside ref_columns.
+	atlasTypeRE   = regexp.MustCompile(`(?mi)\btype\s*=\s*(\S+)`)
+	atlasNullRE   = regexp.MustCompile(`(?mi)\bnull\s*=\s*(true|false)`)
+	atlasPKRE     = regexp.MustCompile(`(?mi)\bprimary_key\s*\{[^}]*\bcolumns\s*=\s*\[([^\]]+)\]`)
+	atlasFK_RE    = regexp.MustCompile(`(?mis)\bforeign_key\s+"([^"]*)"\s*\{([^}]+)\}`)
+	atlasFKColsRE = regexp.MustCompile(`(?mi)\bcolumns\s*=\s*\[([^\]]+)\]`)
+	atlasFKRefRE  = regexp.MustCompile(`(?mi)\bref_columns\s*=\s*\[([^\]]+)\]`)
 )
 
 // ParseAtlasHCL parses an Atlas HCL schema file and returns []Table.
@@ -116,41 +118,51 @@ func parseAtlasTable(block atlasTableBlock) (Table, error) {
 	}
 
 	// Parse foreign keys.
-	fkMatches := atlasFK_RE.FindAllStringSubmatch(block.Body, -1)
-	for _, fkMatch := range fkMatches {
-		fkBody := fkMatch[1]
-
-		var fkCols []string
-		if m := atlasFKColsRE.FindStringSubmatch(fkBody); m != nil {
-			fkCols = splitAtlasColumnRefs(m[1])
+	for _, fkMatch := range atlasFK_RE.FindAllStringSubmatch(block.Body, -1) {
+		fk, err := parseAtlasForeignKey(tableName, fkMatch[1], fkMatch[2], t.Columns, columnIndex)
+		if err != nil {
+			return Table{}, err
 		}
-
-		var refTable string
-		var refColumns []string
-		if m := atlasFKRefRE.FindStringSubmatch(fkBody); m != nil {
-			refTable = extractAtlasRefTable(m[1])
-			refColumns = extractAtlasRefColumns(m[1])
-		}
-
-		if len(fkCols) > 0 && refTable != "" {
-			notNull := true
-			for _, colName := range fkCols {
-				if idx, ok := columnIndex[colName]; ok {
-					t.Columns[idx].IsFK = true
-					t.Columns[idx].FKRefTable = refTable
-					notNull = notNull && t.Columns[idx].NotNull
-				}
-			}
-			t.ForeignKeys = append(t.ForeignKeys, ForeignKey{
-				Columns:    fkCols,
-				RefTable:   refTable,
-				RefColumns: refColumns,
-				NotNull:    notNull,
-			})
-		}
+		t.ForeignKeys = append(t.ForeignKeys, fk)
 	}
 
 	return t, nil
+}
+
+// parseAtlasForeignKey reads one foreign_key block and marks its local columns
+// as foreign keys. A block whose columns or ref_columns are missing, or whose
+// local columns are not declared on the table, is rejected rather than dropped,
+// since generating without the relation would silently skip its parent.
+func parseAtlasForeignKey(tableName, fkName, fkBody string, columns []Column, columnIndex map[string]int) (ForeignKey, error) {
+	colsMatch := atlasFKColsRE.FindStringSubmatch(fkBody)
+	refMatch := atlasFKRefRE.FindStringSubmatch(fkBody)
+	if colsMatch == nil || refMatch == nil {
+		return ForeignKey{}, fmt.Errorf("parse table %q foreign key %q: columns and ref_columns are required", tableName, fkName)
+	}
+
+	fkCols := splitAtlasColumnRefs(colsMatch[1])
+	refTable := extractAtlasRefTable(refMatch[1])
+	refColumns := extractAtlasRefColumns(refMatch[1])
+	if len(fkCols) == 0 || refTable == "" {
+		return ForeignKey{}, fmt.Errorf("parse table %q foreign key %q: columns and ref_columns must reference columns", tableName, fkName)
+	}
+
+	notNull := true
+	for _, colName := range fkCols {
+		idx, ok := columnIndex[colName]
+		if !ok {
+			return ForeignKey{}, fmt.Errorf("parse table %q foreign key %q: column %q is not defined on the table", tableName, fkName, colName)
+		}
+		columns[idx].IsFK = true
+		columns[idx].FKRefTable = refTable
+		notNull = notNull && columns[idx].NotNull
+	}
+	return ForeignKey{
+		Columns:    fkCols,
+		RefTable:   refTable,
+		RefColumns: refColumns,
+		NotNull:    notNull,
+	}, nil
 }
 
 type atlasColumnBlock struct {

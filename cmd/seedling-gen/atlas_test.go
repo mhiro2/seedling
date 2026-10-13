@@ -677,3 +677,115 @@ table "users" {
 		})
 	}
 }
+
+func TestParseAtlasHCL_ForeignKeyAttributeOrderDoesNotMatter(t *testing.T) {
+	// Arrange
+	const companies = `
+table "companies" {
+  column "id" {
+    type = int
+    null = false
+  }
+  primary_key {
+    columns = [column.id]
+  }
+}
+`
+	columnsFirst := companies + `
+table "users" {
+  column "id" {
+    type = int
+    null = false
+  }
+  column "company_id" {
+    type = int
+    null = false
+  }
+  foreign_key "fk_company" {
+    columns     = [column.company_id]
+    ref_columns = [table.companies.column.id]
+  }
+}
+`
+	refColumnsFirst := strings.Replace(columnsFirst,
+		"    columns     = [column.company_id]\n    ref_columns = [table.companies.column.id]\n",
+		"    ref_columns = [table.companies.column.id]\n    columns     = [column.company_id]\n", 1)
+	if refColumnsFirst == columnsFirst {
+		t.Fatal("fixture rewrite did not apply")
+	}
+
+	for name, hcl := range map[string]string{"columns first": columnsFirst, "ref_columns first": refColumnsFirst} {
+		t.Run(name, func(t *testing.T) {
+			// Act
+			users := findTableByName(t, mustParseAtlasHCL(t, hcl), "users")
+
+			// Assert
+			fk := findForeignKeyByColumns(t, users, "company_id")
+			if fk.RefTable != "companies" || len(fk.RefColumns) != 1 || fk.RefColumns[0] != "id" {
+				t.Fatalf("got FK %+v, want company_id -> companies.id", fk)
+			}
+			if !findColumnByName(t, users, "company_id").IsFK {
+				t.Fatal("expected company_id to be marked as a foreign key")
+			}
+		})
+	}
+}
+
+func TestParseAtlasHCL_RejectsUnresolvableForeignKeys(t *testing.T) {
+	tests := []struct {
+		name string
+		fk   string
+		want string
+	}{
+		{
+			name: "unknown local column",
+			fk: `    columns     = [column.missing_id]
+    ref_columns = [table.companies.column.id]`,
+			want: `column "missing_id" is not defined on the table`,
+		},
+		{
+			name: "missing ref_columns",
+			fk:   `    columns = [column.company_id]`,
+			want: "columns and ref_columns are required",
+		},
+		{
+			name: "missing columns",
+			fk:   `    ref_columns = [table.companies.column.id]`,
+			want: "columns and ref_columns are required",
+		},
+		{
+			name: "ref_columns without a table",
+			fk: `    columns     = [column.company_id]
+    ref_columns = [column.id]`,
+			want: "must reference columns",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			hcl := `
+table "users" {
+  column "company_id" {
+    type = int
+    null = false
+  }
+  foreign_key "fk_company" {
+` + tt.fk + `
+  }
+}
+`
+
+			// Act
+			_, err := ParseAtlasHCL(hcl)
+
+			// Assert
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("got error %v, want one containing %q", err, tt.want)
+			}
+			if !strings.Contains(err.Error(), `foreign key "fk_company"`) {
+				t.Fatalf("error %q does not name the foreign key", err)
+			}
+		})
+	}
+}
