@@ -344,32 +344,6 @@ CREATE TABLE users (
 	}
 }
 
-func TestStripSQLComments_PreservesCommentInsideQuotes(t *testing.T) {
-	// Arrange & Act & Assert
-	tests := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{name: "single-quoted -- preserved", in: `'a -- b'`, want: `'a -- b'`},
-		{name: "double-quoted -- preserved", in: `"a -- b"`, want: `"a -- b"`},
-		{name: "backtick -- preserved", in: "`a -- b`", want: "`a -- b`"},
-		{name: "outside quotes -- stripped", in: "a -- b\nc", want: "a \nc"},
-		{name: "block comment outside quotes stripped", in: "a /* x */ b", want: "a   b"},
-		{name: "block comment inside quotes preserved", in: `'a /* x */ b'`, want: `'a /* x */ b'`},
-		{name: "doubled single quote escape", in: `'it''s --ok'`, want: `'it''s --ok'`},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := stripSQLComments(tt.in)
-			if got != tt.want {
-				t.Fatalf("stripSQLComments(%q) = %q, want %q", tt.in, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestTrimIdentifierQuotes_UnescapesDoubledQuotes(t *testing.T) {
 	tests := []struct {
 		name string
@@ -390,6 +364,175 @@ func TestTrimIdentifierQuotes_UnescapesDoubledQuotes(t *testing.T) {
 			got := trimIdentifierQuotes(tt.in)
 			if got != tt.want {
 				t.Fatalf("trimIdentifierQuotes(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSQLLexerMask(t *testing.T) {
+	tests := []struct {
+		name       string
+		dialect    string
+		in         string
+		wantText   string
+		wantMasked string
+	}{
+		{
+			name:       "line and block comments",
+			dialect:    "auto",
+			in:         "a -- b\nc /* d\n */ e",
+			wantText:   "a     \nc     \n    e",
+			wantMasked: "a     \nc     \n    e",
+		},
+		{
+			name:       "string literal with doubled quote",
+			dialect:    "auto",
+			in:         `x 'it''s -- (' y`,
+			wantText:   `x 'it''s -- (' y`,
+			wantMasked: `x '          ' y`,
+		},
+		{
+			name:       "quoted identifiers keep one token",
+			dialect:    "auto",
+			in:         "\"a b\" `c(d`",
+			wantText:   "\"a b\" `c(d`",
+			wantMasked: "\"___\" `___`",
+		},
+		{
+			name:       "postgres dollar quotes",
+			dialect:    "postgres",
+			in:         `d $$NOT NULL$$ $tag$ ) $$ $tag$ e`,
+			wantText:   `d $$NOT NULL$$ $tag$ ) $$ $tag$ e`,
+			wantMasked: `d $$        $$ $tag$      $tag$ e`,
+		},
+		{
+			name:       "dollar inside an identifier is not a quote",
+			dialect:    "postgres",
+			in:         `a$b$ NOT NULL`,
+			wantText:   `a$b$ NOT NULL`,
+			wantMasked: `a$b$ NOT NULL`,
+		},
+		{
+			name:       "postgres escape string",
+			dialect:    "postgres",
+			in:         `E'it\'s' NOT NULL`,
+			wantText:   `E'it\'s' NOT NULL`,
+			wantMasked: `E'     ' NOT NULL`,
+		},
+		{
+			name:       "mysql backslash escape",
+			dialect:    "mysql",
+			in:         `'it\'s' NOT NULL`,
+			wantText:   `'it\'s' NOT NULL`,
+			wantMasked: `'     ' NOT NULL`,
+		},
+		{
+			name:       "sqlite has no dollar quotes",
+			dialect:    "sqlite",
+			in:         `$$x$$`,
+			wantText:   `$$x$$`,
+			wantMasked: `$$x$$`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			lexer, err := newSQLLexer(tt.dialect)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// Act
+			text, masked := lexer.mask(tt.in)
+
+			// Assert
+			if text != tt.wantText {
+				t.Fatalf("text = %q, want %q", text, tt.wantText)
+			}
+			if masked != tt.wantMasked {
+				t.Fatalf("masked = %q, want %q", masked, tt.wantMasked)
+			}
+		})
+	}
+}
+
+func TestParseSchema_IgnoresSQLInsideStringLiterals(t *testing.T) {
+	tests := []struct {
+		name    string
+		dialect string
+		sql     string
+	}{
+		{
+			name:    "CREATE TABLE inside a string",
+			dialect: "auto",
+			sql:     `SELECT 'CREATE TABLE ghosts (id INTEGER PRIMARY KEY)';`,
+		},
+		{
+			name:    "CREATE TABLE inside a dollar quote",
+			dialect: "postgres",
+			sql:     `DO $body$ BEGIN EXECUTE 'x'; END $body$; SELECT $$CREATE TABLE ghosts (id INT)$$;`,
+		},
+		{
+			name:    "CREATE TABLE inside a comment",
+			dialect: "auto",
+			sql:     "/* CREATE TABLE ghosts (id INT); */ -- CREATE TABLE ghosts (id INT);\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			sql := tt.sql + "\nCREATE TABLE users (id INTEGER PRIMARY KEY);"
+
+			// Act
+			tables, err := ParseSchemaWithDialect(sql, tt.dialect)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// Assert
+			if len(tables) != 1 || tables[0].Name != "users" {
+				t.Fatalf("got tables %+v, want only users", tables)
+			}
+		})
+	}
+}
+
+func TestParseSchema_IgnoresConstraintsInsideQuotedDefaults(t *testing.T) {
+	tests := []struct {
+		name    string
+		dialect string
+		column  string
+	}{
+		{name: "dollar quote", dialect: "postgres", column: `note TEXT DEFAULT $$NOT NULL$$`},
+		{name: "tagged dollar quote", dialect: "postgres", column: `note TEXT DEFAULT $d$REFERENCES users(id) NOT NULL$d$`},
+		{name: "escape string", dialect: "postgres", column: `note TEXT DEFAULT E'it\'s NOT NULL'`},
+		{name: "mysql backslash", dialect: "mysql", column: `note TEXT DEFAULT 'it\'s NOT NULL'`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			sql := "CREATE TABLE notes (id INT NOT NULL, " + tt.column + ", owner_id INT NOT NULL);"
+
+			// Act
+			tables, err := ParseSchemaWithDialect(sql, tt.dialect)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// Assert
+			notes := findTableByName(t, tables, "notes")
+			if len(notes.Columns) != 3 {
+				t.Fatalf("got columns %+v, want id, note, owner_id", notes.Columns)
+			}
+			note := findColumnByName(t, notes, "note")
+			if note.NotNull || note.IsFK {
+				t.Fatalf("note column = %+v, want nullable and not a foreign key", note)
+			}
+			if !findColumnByName(t, notes, "owner_id").NotNull {
+				t.Fatal("expected owner_id to stay NOT NULL")
 			}
 		})
 	}

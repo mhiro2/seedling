@@ -50,26 +50,25 @@ func ParseSchema(sql string) ([]Table, error) {
 }
 
 // ParseSchemaWithDialect parses SQL schema text for the given dialect.
+// The dialect selects the lexical rules for string literals: PostgreSQL
+// dollar quotes and E'...' escape strings, and MySQL backslash escapes.
 func ParseSchemaWithDialect(sql, dialect string) ([]Table, error) {
-	switch strings.ToLower(strings.TrimSpace(dialect)) {
-	case "", "auto", "postgres", "mysql", "sqlite":
-	default:
-		return nil, fmt.Errorf("unsupported dialect %q", dialect)
+	lexer, err := newSQLLexer(dialect)
+	if err != nil {
+		return nil, err
 	}
-
-	sql = stripSQLComments(sql)
+	sql, masked := lexer.mask(sql)
 
 	var tables []Table
-	enumTypes := extractEnumTypes(sql)
+	enumTypes := extractEnumTypes(sql, masked)
 
-	blocks, err := extractCreateTableBlocks(sql)
+	blocks, err := extractCreateTableBlocks(sql, masked)
 	if err != nil {
 		return nil, err
 	}
 	for _, block := range blocks {
 		tableName := normalizeIdent(block.Name)
-		body := block.Body
-		columns, foreignKeys := parseColumns(body, enumTypes)
+		columns, foreignKeys := parseColumns(block, enumTypes)
 		t := Table{
 			Name:        tableName,
 			GoName:      toGoStructName(tableName),
@@ -79,21 +78,33 @@ func ParseSchemaWithDialect(sql, dialect string) ([]Table, error) {
 		}
 		tables = append(tables, t)
 	}
-
 	return tables, nil
+}
+
+// sqlText pairs a slice of the schema, with comments blanked, and the same
+// slice of its masked form. Structure and keywords are found in Masked, where
+// string literals and quoted identifiers can no longer look like SQL. Names
+// and types are read from Text at the same offsets.
+type sqlText struct {
+	Text   string
+	Masked string
+}
+
+func (t sqlText) slice(from, to int) sqlText {
+	return sqlText{Text: t.Text[from:to], Masked: t.Masked[from:to]}
 }
 
 type createTableBlock struct {
 	Name string
-	Body string
+	Body sqlText
 }
 
-func extractCreateTableBlocks(sql string) ([]createTableBlock, error) {
+func extractCreateTableBlocks(sql, masked string) ([]createTableBlock, error) {
 	var blocks []createTableBlock
 	searchFrom := 0
 
 	for {
-		loc := createTableStartRE.FindStringSubmatchIndex(sql[searchFrom:])
+		loc := createTableStartRE.FindStringSubmatchIndex(masked[searchFrom:])
 		if loc == nil {
 			return blocks, nil
 		}
@@ -104,17 +115,17 @@ func extractCreateTableBlocks(sql string) ([]createTableBlock, error) {
 		nameEnd := searchFrom + loc[3]
 
 		tableName := sql[nameStart:nameEnd]
-		bodyEnd := findMatchingParen(sql, bodyStart-1)
+		bodyEnd := findMatchingParen(masked, bodyStart-1)
 		if bodyEnd == -1 {
 			return nil, fmt.Errorf("parse CREATE TABLE %s: unclosed parenthesis", tableName)
 		}
 
 		blocks = append(blocks, createTableBlock{
 			Name: tableName,
-			Body: sql[bodyStart:bodyEnd],
+			Body: sqlText{Text: sql[bodyStart:bodyEnd], Masked: masked[bodyStart:bodyEnd]},
 		})
 
-		stmtEnd := strings.IndexByte(sql[bodyEnd:], ';')
+		stmtEnd := strings.IndexByte(masked[bodyEnd:], ';')
 		if stmtEnd == -1 {
 			searchFrom = bodyEnd
 		} else {
@@ -126,89 +137,51 @@ func extractCreateTableBlocks(sql string) ([]createTableBlock, error) {
 	}
 }
 
-func findMatchingParen(s string, openIdx int) int {
+// findMatchingParen returns the index of the parenthesis closing the one at
+// openIdx. masked comes from sqlLexer.mask, so every parenthesis is structural.
+func findMatchingParen(masked string, openIdx int) int {
 	depth := 0
-	inSingle := false
-	inDouble := false
-	inBack := false
-
-	for i := openIdx; i < len(s); i++ {
-		switch s[i] {
-		case '\'':
-			if !inDouble && !inBack {
-				// Doubled '' inside a single-quoted string is an escape, not a terminator.
-				if inSingle && i+1 < len(s) && s[i+1] == '\'' {
-					i++
-					continue
-				}
-				inSingle = !inSingle
-			}
-		case '"':
-			if !inSingle && !inBack {
-				// Doubled "" inside a double-quoted identifier is an escape (ANSI SQL).
-				if inDouble && i+1 < len(s) && s[i+1] == '"' {
-					i++
-					continue
-				}
-				inDouble = !inDouble
-			}
-		case '`':
-			if !inSingle && !inDouble {
-				// Doubled `` inside a backtick-quoted identifier is an escape (MySQL).
-				if inBack && i+1 < len(s) && s[i+1] == '`' {
-					i++
-					continue
-				}
-				inBack = !inBack
-			}
+	for i := openIdx; i < len(masked); i++ {
+		switch masked[i] {
 		case '(':
-			if !inSingle && !inDouble && !inBack {
-				depth++
-			}
+			depth++
 		case ')':
-			if !inSingle && !inDouble && !inBack {
-				depth--
-				if depth == 0 {
-					return i
-				}
+			depth--
+			if depth == 0 {
+				return i
 			}
 		}
 	}
-
 	return -1
 }
 
-func extractEnumTypes(sql string) map[string]struct{} {
-	matches := createEnumRE.FindAllStringSubmatch(sql, -1)
-	if len(matches) == 0 {
+func extractEnumTypes(sql, masked string) map[string]struct{} {
+	locs := createEnumRE.FindAllStringSubmatchIndex(masked, -1)
+	if len(locs) == 0 {
 		return nil
 	}
 
-	enumTypes := make(map[string]struct{}, len(matches))
-	for _, match := range matches {
-		if len(match) < 2 {
-			continue
-		}
-		enumTypes[normalizeIdent(match[1])] = struct{}{}
+	enumTypes := make(map[string]struct{}, len(locs))
+	for _, loc := range locs {
+		enumTypes[normalizeIdent(sql[loc[2]:loc[3]])] = struct{}{}
 	}
 
 	return enumTypes
 }
 
-func parseColumns(body string, enumTypes map[string]struct{}) ([]Column, []ForeignKey) {
-	items := splitSQLItems(body)
+func parseColumns(block createTableBlock, enumTypes map[string]struct{}) ([]Column, []ForeignKey) {
+	items := splitSQLItems(block.Body)
 	columns := make([]Column, 0, len(items))
 	foreignKeys := make([]ForeignKey, 0, len(items))
 	columnIndex := make(map[string]int, len(items))
-	tableConstraints := make([]string, 0, len(items))
+	tableConstraints := make([]sqlText, 0, len(items))
 
 	for _, item := range items {
-		item = strings.TrimSpace(item)
-		if item == "" {
+		if strings.TrimSpace(item.Masked) == "" {
 			continue
 		}
 
-		if isTableConstraint(item) {
+		if isTableConstraint(item.Masked) {
 			tableConstraints = append(tableConstraints, item)
 			continue
 		}
@@ -239,8 +212,8 @@ func parseColumns(body string, enumTypes map[string]struct{}) ([]Column, []Forei
 	return columns, foreignKeys
 }
 
-func parseColumn(item string, enumTypes map[string]struct{}) (Column, bool) {
-	nameToken, rest, ok := splitLeadingIdent(item)
+func parseColumn(item sqlText, enumTypes map[string]struct{}) (Column, bool) {
+	nameToken, rest, ok := splitLeadingIdent(item.Text)
 	if !ok {
 		return Column{}, false
 	}
@@ -253,12 +226,10 @@ func parseColumn(item string, enumTypes map[string]struct{}) (Column, bool) {
 	colName := normalizeIdent(nameToken)
 	sqlType := normalizeSQLType(parts[0])
 
-	// Detect constraints on a copy with string-literal contents blanked out so a
-	// DEFAULT value like 'this is NOT NULL really' or 'see REFERENCES x' is not
-	// mistaken for a real constraint. Identifiers (and thus a REFERENCES target)
-	// stay intact, so they are sliced from the original item by index.
-	masked := maskSQLStringLiterals(item)
-	upper := strings.ToUpper(masked)
+	// Constraints are detected in the masked text, so a DEFAULT value like
+	// 'this is NOT NULL really' or $$see REFERENCES x$$ is not mistaken for a
+	// real constraint. A REFERENCES target is sliced from the original.
+	upper := strings.ToUpper(item.Masked)
 	col := Column{
 		Name:    colName,
 		SQLType: sqlType,
@@ -268,38 +239,35 @@ func parseColumn(item string, enumTypes map[string]struct{}) (Column, bool) {
 		NotNull: strings.Contains(upper, "NOT NULL"),
 	}
 
-	if loc := inlineRefRE.FindStringSubmatchIndex(masked); loc != nil {
+	if loc := inlineRefRE.FindStringSubmatchIndex(item.Masked); loc != nil {
 		col.IsFK = true
-		col.FKRefTable = normalizeIdent(item[loc[2]:loc[3]])
+		col.FKRefTable = normalizeIdent(item.Text[loc[2]:loc[3]])
 		if loc[4] >= 0 {
-			col.FKRefColumns = splitIdentifierList(item[loc[4]:loc[5]])
+			col.FKRefColumns = splitIdentifierList(item.Text[loc[4]:loc[5]])
 		}
 	}
 
 	return col, true
 }
 
-func applyTableConstraint(columns []Column, columnIndex map[string]int, constraint string) (ForeignKey, bool) {
-	// Match constraint keywords on a copy with string-literal contents blanked
-	// out, so a CHECK body like 'PRIMARY KEY (id)' or 'FOREIGN KEY (x) REFERENCES y'
-	// is not mistaken for a real constraint. Captured identifiers are sliced from
-	// the original by index to keep their exact spelling.
-	masked := maskSQLStringLiterals(constraint)
-
-	if loc := tablePKRE.FindStringSubmatchIndex(masked); loc != nil {
-		for _, colName := range splitIdentifierList(constraint[loc[2]:loc[3]]) {
+func applyTableConstraint(columns []Column, columnIndex map[string]int, constraint sqlText) (ForeignKey, bool) {
+	// Constraint keywords are matched in the masked text, so a CHECK body like
+	// 'PRIMARY KEY (id)' is not mistaken for a real constraint. Captured
+	// identifiers are sliced from the original to keep their exact spelling.
+	if loc := tablePKRE.FindStringSubmatchIndex(constraint.Masked); loc != nil {
+		for _, colName := range splitIdentifierList(constraint.Text[loc[2]:loc[3]]) {
 			if idx, ok := columnIndex[colName]; ok {
 				columns[idx].IsPK = true
 			}
 		}
 	}
 
-	if loc := tableFKRE.FindStringSubmatchIndex(masked); loc != nil {
-		refTable := normalizeIdent(constraint[loc[4]:loc[5]])
-		cols := splitIdentifierList(constraint[loc[2]:loc[3]])
+	if loc := tableFKRE.FindStringSubmatchIndex(constraint.Masked); loc != nil {
+		refTable := normalizeIdent(constraint.Text[loc[4]:loc[5]])
+		cols := splitIdentifierList(constraint.Text[loc[2]:loc[3]])
 		var refColumns []string
 		if loc[6] >= 0 {
-			refColumns = splitIdentifierList(constraint[loc[6]:loc[7]])
+			refColumns = splitIdentifierList(constraint.Text[loc[6]:loc[7]])
 		}
 		notNull := true
 		for _, colName := range cols {
@@ -326,76 +294,28 @@ func isTableConstraint(item string) bool {
 		strings.HasPrefix(upper, "INDEX ")
 }
 
-func splitSQLItems(body string) []string {
-	var (
-		items    []string
-		current  strings.Builder
-		depth    int
-		inSingle bool
-		inDouble bool
-		inBack   bool
-	)
-
-	runes := []rune(body)
-	for i := 0; i < len(runes); i++ {
-		r := runes[i]
-		switch r {
-		case '\'':
-			if !inDouble && !inBack {
-				// Doubled '' inside a single-quoted string is an escape.
-				if inSingle && i+1 < len(runes) && runes[i+1] == '\'' {
-					current.WriteRune(r)
-					current.WriteRune(runes[i+1])
-					i++
-					continue
-				}
-				inSingle = !inSingle
-			}
-		case '"':
-			if !inSingle && !inBack {
-				// Doubled "" inside a double-quoted identifier is an escape.
-				if inDouble && i+1 < len(runes) && runes[i+1] == '"' {
-					current.WriteRune(r)
-					current.WriteRune(runes[i+1])
-					i++
-					continue
-				}
-				inDouble = !inDouble
-			}
-		case '`':
-			if !inSingle && !inDouble {
-				// Doubled `` inside a backtick-quoted identifier is an escape.
-				if inBack && i+1 < len(runes) && runes[i+1] == '`' {
-					current.WriteRune(r)
-					current.WriteRune(runes[i+1])
-					i++
-					continue
-				}
-				inBack = !inBack
-			}
+// splitSQLItems splits a CREATE TABLE body at its top-level commas.
+func splitSQLItems(body sqlText) []sqlText {
+	var items []sqlText
+	depth, start := 0, 0
+	for i := 0; i < len(body.Masked); i++ {
+		switch body.Masked[i] {
 		case '(':
-			if !inSingle && !inDouble && !inBack {
-				depth++
-			}
+			depth++
 		case ')':
-			if !inSingle && !inDouble && !inBack && depth > 0 {
+			if depth > 0 {
 				depth--
 			}
 		case ',':
-			if !inSingle && !inDouble && !inBack && depth == 0 {
-				items = append(items, current.String())
-				current.Reset()
-				continue
+			if depth == 0 {
+				items = append(items, body.slice(start, i))
+				start = i + 1
 			}
 		}
-
-		current.WriteRune(r)
 	}
-
-	if current.Len() > 0 {
-		items = append(items, current.String())
+	if start < len(body.Masked) {
+		items = append(items, body.slice(start, len(body.Masked)))
 	}
-
 	return items
 }
 
@@ -543,171 +463,151 @@ func singularize(s string) string {
 	return s
 }
 
-// stripSQLComments removes SQL line comments (--) and block comments (/* ... */)
-// while preserving comment-like sequences inside string literals and quoted
-// identifiers (single quotes, ANSI double quotes, MySQL backticks). Doubled
-// quote characters are treated as in-string escapes per SQL conventions.
-func stripSQLComments(sql string) string {
-	var b strings.Builder
-	b.Grow(len(sql))
-
-	i := 0
-	inSingle := false
-	inDouble := false
-	inBack := false
-	for i < len(sql) {
-		ch := sql[i]
-
-		if inSingle {
-			b.WriteByte(ch)
-			if ch == '\'' {
-				if i+1 < len(sql) && sql[i+1] == '\'' {
-					b.WriteByte(sql[i+1])
-					i += 2
-					continue
-				}
-				inSingle = false
-			}
-			i++
-			continue
-		}
-
-		if inDouble {
-			b.WriteByte(ch)
-			if ch == '"' {
-				if i+1 < len(sql) && sql[i+1] == '"' {
-					b.WriteByte(sql[i+1])
-					i += 2
-					continue
-				}
-				inDouble = false
-			}
-			i++
-			continue
-		}
-
-		if inBack {
-			b.WriteByte(ch)
-			if ch == '`' {
-				if i+1 < len(sql) && sql[i+1] == '`' {
-					b.WriteByte(sql[i+1])
-					i += 2
-					continue
-				}
-				inBack = false
-			}
-			i++
-			continue
-		}
-
-		switch ch {
-		case '\'':
-			inSingle = true
-			b.WriteByte(ch)
-			i++
-			continue
-		case '"':
-			inDouble = true
-			b.WriteByte(ch)
-			i++
-			continue
-		case '`':
-			inBack = true
-			b.WriteByte(ch)
-			i++
-			continue
-		}
-
-		// Line comment: -- to end of line.
-		if ch == '-' && i+1 < len(sql) && sql[i+1] == '-' {
-			for i < len(sql) && sql[i] != '\n' {
-				i++
-			}
-			// Preserve the newline to keep line structure.
-			if i < len(sql) {
-				b.WriteByte('\n')
-				i++
-			}
-			continue
-		}
-
-		// Block comment: /* to */.
-		if ch == '/' && i+1 < len(sql) && sql[i+1] == '*' {
-			i += 2
-			for i+1 < len(sql) {
-				if sql[i] == '*' && sql[i+1] == '/' {
-					i += 2
-					break
-				}
-				i++
-			}
-			// Replace with a space to avoid joining tokens.
-			b.WriteByte(' ')
-			continue
-		}
-
-		b.WriteByte(ch)
-		i++
-	}
-
-	return b.String()
+// sqlLexer masks the parts of a schema that are not SQL structure. Its rules
+// follow the dialect: PostgreSQL (and auto) recognizes dollar-quoted strings
+// and E'...' strings with backslash escapes, MySQL treats a backslash inside a
+// string literal as an escape, and SQLite uses only the standard quoting.
+type sqlLexer struct {
+	dollarQuotes      bool
+	backslashEscapes  bool
+	escapeStringConst bool
 }
 
-// maskSQLStringLiterals returns a copy of s with the contents of single-quoted
-// string literals replaced by spaces, preserving length so byte offsets stay
-// aligned with the original. Quoted identifiers (double quotes, backticks) are
-// left intact since they can legitimately name a REFERENCES target; their state
-// is still tracked so a single quote inside an identifier is not mistaken for
-// the start of a string literal. Doubled ” escapes are handled.
-func maskSQLStringLiterals(s string) string {
-	b := []byte(s)
-	out := make([]byte, len(b))
-	copy(out, b)
+func newSQLLexer(dialect string) (sqlLexer, error) {
+	switch strings.ToLower(strings.TrimSpace(dialect)) {
+	case "", "auto", "postgres":
+		return sqlLexer{dollarQuotes: true, escapeStringConst: true}, nil
+	case "mysql":
+		return sqlLexer{backslashEscapes: true}, nil
+	case "sqlite":
+		return sqlLexer{}, nil
+	default:
+		return sqlLexer{}, fmt.Errorf("unsupported dialect %q", dialect)
+	}
+}
 
-	inSingle, inDouble, inBack := false, false, false
-	for i := 0; i < len(b); i++ {
-		switch {
-		case inSingle:
-			if b[i] != '\'' {
-				out[i] = ' '
-				continue
+// mask returns two offset-preserving copies of sql. In text, comments become
+// spaces. In masked, everything that is not SQL structure is neutralized as
+// well: the contents of string literals become spaces, and the contents of
+// quoted identifiers ("..." and `...`) become underscores, so they still read
+// as one identifier token. Keywords, parentheses, commas, and semicolons left
+// in masked are all structural; names and types are read from text.
+func (l sqlLexer) mask(sql string) (text, masked string) {
+	t := []byte(sql)
+	b := []byte(sql)
+	fill := func(from, to int, c byte) {
+		for i := from; i < to; i++ {
+			if b[i] != '\n' {
+				b[i] = c
 			}
-			if i+1 < len(b) && b[i+1] == '\'' {
-				out[i] = ' '
-				out[i+1] = ' '
-				i++
-				continue
-			}
-			inSingle = false
-		case inDouble:
-			if b[i] == '"' {
-				if i+1 < len(b) && b[i+1] == '"' {
-					i++
-					continue
-				}
-				inDouble = false
-			}
-		case inBack:
-			if b[i] == '`' {
-				if i+1 < len(b) && b[i+1] == '`' {
-					i++
-					continue
-				}
-				inBack = false
-			}
-		default:
-			switch b[i] {
-			case '\'':
-				inSingle = true
-			case '"':
-				inDouble = true
-			case '`':
-				inBack = true
+		}
+	}
+	comment := func(from, to int) {
+		fill(from, to, ' ')
+		for i := from; i < to; i++ {
+			if t[i] != '\n' {
+				t[i] = ' '
 			}
 		}
 	}
 
-	return string(out)
+	for i := 0; i < len(b); {
+		switch c := b[i]; {
+		case c == '-' && i+1 < len(b) && b[i+1] == '-':
+			end := indexByteFrom(sql, '\n', i)
+			comment(i, end)
+			i = end
+		case c == '/' && i+1 < len(b) && b[i+1] == '*':
+			end := len(b)
+			if j := strings.Index(sql[i+2:], "*/"); j != -1 {
+				end = i + 2 + j + 2
+			}
+			comment(i, end)
+			i = end
+		case c == '\'':
+			backslash := l.backslashEscapes || l.escapeStringConst && isEscapeStringPrefix(sql, i)
+			end := quotedEnd(sql, i, '\'', backslash)
+			fill(i+1, max(end-1, i+1), ' ')
+			i = end
+		case c == '"' || c == '`':
+			end := quotedEnd(sql, i, c, false)
+			fill(i+1, max(end-1, i+1), '_')
+			i = end
+		case c == '$' && l.dollarQuotes && (i == 0 || !isSQLIdentByte(b[i-1])):
+			tag, ok := dollarQuoteTag(sql, i)
+			if !ok {
+				i++
+				continue
+			}
+			bodyStart := i + len(tag)
+			end := len(b)
+			if j := strings.Index(sql[bodyStart:], tag); j != -1 {
+				end = bodyStart + j
+			}
+			fill(bodyStart, end, ' ')
+			i = min(end+len(tag), len(b))
+		default:
+			i++
+		}
+	}
+	return string(t), string(b)
+}
+
+func indexByteFrom(s string, c byte, from int) int {
+	if j := strings.IndexByte(s[from:], c); j != -1 {
+		return from + j
+	}
+	return len(s)
+}
+
+// quotedEnd returns the index just past the quote closing the one at open. A
+// doubled quote is an escape; with backslash, so is a backslash before any
+// character. An unterminated quote runs to the end of the input.
+func quotedEnd(s string, open int, quote byte, backslash bool) int {
+	for i := open + 1; i < len(s); i++ {
+		switch s[i] {
+		case '\\':
+			if backslash {
+				i++
+			}
+		case quote:
+			if i+1 < len(s) && s[i+1] == quote {
+				i++
+				continue
+			}
+			return i + 1
+		}
+	}
+	return len(s)
+}
+
+// isEscapeStringPrefix reports whether the quote at i opens a PostgreSQL
+// escape string constant such as E'it\'s'.
+func isEscapeStringPrefix(s string, i int) bool {
+	if i == 0 || (s[i-1] != 'E' && s[i-1] != 'e') {
+		return false
+	}
+	return i == 1 || !isSQLIdentByte(s[i-2])
+}
+
+// dollarQuoteTag returns the opening delimiter of a PostgreSQL dollar-quoted
+// string at i, such as $$ or $body$.
+func dollarQuoteTag(s string, i int) (string, bool) {
+	for j := i + 1; j < len(s); j++ {
+		c := s[j]
+		if c == '$' {
+			return s[i : j+1], true
+		}
+		if !isSQLIdentByte(c) || (j == i+1 && c >= '0' && c <= '9') {
+			return "", false
+		}
+	}
+	return "", false
+}
+
+func isSQLIdentByte(c byte) bool {
+	return c == '_' || c == '$' || c >= 0x80 ||
+		c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
 }
 
 func trimIdentifierQuotes(s string) string {
