@@ -393,6 +393,35 @@ func TestGenerateGorm_DefaultsAutofillSupportedFields(t *testing.T) {
 	}
 }
 
+func TestGenerateGorm_InferredPrimaryKeyHasNoDefault(t *testing.T) {
+	// Arrange: no field carries a primaryKey tag, so GORM treats ID as the key.
+	models := []GormModel{
+		{
+			Name:  "User",
+			Table: "users",
+			Fields: []GormField{
+				{Name: "ID", Type: "uint"},
+				{Name: "Name", Type: "string"},
+			},
+		},
+	}
+
+	// Act
+	var buf bytes.Buffer
+	if err := GenerateGorm(&buf, "testutil", "github.com/myapp/models", models); err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	output := buf.String()
+	if !strings.Contains(output, `PKField: "ID"`) {
+		t.Fatalf("expected inferred ID primary key\n\nGot:\n%s", output)
+	}
+	if !strings.Contains(output, `return models.User{Name: "user-name"}`) {
+		t.Fatalf("expected defaults to leave the inferred primary key unset\n\nGot:\n%s", output)
+	}
+}
+
 func TestToSnakeCase(t *testing.T) {
 	tests := []struct {
 		input, want string

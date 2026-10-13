@@ -626,9 +626,12 @@ func normalizeGormModels(models []GormModel, alias string) []normalizedModel {
 		for _, field := range model.Fields {
 			_, isRelationFK := relationLocalFields[field.Name]
 			fields = append(fields, normalizedField{
-				GoName:       field.Name,
-				GoType:       field.Type,
-				IsPK:         field.IsPK,
+				GoName: field.Name,
+				GoType: field.Type,
+				// GORM treats a field named ID as the primary key when no field
+				// carries a primaryKey tag, so the inferred key must be left to
+				// the database like an explicitly tagged one.
+				IsPK:         slices.Contains(pkFields, field.Name),
 				IsRelationFK: isRelationFK,
 				IsOptional:   !field.NotNull,
 			})
