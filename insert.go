@@ -115,8 +115,11 @@ func (s Session[T]) InsertManyE(ctx context.Context, db DBTX, n int, opts ...Opt
 		return zero, fmt.Errorf("build plan: %w", err)
 	}
 
+	// Execute a clone, as Plan.InsertE does, so every node owns its values and
+	// an Insert callback mutating a Set slice, map, or pointer cannot leak into
+	// the caller's option value or another record of the batch.
 	effectiveDB := s.resolveDB(db)
-	execResult, err := executor.Execute(ctx, effectiveDB, plan.Graph, adapter, toExecutorLogFn(collected[0].logFn))
+	execResult, err := executor.Execute(ctx, effectiveDB, plan.Graph.Clone(), adapter, toExecutorLogFn(collected[0].logFn))
 	result, resultErr := batchResultFromExecutor[T](s.registry, plan.RootIDs, execResult, err == nil)
 	if resultErr != nil {
 		return result, resultErr
