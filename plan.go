@@ -84,11 +84,7 @@ func (s Session[T]) Build(tb testing.TB, opts ...Option) *Plan[T] {
 // Insert executes the plan and inserts all records. Fails the test on error.
 func (p *Plan[T]) Insert(tb testing.TB, db DBTX) Result[T] {
 	tb.Helper()
-	ctx := p.ctx
-	if ctx == nil {
-		ctx = tb.Context()
-	}
-	result, err := p.InsertE(ctx, db)
+	result, err := p.InsertE(tb.Context(), db)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -96,12 +92,11 @@ func (p *Plan[T]) Insert(tb testing.TB, db DBTX) Result[T] {
 }
 
 // InsertE executes the plan and inserts all records, returning an error on failure.
+// A [WithContext] option given when the plan was built overrides ctx.
 // If execution fails after inserting dependencies, the returned Result contains
 // the successful nodes and can be passed to [Result.CleanupE].
 func (p *Plan[T]) InsertE(ctx context.Context, db DBTX) (Result[T], error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx = insertContext(ctx, p.ctx)
 	if p.graph != nil {
 		if root := p.graph.Root(); root != nil {
 			if _, ok := root.Value.(T); !ok {

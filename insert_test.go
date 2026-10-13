@@ -2959,3 +2959,72 @@ func TestInsertOne_ReturnsResult(t *testing.T) {
 		t.Fatal("expected company node to have non-zero ID")
 	}
 }
+
+func TestWithContext_AppliesInsideTraits(t *testing.T) {
+	// Arrange
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	tests := []struct {
+		name string
+		opt  seedling.Option
+	}{
+		{name: "direct", opt: seedling.WithContext(canceled)},
+		{name: "inline trait", opt: seedling.InlineTrait(seedling.WithContext(canceled))},
+		{name: "blueprint trait", opt: seedling.BlueprintTrait("canceled")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := seedling.NewRegistry()
+			inserted := 0
+			seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
+				Name:    "company",
+				Table:   "companies",
+				PKField: "ID",
+				Traits: map[string][]seedling.Option{
+					"canceled": {seedling.WithContext(canceled)},
+				},
+				Insert: func(_ context.Context, _ seedling.DBTX, v Company) (Company, error) {
+					inserted++
+					v.ID = inserted
+					return v, nil
+				},
+			})
+			useTestRegistry(t, reg)
+
+			// Act
+			_, oneErr := session[Company](t).InsertOneE(t.Context(), nil, tt.opt)
+			_, manyErr := session[Company](t).InsertManyE(t.Context(), nil, 2, tt.opt)
+			plan, err := session[Company](t).BuildE(tt.opt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, planErr := plan.InsertE(t.Context(), nil)
+
+			// Assert
+			for name, err := range map[string]error{"InsertOneE": oneErr, "InsertManyE": manyErr, "Plan.InsertE": planErr} {
+				if !errors.Is(err, context.Canceled) {
+					t.Errorf("%s error = %v, want %v", name, err, context.Canceled)
+				}
+			}
+			if inserted != 0 {
+				t.Fatalf("inserted %d records, want 0", inserted)
+			}
+		})
+	}
+}
+
+func TestWithContext_TraitContextValueReachesInsert(t *testing.T) {
+	// Arrange
+	var captured context.Context
+	registerContextCompany(t, &captured)
+	ctx := context.WithValue(t.Context(), ctxKey{}, "from-trait")
+
+	// Act
+	insertMany[Company](t, nil, 2, seedling.InlineTrait(seedling.WithContext(ctx)))
+
+	// Assert
+	if got, _ := captured.Value(ctxKey{}).(string); got != "from-trait" {
+		t.Fatalf("context value = %q, want %q", got, "from-trait")
+	}
+}
