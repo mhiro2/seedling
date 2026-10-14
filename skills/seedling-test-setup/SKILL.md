@@ -74,7 +74,7 @@ seedling.InsertOne[User](t, db,
 )
 ```
 
-`Ref` also activates optional relations that are skipped by default.
+`Ref` also activates optional relations that are skipped by default. Several `Ref`s to the same relation merge in written order. Root-only options (`WithContext`, `AfterInsert`, `AfterInsertE`, `WithInsertLog`, `Only`) are rejected under `Ref`.
 
 ### Omit — skip an optional relation
 
@@ -96,7 +96,7 @@ seedling.InsertOne[User](t, db, seedling.With(func(u *User) {
 seedling.InsertOne[User](t, db, seedling.BlueprintTrait("admin"))
 ```
 
-Traits are defined in the blueprint's `Traits` map. A trait expands in place, so it behaves exactly like writing its options at that position: `Set` written after `BlueprintTrait` overrides the trait, and `BlueprintTrait` written after `Set` overrides the explicit value. A trait may also carry `WithContext`, or `Seq` / `SeqRef` / `SeqUse` for use with `InsertMany`.
+Traits are defined in the blueprint's `Traits` map. A trait expands in place, so it behaves exactly like writing its options at that position: `Set` written after `BlueprintTrait` overrides the trait, and `BlueprintTrait` written after `Set` overrides the explicit value. A trait may also carry `WithContext`, or `Seq` / `SeqRef` / `SeqUse` for use with `InsertMany`. Whatever the written order, field values are applied as `Defaults` → `Generate` → `Set` → `With`. Every insert path (`InsertOne`, `InsertMany`, `Build`, and the fluent builder) resolves options the same way.
 
 ### Seq — per-record sequencing in InsertMany
 

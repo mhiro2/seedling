@@ -133,6 +133,8 @@ func (w whenOption) applyOption(_ *optionResolver, o *optionSet) error {
 }
 
 // With applies a type-safe modification function to the root struct.
+// With functions run after Generate and Set options, whatever order they are
+// written in, and in written order among themselves.
 //
 //	seedling.With(func(t *Task) { t.Title = "urgent" })
 func With[T any](fn func(*T)) Option {

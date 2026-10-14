@@ -155,11 +155,20 @@ func TestUser(t *testing.T) {
 
 For runnable examples of these options, see [`example_test.go`](../example_test.go).
 
-Options resolve the same way on every insert path (`InsertOne`, `InsertMany`, `Build`, and the `Builder`). Traits expand in place first, and inside `InsertMany` the `Seq`, `SeqRef`, and `SeqUse` options are resolved for each record during that expansion, so they also work when defined in a blueprint trait or returned by `SeqRef`. `WithContext` is read from the expanded root options, so it may sit inside a trait, and it overrides the `ctx` passed to `InsertOneE`, `InsertManyE`, or `Plan.InsertE`.
-
 Every record owns the values it is built from. A slice, map, or pointer passed to `Set` is copied for each record, including each record of an `InsertMany` batch, and a nullable `*T` foreign key receives its own copy of the parent's key, so an `Insert` callback that mutates them changes neither the caller's value nor another record.
 
 With a pointer blueprint (`Blueprint[*Model]`, as generated for ent), the package-level `With` / `Generate` / `GenerateE` options take `*Model` and mutate the record in place. The `Builder` methods of the same name take `**Model` instead, because they are parameterized on the blueprint type itself; use `Apply` with the package-level option when you want the `*Model` form. `Root()` and `NodeAs` hand back the inserted pointer, and `Cleanup` deletes each record as it was when its `Insert` returned, so mutating that pointer afterwards, or from a later `Insert`, does not change which rows are removed.
+
+### Option resolution and precedence
+
+Options resolve in one pass that every insert path shares (`InsertOne`, `InsertMany`, `Build`, and the `Builder`), so the same option list always produces the same record:
+
+- Options apply in the order they are written. `BlueprintTrait` and `InlineTrait` expand in place, so an option written after a trait overrides it and a trait written after an option overrides that option
+- Inside `InsertMany`, `Seq`, `SeqRef`, and `SeqUse` resolve per record into the `Set`, `Ref`, and `Use` they produce, so they also work inside a trait or a `SeqRef` result. Anywhere else they return `ErrInvalidOption`
+- A later `Set`, `Use`, `When`, `WithContext`, `WithRand`, or `WithInsertLog` replaces an earlier one. Several `Ref`s to the same relation merge in written order, while `Omit`, `Only`, and `AfterInsert` accumulate
+- Field values are applied in fixed stages regardless of where the options sit: blueprint `Defaults`, then `Generate`, then `Set`, then `With`
+- `WithContext`, `AfterInsert`, `AfterInsertE`, `WithInsertLog`, and `Only` apply only to the root record. Under `Ref`, including inside a trait resolved for that relation, they return `ErrInvalidOption`
+- `WithContext` may sit inside a trait, and it overrides the `ctx` passed to `InsertOneE`, `InsertManyE`, or `Plan.InsertE`
 
 ## Relationship Patterns
 
