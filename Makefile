@@ -46,29 +46,26 @@ fmt-seedlingpgx:
 
 fmt-check: fmt-check-root fmt-check-integration fmt-check-seedlingpgx
 
-fmt-check-root:
-	@OUT=$$($(GOLANGCI_LINT) fmt --config=$(GOLANGCI_LINT_CONFIG) ./... --diff 2>&1); \
-	if [ -n "$$OUT" ]; then \
-		echo "$$OUT"; \
-		echo "Run 'make fmt'"; \
+# fmt_check runs the formatter in diff mode inside $(1). It fails when the
+# formatter reports a diff, and also when the formatter itself exits non-zero,
+# so a broken or missing formatter cannot pass as "nothing to format".
+define fmt_check
+	@out=$$(cd $(1) && $(GOLANGCI_LINT) fmt --config=$(GOLANGCI_LINT_CONFIG) ./... --diff 2>&1); status=$$?; \
+	if [ $$status -ne 0 ] || [ -n "$$out" ]; then \
+		if [ -n "$$out" ]; then echo "$$out"; fi; \
+		echo "fmt-check failed in $(1) (exit status $$status); run 'make fmt'"; \
 		exit 1; \
 	fi
+endef
+
+fmt-check-root:
+	$(call fmt_check,.)
 
 fmt-check-integration:
-	@OUT=$$(cd integration && $(GOLANGCI_LINT) fmt --config=$(GOLANGCI_LINT_CONFIG) ./... --diff 2>&1); \
-	if [ -n "$$OUT" ]; then \
-		echo "$$OUT"; \
-		echo "Run 'make fmt'"; \
-		exit 1; \
-	fi
+	$(call fmt_check,integration)
 
 fmt-check-seedlingpgx:
-	@OUT=$$(cd seedlingpgx && $(GOLANGCI_LINT) fmt --config=$(GOLANGCI_LINT_CONFIG) ./... --diff 2>&1); \
-	if [ -n "$$OUT" ]; then \
-		echo "$$OUT"; \
-		echo "Run 'make fmt'"; \
-		exit 1; \
-	fi
+	$(call fmt_check,seedlingpgx)
 
 lint: lint-root lint-integration lint-seedlingpgx
 

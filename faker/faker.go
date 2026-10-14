@@ -15,6 +15,7 @@ package faker
 
 import (
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"strings"
 	"time"
@@ -225,21 +226,44 @@ func (f *Faker) CreditCard() string {
 // Int returns a random non-negative int.
 func (f *Faker) Int() int { return f.rng.Int() }
 
-// IntBetween returns a random int in [min, max].
+// IntBetween returns a random int in [min, max]. Any range of int is
+// supported, including [math.MinInt, math.MaxInt].
 // It panics if min > max.
 func (f *Faker) IntBetween(min, max int) int {
 	if min > max {
 		panic(fmt.Sprintf("faker: IntBetween requires min <= max, got min=%d max=%d", min, max))
 	}
-	return min + f.rng.IntN(max-min+1)
+	// The span is computed in uint64, where max-min cannot overflow.
+	span := uint64(max) - uint64(min) //nolint:gosec // two's complement wrap is the intended span arithmetic
+	switch {
+	case span < math.MaxInt:
+		return min + f.rng.IntN(int(span)+1)
+	case span == math.MaxUint64:
+		return int(f.rng.Uint64()) //nolint:gosec // every int is in range, so any bit pattern is a valid result
+	default:
+		// Adding the offset with wrap-around lands back inside [min, max].
+		return int(uint64(min) + f.rng.Uint64N(span+1)) //nolint:gosec // the wrapped sum lies in [min, max]
+	}
 }
 
 // Float returns a random float64 in [0.0, 1.0).
 func (f *Faker) Float() float64 { return f.rng.Float64() }
 
-// FloatBetween returns a random float64 in [min, max).
+// FloatBetween returns a random float64 in [min, max). Any finite range is
+// supported, including one wider than math.MaxFloat64; min == max returns min.
+// It panics if min > max or either bound is NaN or infinite.
 func (f *Faker) FloatBetween(min, max float64) float64 {
-	return min + f.rng.Float64()*(max-min)
+	if math.IsNaN(min) || math.IsNaN(max) || math.IsInf(min, 0) || math.IsInf(max, 0) || min > max {
+		panic(fmt.Sprintf("faker: FloatBetween requires finite min <= max, got min=%g max=%g", min, max))
+	}
+	u := f.rng.Float64()
+	v := min + u*(max-min)
+	if math.IsInf(max-min, 0) {
+		// The width overflows, so interpolate between the bounds instead.
+		v = (1-u)*min + u*max
+	}
+	// Rounding can land on a bound the result must stay inside of.
+	return math.Max(min, math.Min(v, math.Nextafter(max, min)))
 }
 
 // Bool returns a random boolean.
@@ -255,15 +279,38 @@ func (f *Faker) Date() time.Time {
 	)
 }
 
-// DateBetween returns a random time between from and to (inclusive).
+// DateBetween returns a random time between from and to (inclusive), in the
+// location of from. Any range is supported, including one longer than the
+// roughly 292 years a time.Duration can hold.
 // It panics if from is after to.
 func (f *Faker) DateBetween(from, to time.Time) time.Time {
 	if from.After(to) {
 		panic(fmt.Sprintf("faker: DateBetween requires from <= to, got from=%s to=%s", from, to))
 	}
-	delta := to.Sub(from)
-	offset := f.rng.Int64N(int64(delta) + 1)
-	return from.Add(time.Duration(offset))
+	if delta := to.Sub(from); delta < math.MaxInt64 {
+		return from.Add(time.Duration(f.rng.Int64N(int64(delta) + 1)))
+	}
+
+	// The span does not fit in a Duration (Sub saturates), so pick whole
+	// seconds and nanoseconds separately. Rejecting pairs past the end keeps
+	// every nanosecond in the range equally likely.
+	spanSecs := uint64(to.Unix()) - uint64(from.Unix()) //nolint:gosec // from <= to, so the wrapped difference is the span
+	spanNanos := to.Nanosecond() - from.Nanosecond()
+	if spanNanos < 0 {
+		spanSecs--
+		spanNanos += int(time.Second)
+	}
+	for {
+		secs := f.rng.Uint64()
+		if spanSecs < math.MaxUint64 {
+			secs = f.rng.Uint64N(spanSecs + 1)
+		}
+		nanos := f.rng.IntN(int(time.Second))
+		if secs == spanSecs && nanos > spanNanos {
+			continue
+		}
+		return time.Unix(from.Unix()+int64(secs), int64(from.Nanosecond()+nanos)).In(from.Location()) //nolint:gosec // secs <= spanSecs, so the sum stays at or before to
+	}
 }
 
 // --- Generic ---
