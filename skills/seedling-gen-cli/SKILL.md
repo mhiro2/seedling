@@ -100,7 +100,8 @@ seedling-gen atlas \
 - `--out` writes atomically to the destination file.
 - `--explain` prints parsed schema/model metadata plus inferred blueprint relations instead of generated code.
 - `--json` prints the same diagnostic report as JSON.
-- `--dialect` is available on `sql` and `sqlc`. It is a validation hint and defaults to `auto` when omitted. Supported values are `auto`, `postgres`, `mysql`, and `sqlite`.
+- `--dialect` is available on `sql` and `sqlc` and defaults to `auto` when omitted. Supported values are `auto`, `postgres`, `mysql`, and `sqlite`. It selects string and comment syntax (dollar quotes, `E'...'`, and nested comments for `auto`/`postgres`; backslash escapes and `#` comments for `mysql`) and primary key nullability (SQLite keys may be NULL unless they are a non-`DESC` `INTEGER PRIMARY KEY` or the table is `WITHOUT ROWID`); pass the real dialect when the schema relies on either.
+- `atlas` reports an error for a `foreign_key` block it cannot resolve (missing `columns` or `ref_columns`, a column the table does not declare, mismatched column counts, or references to more than one table) instead of dropping the relation.
 - `--import-path` must be a full Go import path.
 - The `ent` import path must resolve to compilable entc output. `seedling-gen` reads exact field, mixin, setter, lifecycle, and ID signatures so custom acronyms are preserved and missing or incompatible generated signatures are rejected.
 - Generated `Defaults` fill common scalar fields deterministically, but skip primary keys (including GORM's untagged `ID` convention), relation foreign keys, and unsupported custom types. Fields promoted from an embedded `gorm.Model` are set through the embedded struct literal.

@@ -79,7 +79,7 @@ func TestParseSchema_UserColumnMetadata(t *testing.T) {
 		refTable string
 		notNull  bool
 	}{
-		{name: "id", goName: "ID", goType: "int", isPK: true},
+		{name: "id", goName: "ID", goType: "int", isPK: true, notNull: true},
 		{name: "name", goName: "Name", goType: "string", notNull: true},
 		{name: "email", goName: "Email", goType: "string", notNull: true},
 		{name: "company_id", goName: "CompanyID", goType: "int", isFK: true, refTable: "companies", notNull: true},
@@ -784,56 +784,6 @@ CREATE TABLE items (
 	output := buf.String()
 	if !strings.Contains(output, "Delete") {
 		t.Fatalf("expected Delete function in output, got:\n%s", output)
-	}
-}
-
-func TestStripSQLComments(t *testing.T) {
-	// Arrange
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{
-			name:  "line comment",
-			input: "SELECT 1; -- comment\nSELECT 2;",
-			want:  "SELECT 1; \nSELECT 2;",
-		},
-		{
-			name:  "block comment",
-			input: "SELECT /* skip */ 1;",
-			want:  "SELECT   1;",
-		},
-		{
-			name:  "multiline block comment",
-			input: "SELECT\n/* line1\nline2\n*/\n1;",
-			want:  "SELECT\n \n1;",
-		},
-		{
-			name:  "comment inside single-quoted string",
-			input: "DEFAULT '-- not a comment'",
-			want:  "DEFAULT '-- not a comment'",
-		},
-		{
-			name:  "block comment inside string",
-			input: "DEFAULT '/* keep */'",
-			want:  "DEFAULT '/* keep */'",
-		},
-		{
-			name:  "no comments",
-			input: "CREATE TABLE t (id INT);",
-			want:  "CREATE TABLE t (id INT);",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Act & Assert
-			got := stripSQLComments(tt.input)
-			if got != tt.want {
-				t.Fatalf("stripSQLComments(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
 	}
 }
 

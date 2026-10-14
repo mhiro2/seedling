@@ -163,7 +163,7 @@ flowchart LR
     GORM["GORM models<br/>*.go with gorm tags"] --> ParseG["ParseGormDir<br/>go/ast"]
     ENT["ent schemas<br/>Fields() / Edges()"] --> ParseE["ParseEntSchemaDir<br/>go/ast"]
     ENTPKG["generated Ent package"] --> ResolveE["ResolveEntSchemas<br/>go/packages + go/types"]
-    ATLAS["Atlas HCL<br/>schema.hcl"] --> ParseA["ParseAtlasHCL<br/>regex"]
+    ATLAS["Atlas HCL<br/>schema.hcl"] --> ParseA["ParseAtlasHCL<br/>masked regex"]
 
     Parse --> T["[]Table"]
     ParseC --> T
@@ -182,6 +182,8 @@ flowchart LR
     IR --> Render["shared blueprint renderer"]
     Render --> Out["Go source code<br/>Blueprint registrations"]
 ```
+
+The SQL and Atlas parsers first build an offset-preserving masked copy of their input in which comments, string literals (with dialect-specific syntax such as PostgreSQL dollar quotes and nested comments, MySQL backslash escapes and `#` comments, and HCL heredocs), and quoted identifiers are neutralized. Structure is matched only in that copy, while names and types are read from the original at the same offsets, so text inside a string or comment can never become a table, column, or constraint.
 
 SQL DDL, sqlc config, manual sqlc mode, and Atlas HCL still share the common `[]Table` parser output, including both local and referenced FK columns. GORM and ent continue to parse into adapter-specific types (`[]GormModel`, `[]EntSchema`). Ent additionally loads the generated client package and binds schema fields to its exact entity, builder, and ID signatures; this preserves project-defined entc acronyms, incorporates generated mixin fields, and rejects missing or incompatible generated signatures. Before code generation, each adapter is normalized into the same `[]normalizedModel` IR, including PK metadata (inferred keys such as GORM's untagged `ID` are excluded from defaults like explicit ones), the embedded struct that promotes a field (so defaults for `gorm.Model` fields are nested under that struct's literal), explicit referenced-field mappings, belongs-to relations, and Insert/Delete hook bodies (GORM and ent always produce a Delete hook, sqlc only when a unique `Delete<Table>` query is present, and the DDL-only SQL/Atlas adapters produce none). The final renderer is shared, so adapter-specific logic is isolated to parsing and normalization rather than duplicated template code.
 
