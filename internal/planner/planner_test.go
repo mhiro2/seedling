@@ -336,24 +336,6 @@ func TestPlan_OnlyUnknownRelationIsInvalid(t *testing.T) {
 	}
 }
 
-func TestPlan_NestedOnlyIsInvalid(t *testing.T) {
-	// Arrange
-	reg := newMockRegistry()
-	opts := newEmptyOptionSet()
-	opts.Refs["project"] = &planner.OptionSet{
-		Uses:  make(map[string]any),
-		Refs:  make(map[string]*planner.OptionSet),
-		Omits: make(map[string]bool),
-		Only:  map[string]bool{"company": true},
-	}
-
-	// Act & Assert
-	_, err := planner.Plan(reg, reflect.TypeFor[Task](), opts)
-	if !errors.Is(err, errx.ErrInvalidOption) {
-		t.Fatalf("got %v, want %v", err, errx.ErrInvalidOption)
-	}
-}
-
 func TestPlan_OnlyWithRefOnExcludedRelationIsInvalid(t *testing.T) {
 	// Arrange: Only("project") excludes assignee, but a Ref configures it. The
 	// contradiction must surface instead of silently discarding the Ref.

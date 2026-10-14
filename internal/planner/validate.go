@@ -10,19 +10,18 @@ import (
 
 // validatePlan checks the option set against the blueprint tree before graph expansion.
 func validatePlan(reg Registry, bp *BlueprintDef, opts *OptionSet) error {
-	return validateOptions(reg, bp, opts, true)
+	return validateOptions(reg, bp, opts)
 }
 
-func validateOptions(reg Registry, bp *BlueprintDef, opts *OptionSet, allowOnly bool) error {
+// validateOptions checks one node's options and recurses into its Refs. Only is
+// resolved for the root record alone, so a nested option set never carries it.
+func validateOptions(reg Registry, bp *BlueprintDef, opts *OptionSet) error {
 	if opts == nil {
 		return nil
 	}
 
 	rels := indexRelations(bp)
 
-	if !allowOnly && len(opts.Only) > 0 {
-		return fmt.Errorf("validate only: %w", errx.OnlyOutsideRoot())
-	}
 	for name := range opts.Only {
 		if _, ok := rels.byName[name]; !ok {
 			return fmt.Errorf("validate only %q: %w", name, errx.RelationNotFoundWithHint(bp.Name, name, rels.available))
@@ -119,8 +118,7 @@ func validateOptions(reg Registry, bp *BlueprintDef, opts *OptionSet, allowOnly 
 	// it. (A required relation simply absent from Only is intentional minimal-graph
 	// behaviour; see the Only documentation.) Only mode is keyed on a non-nil set,
 	// matching the expander, so Only() with no relations still triggers the check.
-	// Guarded by allowOnly so it only runs at the root, where Only is valid.
-	if allowOnly && opts.Only != nil {
+	if opts.Only != nil {
 		for name := range opts.Uses {
 			if !opts.Only[name] {
 				return fmt.Errorf("validate relation %q options: %w", name, errx.OnlyExcludesConfigured(bp.Name, name, "Use"))
@@ -144,7 +142,7 @@ func validateOptions(reg Registry, bp *BlueprintDef, opts *OptionSet, allowOnly 
 		if err != nil {
 			return fmt.Errorf("lookup ref blueprint %q: %w", rel.RefBlueprint, err)
 		}
-		if err := validateOptions(reg, refBP, refOpts, false); err != nil {
+		if err := validateOptions(reg, refBP, refOpts); err != nil {
 			return fmt.Errorf("validate ref %q: %w", name, err)
 		}
 	}

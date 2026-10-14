@@ -109,10 +109,6 @@ func OmitRequiredRelation(blueprint, relation string) error {
 	return fmt.Errorf("%w: relation %q on blueprint %q is required but was Omit'd", ErrInvalidOption, relation, blueprint)
 }
 
-func OnlyOutsideRoot() error {
-	return fmt.Errorf("%w: only must be declared on root options", ErrInvalidOption)
-}
-
 func OnlyExcludesConfigured(blueprint, relation, option string) error {
 	return fmt.Errorf("%w: relation %q on blueprint %q is configured with %s but excluded by Only; add %q to Only or drop the %s", ErrInvalidOption, relation, blueprint, option, relation, option)
 }
