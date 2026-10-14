@@ -40,7 +40,7 @@ func BuildE[T any](opts ...Option) (*Plan[T], error) {
 func (s Session[T]) BuildE(opts ...Option) (*Plan[T], error) {
 	rootType := reflect.TypeFor[T]()
 
-	collected, err := prepareRootOptions(s.registry, rootType, opts)
+	collected, err := prepareRootOptions(s.registry, rootType, opts, noSequenceIndex)
 	if err != nil {
 		return nil, err
 	}
@@ -84,11 +84,7 @@ func (s Session[T]) Build(tb testing.TB, opts ...Option) *Plan[T] {
 // Insert executes the plan and inserts all records. Fails the test on error.
 func (p *Plan[T]) Insert(tb testing.TB, db DBTX) Result[T] {
 	tb.Helper()
-	ctx := p.ctx
-	if ctx == nil {
-		ctx = tb.Context()
-	}
-	result, err := p.InsertE(ctx, db)
+	result, err := p.InsertE(tb.Context(), db)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -96,12 +92,11 @@ func (p *Plan[T]) Insert(tb testing.TB, db DBTX) Result[T] {
 }
 
 // InsertE executes the plan and inserts all records, returning an error on failure.
+// A [WithContext] option given when the plan was built overrides ctx.
 // If execution fails after inserting dependencies, the returned Result contains
 // the successful nodes and can be passed to [Result.CleanupE].
 func (p *Plan[T]) InsertE(ctx context.Context, db DBTX) (Result[T], error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx = insertContext(ctx, p.ctx)
 	if p.graph != nil {
 		if root := p.graph.Root(); root != nil {
 			if _, ok := root.Value.(T); !ok {
@@ -157,7 +152,7 @@ func (p *Plan[T]) resultFromExecutor(execResult *executor.Result, requireRoot bo
 		graph:         execResult.Graph,
 		registry:      p.registry,
 		deleteFns:     snapshotDeleteFns(p.registry, execResult.Nodes),
-		cleanupValues: snapshotCleanupValues(execResult.Graph),
+		cleanupValues: execResult.Inserted,
 	}
 	if execResult.Root == nil {
 		if requireRoot {
@@ -200,13 +195,19 @@ func (p *Plan[T]) toExecutorLogFn() func(executor.LogEntry) {
 	return toExecutorLogFn(p.logFn)
 }
 
-func prepareRootOptions(reg *Registry, rootType reflect.Type, opts []Option) (*optionSet, error) {
+// noSequenceIndex marks an option expansion outside InsertMany, where Seq,
+// SeqRef, and SeqUse stay unresolved and are rejected by validation.
+const noSequenceIndex = -1
+
+// prepareRootOptions expands and validates the root options. seqIndex is the
+// 0-based record index of an InsertMany batch, or noSequenceIndex.
+func prepareRootOptions(reg *Registry, rootType reflect.Type, opts []Option, seqIndex int) (*optionSet, error) {
 	r := resolveRegistry(reg).reg
 	def, err := r.lookupByType(rootType)
 	if err != nil {
 		return nil, fmt.Errorf("build plan: %w", err)
 	}
-	expanded, err := expandTraits(opts, def, r)
+	expanded, err := (&optionExpander{registry: r, seqIndex: seqIndex}).expand(opts, def, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build plan: %w", err)
 	}
@@ -220,12 +221,16 @@ func prepareRootOptions(reg *Registry, rootType reflect.Type, opts []Option) (*o
 	return collected, nil
 }
 
-// expandTraits replaces every trait option in opts with the options it stands
-// for. Expansion happens in place, so a trait contributes its options exactly
+// optionExpander resolves an option stream into the plain options the planner
+// consumes. Traits expand in place, so a trait contributes its options exactly
 // where it was written and later options keep overriding earlier ones. Options
 // nested under Ref are expanded against the blueprint the relation targets.
-func expandTraits(opts []Option, def *blueprintDef, r *registry) ([]Option, error) {
-	return expandTraitsInScope(opts, def, r, nil)
+// Inside InsertMany, sequence options are resolved for the record at seqIndex in
+// the same pass, so a Seq defined in a trait and a trait returned by SeqRef
+// behave like options written directly.
+type optionExpander struct {
+	registry *registry
+	seqIndex int
 }
 
 // traitKey identifies a trait on a specific blueprint while it is being expanded.
@@ -236,13 +241,17 @@ type traitKey struct {
 
 func (k traitKey) String() string { return k.blueprint + ":" + k.trait }
 
-// expandTraitsInScope is the recursive worker for expandTraits. active holds
-// the chain of traits currently being expanded, across Ref boundaries, so that
-// a trait that (transitively) references itself — on the same blueprint or
-// through a relation back to it — is reported instead of looping.
-func expandTraitsInScope(opts []Option, def *blueprintDef, r *registry, active []traitKey) ([]Option, error) {
+// expand is the recursive worker of optionExpander. def is nil under a relation
+// name that does not resolve. active holds the chain of traits currently being
+// expanded, across Ref boundaries, so that a trait that (transitively)
+// references itself — on the same blueprint or through a relation back to it —
+// is reported instead of looping.
+func (x *optionExpander) expand(opts []Option, def *blueprintDef, active []traitKey) ([]Option, error) {
 	out := make([]Option, 0, len(opts))
 	for _, o := range opts {
+		if x.seqIndex != noSequenceIndex {
+			o = x.resolveSequence(o)
+		}
 		switch o := o.(type) {
 		case blueprintTraitOption:
 			key := traitKey{blueprint: def.name, trait: o.name}
@@ -257,29 +266,28 @@ func expandTraitsInScope(opts []Option, def *blueprintDef, r *registry, active [
 			if !ok {
 				return nil, fmt.Errorf("%w: trait %q not defined on blueprint %q", ErrInvalidOption, o.name, def.name)
 			}
-			expanded, err := expandTraitsInScope(traitOpts, def, r, append(slices.Clone(active), key))
+			expanded, err := x.expand(traitOpts, def, append(slices.Clone(active), key))
 			if err != nil {
 				return nil, err
 			}
 			out = append(out, expanded...)
 		case inlineTraitOption:
-			expanded, err := expandTraitsInScope(o.opts, def, r, active)
+			expanded, err := x.expand(o.opts, def, active)
 			if err != nil {
 				return nil, err
 			}
 			out = append(out, expanded...)
 		case refOption:
-			refBP, err := findRefBlueprint(def, o.name, r)
+			refBP, err := findRefBlueprint(def, o.name, x.registry)
 			if err != nil {
 				if hasTraits(o.opts) {
 					return nil, fmt.Errorf("resolve traits for ref %q: %w", o.name, err)
 				}
 				// Unknown relation names without traits are reported by the planner
 				// validator with its usual hints.
-				out = append(out, o)
-				continue
+				refBP = nil
 			}
-			expanded, err := expandTraitsInScope(o.opts, refBP, r, active)
+			expanded, err := x.expand(o.opts, refBP, active)
 			if err != nil {
 				return nil, fmt.Errorf("resolve traits for ref %q: %w", o.name, err)
 			}
@@ -289,6 +297,21 @@ func expandTraitsInScope(opts []Option, def *blueprintDef, r *registry, active [
 		}
 	}
 	return out, nil
+}
+
+// resolveSequence turns a sequence option into the plain option it produces for
+// the current record. Other options are returned unchanged.
+func (x *optionExpander) resolveSequence(o Option) Option {
+	switch sq := o.(type) {
+	case seqOption:
+		return setOption{field: sq.field, value: sq.fn(x.seqIndex)}
+	case seqRefOption:
+		return refOption{name: sq.name, opts: sq.fn(x.seqIndex)}
+	case seqUseOption:
+		return useOption{name: sq.name, value: sq.fn(x.seqIndex)}
+	default:
+		return o
+	}
 }
 
 // hasTraits reports whether opts contains a blueprint trait option at any depth.
@@ -310,8 +333,12 @@ func hasTraits(opts []Option) bool {
 	return false
 }
 
-// findRefBlueprint looks up the blueprint targeted by a relation name.
+// findRefBlueprint looks up the blueprint targeted by a relation name. A nil
+// def stands for an unresolved relation, under which no name resolves.
 func findRefBlueprint(def *blueprintDef, relationName string, r *registry) (*blueprintDef, error) {
+	if def == nil {
+		return nil, fmt.Errorf("%w: relation %q not found", ErrInvalidOption, relationName)
+	}
 	for _, rel := range def.relations {
 		if rel.name == relationName {
 			return r.lookupByName(rel.refBlueprint)
@@ -401,7 +428,7 @@ func validateResolvedOptions(os *optionSet, root bool) error {
 	}
 	if len(os.traits) > 0 {
 		// Traits are expanded before collection; a leftover means an option
-		// stream bypassed expandTraits.
+		// stream bypassed optionExpander.
 		return fmt.Errorf("%w: trait %q was not expanded", ErrInvalidOption, os.traits[0])
 	}
 	for name, refOpts := range os.refs {

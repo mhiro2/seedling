@@ -21,8 +21,7 @@ func InsertOne[T any](tb testing.TB, db DBTX, opts ...Option) Result[T] {
 // dependencies automatically resolved. Fails the test on error.
 func (s Session[T]) InsertOne(tb testing.TB, db DBTX, opts ...Option) Result[T] {
 	tb.Helper()
-	ctx, filtered := extractContext(tb.Context(), opts)
-	result, err := s.InsertOneE(ctx, db, filtered...)
+	result, err := s.InsertOneE(tb.Context(), db, opts...)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -36,8 +35,7 @@ func InsertOneE[T any](ctx context.Context, db DBTX, opts ...Option) (Result[T],
 
 // InsertOneE creates and inserts a single record of type T, returning an error on failure.
 func (s Session[T]) InsertOneE(ctx context.Context, db DBTX, opts ...Option) (Result[T], error) {
-	ctx, filtered := extractContext(ctx, opts)
-	plan, err := s.BuildE(filtered...)
+	plan, err := s.BuildE(opts...)
 	if err != nil {
 		var zero Result[T]
 		return zero, err
@@ -58,8 +56,7 @@ func InsertMany[T any](tb testing.TB, db DBTX, n int, opts ...Option) []T {
 // are identical across records. Fails the test on error.
 func (s Session[T]) InsertMany(tb testing.TB, db DBTX, n int, opts ...Option) []T {
 	tb.Helper()
-	ctx, filtered := extractContext(tb.Context(), opts)
-	result, err := s.InsertManyE(ctx, db, n, filtered...)
+	result, err := s.InsertManyE(tb.Context(), db, n, opts...)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -85,7 +82,6 @@ func InsertManyE[T any](ctx context.Context, db DBTX, n int, opts ...Option) (Ba
 // If execution fails after inserting some nodes, the returned BatchResult
 // contains every successful node and only the roots that completed successfully.
 func (s Session[T]) InsertManyE(ctx context.Context, db DBTX, n int, opts ...Option) (BatchResult[T], error) {
-	ctx, opts = extractContext(ctx, opts)
 	var zero BatchResult[T]
 
 	if n < 0 {
@@ -100,8 +96,7 @@ func (s Session[T]) InsertManyE(ctx context.Context, db DBTX, n int, opts ...Opt
 	internalOpts := make([]*planner.OptionSet, n)
 
 	for i := range n {
-		resolved := resolveSeqs(opts, i)
-		prepared, err := prepareRootOptions(s.registry, rootType, resolved)
+		prepared, err := prepareRootOptions(s.registry, rootType, opts, i)
 		if err != nil {
 			return zero, err
 		}
@@ -115,8 +110,13 @@ func (s Session[T]) InsertManyE(ctx context.Context, db DBTX, n int, opts ...Opt
 		return zero, fmt.Errorf("build plan: %w", err)
 	}
 
+	// Execute a clone, as Plan.InsertE does, so every node owns its values and
+	// an Insert callback mutating a Set slice, map, or pointer cannot leak into
+	// the caller's option value or another record of the batch.
+	// WithContext is a root option, so every record resolves the same one.
+	ctx = insertContext(ctx, collected[0].ctx)
 	effectiveDB := s.resolveDB(db)
-	execResult, err := executor.Execute(ctx, effectiveDB, plan.Graph, adapter, toExecutorLogFn(collected[0].logFn))
+	execResult, err := executor.Execute(ctx, effectiveDB, plan.Graph.Clone(), adapter, toExecutorLogFn(collected[0].logFn))
 	result, resultErr := batchResultFromExecutor[T](s.registry, plan.RootIDs, execResult, err == nil)
 	if resultErr != nil {
 		return result, resultErr
@@ -160,7 +160,7 @@ func batchResultFromExecutor[T any](reg *Registry, rootIDs []string, execResult 
 		graph:         execResult.Graph,
 		registry:      reg,
 		deleteFns:     snapshotDeleteFns(reg, execResult.Nodes),
-		cleanupValues: snapshotCleanupValues(execResult.Graph),
+		cleanupValues: execResult.Inserted,
 	}
 	rootType := reflect.TypeFor[T]()
 	for rootIndex, rootID := range rootIDs {
@@ -183,43 +183,14 @@ func batchResultFromExecutor[T any](reg *Registry, rootIDs []string, execResult 
 	return result, nil
 }
 
-// extractContext extracts a WithContext option from opts and returns
-// the context and the remaining options.
-func extractContext(defaultCtx context.Context, opts []Option) (context.Context, []Option) {
-	ctx := defaultCtx
-	filtered := make([]Option, 0, len(opts))
-	for _, o := range opts {
-		if co, ok := o.(contextOption); ok {
-			ctx = co.ctx
-			continue
-		}
-		filtered = append(filtered, o)
+// insertContext picks the context an insert runs with. A WithContext option,
+// resolved after trait expansion, overrides the context the caller passed.
+func insertContext(ctx, override context.Context) context.Context {
+	if override != nil {
+		return override
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return context.Background()
 	}
-	return ctx, filtered
-}
-
-// resolveSeqs converts Seq options into Set options by calling the sequence
-// function with the given index. Non-Seq options are passed through.
-func resolveSeqs(opts []Option, index int) []Option {
-	resolved := make([]Option, 0, len(opts))
-	for _, o := range opts {
-		switch sq := o.(type) {
-		case seqOption:
-			resolved = append(resolved, Set(sq.field, sq.fn(index)))
-		case seqRefOption:
-			resolved = append(resolved, Ref(sq.name, resolveSeqs(sq.fn(index), index)...))
-		case seqUseOption:
-			resolved = append(resolved, Use(sq.name, sq.fn(index)))
-		case refOption:
-			resolved = append(resolved, Ref(sq.name, resolveSeqs(sq.opts, index)...))
-		case inlineTraitOption:
-			resolved = append(resolved, InlineTrait(resolveSeqs(sq.opts, index)...))
-		default:
-			resolved = append(resolved, o)
-		}
-	}
-	return resolved
+	return ctx
 }

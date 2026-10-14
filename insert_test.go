@@ -1249,6 +1249,43 @@ func TestInsertOne_BelongsToParentWithHasManyBackReference(t *testing.T) {
 	}
 }
 
+func TestHasMany_RejectsUseOrRefOnBackReference(t *testing.T) {
+	// Arrange
+	tests := []struct {
+		name   string
+		option seedling.Option
+		want   string
+	}{
+		{
+			name:   "use",
+			option: seedling.Ref("employees", seedling.Use("department", Department{ID: 99})),
+			want:   "Use",
+		},
+		{
+			name:   "ref",
+			option: seedling.Ref("employees", seedling.Ref("department", seedling.Set("Name", "custom"))),
+			want:   "Ref",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupHasManyBlueprints(t)
+
+			// Act
+			_, err := buildE[Department](t, tt.option)
+
+			// Assert
+			if !errors.Is(err, seedling.ErrInvalidOption) {
+				t.Fatalf("got %v, want %v", err, seedling.ErrInvalidOption)
+			}
+			if !strings.Contains(err.Error(), `relation "department" on blueprint "employee" is bound`) || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error %q does not describe the bound relation and %s", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestRef_HasManyAppliesToAllChildren(t *testing.T) {
 	// Arrange
 	setupHasManyBlueprints(t)
@@ -2957,5 +2994,333 @@ func TestInsertOne_ReturnsResult(t *testing.T) {
 	company := companyNode.Value().(Company)
 	if company.ID == 0 {
 		t.Fatal("expected company node to have non-zero ID")
+	}
+}
+
+func TestWithContext_AppliesInsideTraits(t *testing.T) {
+	// Arrange
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	tests := []struct {
+		name string
+		opt  seedling.Option
+	}{
+		{name: "direct", opt: seedling.WithContext(canceled)},
+		{name: "inline trait", opt: seedling.InlineTrait(seedling.WithContext(canceled))},
+		{name: "blueprint trait", opt: seedling.BlueprintTrait("canceled")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := seedling.NewRegistry()
+			inserted := 0
+			seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
+				Name:    "company",
+				Table:   "companies",
+				PKField: "ID",
+				Traits: map[string][]seedling.Option{
+					"canceled": {seedling.WithContext(canceled)},
+				},
+				Insert: func(_ context.Context, _ seedling.DBTX, v Company) (Company, error) {
+					inserted++
+					v.ID = inserted
+					return v, nil
+				},
+			})
+			useTestRegistry(t, reg)
+
+			// Act
+			_, oneErr := session[Company](t).InsertOneE(t.Context(), nil, tt.opt)
+			_, manyErr := session[Company](t).InsertManyE(t.Context(), nil, 2, tt.opt)
+			plan, err := session[Company](t).BuildE(tt.opt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, planErr := plan.InsertE(t.Context(), nil)
+
+			// Assert
+			for name, err := range map[string]error{"InsertOneE": oneErr, "InsertManyE": manyErr, "Plan.InsertE": planErr} {
+				if !errors.Is(err, context.Canceled) {
+					t.Errorf("%s error = %v, want %v", name, err, context.Canceled)
+				}
+			}
+			if inserted != 0 {
+				t.Fatalf("inserted %d records, want 0", inserted)
+			}
+		})
+	}
+}
+
+func TestWithContext_TraitContextValueReachesInsert(t *testing.T) {
+	// Arrange
+	var captured context.Context
+	registerContextCompany(t, &captured)
+	ctx := context.WithValue(t.Context(), ctxKey{}, "from-trait")
+
+	// Act
+	insertMany[Company](t, nil, 2, seedling.InlineTrait(seedling.WithContext(ctx)))
+
+	// Assert
+	if got, _ := captured.Value(ctxKey{}).(string); got != "from-trait" {
+		t.Fatalf("context value = %q, want %q", got, "from-trait")
+	}
+}
+
+func registerSequenceTraitBlueprints(tb testing.TB) {
+	tb.Helper()
+	reg := seedling.NewRegistry()
+	ids := seedlingtest.NewIDSequence()
+	existing := []Company{{ID: 100, Name: "existing-0"}, {ID: 101, Name: "existing-1"}}
+
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
+		Name:    "company",
+		Table:   "companies",
+		PKField: "ID",
+		Defaults: func() Company {
+			return Company{Name: "test-company"}
+		},
+		Traits: map[string][]seedling.Option{
+			"numbered": {seedling.Seq("Name", func(i int) string { return fmt.Sprintf("company-%d", i) })},
+		},
+		Insert: func(_ context.Context, _ seedling.DBTX, v Company) (Company, error) {
+			v.ID = ids.Next()
+			return v, nil
+		},
+	})
+	seedling.MustRegisterTo(reg, seedling.Blueprint[User]{
+		Name:    "user",
+		Table:   "users",
+		PKField: "ID",
+		Relations: []seedling.Relation{
+			{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
+		},
+		Traits: map[string][]seedling.Option{
+			"numbered": {seedling.Seq("Name", func(i int) string { return fmt.Sprintf("user-%d", i) })},
+			"numbered_company": {seedling.SeqRef("company", func(int) []seedling.Option {
+				return []seedling.Option{seedling.BlueprintTrait("numbered")}
+			})},
+			"existing_company": {seedling.SeqUse("company", func(i int) Company { return existing[i] })},
+		},
+		Insert: func(_ context.Context, _ seedling.DBTX, v User) (User, error) {
+			v.ID = ids.Next()
+			return v, nil
+		},
+	})
+	useTestRegistry(tb, reg)
+}
+
+func TestInsertMany_ResolvesSequenceOptionsInBlueprintTraits(t *testing.T) {
+	t.Run("seq", func(t *testing.T) {
+		// Arrange
+		registerSequenceTraitBlueprints(t)
+
+		// Act
+		users := insertMany[User](t, nil, 2, seedling.BlueprintTrait("numbered"))
+
+		// Assert
+		if users[0].Name != "user-0" || users[1].Name != "user-1" {
+			t.Fatalf("got names %q and %q, want user-0 and user-1", users[0].Name, users[1].Name)
+		}
+	})
+
+	t.Run("seq ref returning a trait", func(t *testing.T) {
+		// Arrange
+		registerSequenceTraitBlueprints(t)
+
+		// Act
+		result, err := insertManyE[User](t.Context(), t, nil, 2, seedling.BlueprintTrait("numbered_company"))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Assert
+		for i := range 2 {
+			company := result.MustNodeAt(i, "company").Value().(Company)
+			if want := fmt.Sprintf("company-%d", i); company.Name != want {
+				t.Fatalf("root %d company name = %q, want %q", i, company.Name, want)
+			}
+		}
+	})
+
+	t.Run("seq use", func(t *testing.T) {
+		// Arrange
+		registerSequenceTraitBlueprints(t)
+
+		// Act
+		users := insertMany[User](t, nil, 2, seedling.BlueprintTrait("existing_company"))
+
+		// Assert
+		if users[0].CompanyID != 100 || users[1].CompanyID != 101 {
+			t.Fatalf("got company IDs %d and %d, want 100 and 101", users[0].CompanyID, users[1].CompanyID)
+		}
+	})
+
+	t.Run("nested ref", func(t *testing.T) {
+		// Arrange
+		registerSequenceTraitBlueprints(t)
+
+		// Act
+		result, err := insertManyE[User](t.Context(), t, nil, 2, seedling.Ref("company", seedling.BlueprintTrait("numbered")))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Assert
+		if got := len(result.Nodes("company")); got != 2 {
+			t.Fatalf("got %d companies, want 2", got)
+		}
+	})
+
+	t.Run("outside InsertMany", func(t *testing.T) {
+		// Arrange
+		registerSequenceTraitBlueprints(t)
+
+		// Act
+		_, err := buildE[User](t, seedling.BlueprintTrait("numbered"))
+
+		// Assert
+		if !errors.Is(err, seedling.ErrInvalidOption) {
+			t.Fatalf("got %v, want %v", err, seedling.ErrInvalidOption)
+		}
+	})
+}
+
+type SetOrderEmbedded struct {
+	Name string
+}
+
+type setOrderRecord struct {
+	ID int
+	SetOrderEmbedded
+}
+
+func TestSet_EmbeddedStructAndPromotedFieldApplyInOrder(t *testing.T) {
+	// Arrange
+	reg := seedling.NewRegistry()
+	seedling.MustRegisterTo(reg, seedling.Blueprint[setOrderRecord]{
+		Name:    "set_order_record",
+		Table:   "set_order_records",
+		PKField: "ID",
+		Insert: func(_ context.Context, _ seedling.DBTX, v setOrderRecord) (setOrderRecord, error) {
+			v.ID = 1
+			return v, nil
+		},
+	})
+	useTestRegistry(t, reg)
+	whole := seedling.Set("SetOrderEmbedded", SetOrderEmbedded{Name: "embedded"})
+	promoted := seedling.Set("Name", "explicit")
+
+	// Act / Assert
+	// Repeat to catch order that depends on map iteration.
+	for range 50 {
+		if got := insertOne[setOrderRecord](t, nil, whole, promoted).Name; got != "explicit" {
+			t.Fatalf("struct then field: Name = %q, want %q", got, "explicit")
+		}
+		if got := insertOne[setOrderRecord](t, nil, promoted, whole).Name; got != "embedded" {
+			t.Fatalf("field then struct: Name = %q, want %q", got, "embedded")
+		}
+	}
+}
+
+func TestBatchResult_NodesForRootIncludesHasManyChildrenOfSharedParent(t *testing.T) {
+	// Arrange: project -> company (shared across roots) -> users (has-many).
+	reg := seedling.NewRegistry()
+	ids := seedlingtest.NewIDSequence()
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
+		Name:    "company",
+		Table:   "companies",
+		PKField: "ID",
+		Relations: []seedling.Relation{
+			{Name: "users", Kind: seedling.HasMany, LocalField: "CompanyID", RefBlueprint: "user", Count: 1},
+		},
+		Insert: func(_ context.Context, _ seedling.DBTX, v Company) (Company, error) {
+			v.ID = ids.Next()
+			return v, nil
+		},
+	})
+	seedling.MustRegisterTo(reg, seedling.Blueprint[User]{
+		Name:    "user",
+		Table:   "users",
+		PKField: "ID",
+		Relations: []seedling.Relation{
+			{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
+		},
+		Insert: func(_ context.Context, _ seedling.DBTX, v User) (User, error) {
+			v.ID = ids.Next()
+			return v, nil
+		},
+	})
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Project]{
+		Name:    "project",
+		Table:   "projects",
+		PKField: "ID",
+		Relations: []seedling.Relation{
+			{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
+		},
+		Insert: func(_ context.Context, _ seedling.DBTX, v Project) (Project, error) {
+			v.ID = ids.Next()
+			return v, nil
+		},
+	})
+	useTestRegistry(t, reg)
+
+	// Act: roots 0 and 1 share one company; root 2 gets a company of its own.
+	result, err := insertManyE[Project](t.Context(), t, nil, 3,
+		seedling.SeqRef("company", func(i int) []seedling.Option {
+			name := "shared"
+			if i == 2 {
+				name = "own"
+			}
+			return []seedling.Option{seedling.Set("Name", name)}
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	if got := len(result.Nodes("user")); got != 2 {
+		t.Fatalf("got %d users in the batch, want 2", got)
+	}
+	for i := range 3 {
+		company := result.MustNodeAt(i, "company").Value().(Company)
+		users, err := seedling.NodesAs[User](nodesForRoot{result: result, index: i}, "user")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(users) != 1 || users[0].CompanyID != company.ID {
+			t.Fatalf("root %d users = %+v, want one user of company %d", i, users, company.ID)
+		}
+		if got := len(result.NodesForRoot(i, "project")); got != 1 {
+			t.Fatalf("root %d has %d projects, want 1", i, got)
+		}
+	}
+}
+
+// nodesForRoot adapts BatchResult.NodesForRoot to the lookup NodesAs accepts.
+type nodesForRoot struct {
+	result seedling.BatchResult[Project]
+	index  int
+}
+
+func (n nodesForRoot) Nodes(name string) []seedling.NodeResult {
+	return n.result.NodesForRoot(n.index, name)
+}
+
+func TestWithContext_NilOverridesCallerContext(t *testing.T) {
+	// Arrange
+	setupBlueprints(t)
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	// Act
+	//nolint:staticcheck // a nil WithContext is the case under test
+	result, err := session[Company](t).InsertOneE(canceled, nil, seedling.WithContext(nil))
+	// Assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Root().ID == 0 {
+		t.Fatal("expected non-zero ID")
 	}
 }

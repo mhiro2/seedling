@@ -85,6 +85,10 @@ func UseAndRefConflict(blueprint, relation string) error {
 	return fmt.Errorf("%w: relation %q on blueprint %q has both Use and Ref; remove one to resolve the conflict", ErrInvalidOption, relation, blueprint)
 }
 
+func BoundRelationOverride(blueprint, relation, parent, option string) error {
+	return fmt.Errorf("%w: relation %q on blueprint %q is bound to the %q record that creates it through has-many, so %s cannot replace or configure it; remove the %s", ErrInvalidOption, relation, blueprint, parent, option, option)
+}
+
 func UseAndWhenConflict(blueprint, relation string) error {
 	return fmt.Errorf("%w: relation %q on blueprint %q has both Use and When; a Use'd relation is always bound, so remove the When", ErrInvalidOption, relation, blueprint)
 }

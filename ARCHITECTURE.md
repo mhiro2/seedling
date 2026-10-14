@@ -26,10 +26,12 @@ At a high level:
 
 `BuildE[T]` resolves the root blueprint, collects options, and delegates graph construction to `internal/planner`.
 
+Root options go through one expansion pass shared by `BuildE`, `InsertOneE`, and `InsertManyE`: traits expand in place, `Ref` options are expanded against the relation's blueprint, and for `InsertMany` each record's `Seq`, `SeqRef`, and `SeqUse` are resolved during the same pass. Validation and root-only options such as `WithContext` read the expanded result, so an option behaves the same whether it is written directly or inside a trait.
+
 `Plan[T]` is intentionally reusable:
 
 - `BuildE` creates the graph once.
-- `InsertE` clones that graph before execution.
+- `InsertE` clones that graph before execution. `InsertManyE` clones its batch graph too, so every node owns the values it was built from.
 - `AfterInsert` callbacks run after executor completion.
 - `AfterInsert` closures are captured once at build time, so reusing a plan also reuses any callback state they hold.
 
@@ -53,11 +55,11 @@ Core responsibilities:
 
 - validate `Use`, `Ref`, `Omit`, `When`, and FK-related `Set`
 - create a node from `Defaults()`
-- apply root and nested options before execution
+- apply root and nested options before execution; `Set` options apply in the order written
 - expand `belongs_to`, `has_many`, and `many_to_many`
 - lazy evaluation with `Only(...)`: skip root-level relations not in the set, building only the required subgraph
 - reuse already-expanded nodes by node ID
-- detect cycles during expansion: a required relation that returns to a blueprint already on the expansion stack with the same options and the same back-reference-bound relations has no finite expansion and is rejected with `ErrCycleDetected` (model self/mutual references as `Optional`). A `has_many` child whose `belongs_to` is bound to the parent that created it does not count as a revisit, so `employee -> department -> employees` expands finitely
+- detect cycles during expansion: a required relation that returns to a blueprint already on the expansion stack with the same options and the same back-reference-bound relations has no finite expansion and is rejected with `ErrCycleDetected` (model self/mutual references as `Optional`). A `has_many` child whose `belongs_to` is bound to the parent that created it does not count as a revisit, so `employee -> department -> employees` expands finitely. A `Use` or `Ref` on such a bound relation is rejected, since honoring it would replace or rebuild the parent that already exists
 - mark `Use(...)` relations as provided nodes so the executor skips insertion
 
 Relation expansion rules:
@@ -107,7 +109,7 @@ After preflight, each node runs in topological order:
 2. Assign those values into the child FK fields.
 3. Skip insert when the node is provided via `Use(...)`.
 4. Otherwise call the blueprint's `Insert(ctx, db, value)`.
-5. Store the inserted value back on the node and in the result map.
+5. Store the inserted value back on the node and in the result map, and keep a copy for cleanup so later inserts cannot change which row `Delete` receives.
 
 ```mermaid
 sequenceDiagram
@@ -138,6 +140,7 @@ Important detail:
 - They are assigned by the executor immediately before each insert.
 - This allows database-generated primary keys, or other returned referenced values, to flow into downstream child nodes.
 - If execution stops after some inserts succeed, the executor returns those nodes with the error. Its partial graph contains only completed nodes, so `Result.CleanupE` and `BatchResult.CleanupE` never attempt to delete failed or unvisited nodes. That graph keeps the original root when the root completed and has no root otherwise, so `DebugString` never presents an arbitrary surviving node as the root.
+- Binding a pointer key into a nullable `*T` FK allocates storage for the child, so a child's `Insert` writing through its FK cannot rewrite the parent's key.
 - Cleanup walks the graph in reverse topological order and requires a `Delete` callback on every non-provided blueprint. It validates all callbacks before issuing the first delete, so a missing `Delete` surfaces as `ErrDeleteNotDefined` with no rows removed rather than as a half-finished teardown.
 
 ## Why the split exists

@@ -143,7 +143,7 @@ func TestUser(t *testing.T) {
 
 ## Common Options
 
-- `Set`: override one field by Go struct field name
+- `Set`: override one field by Go struct field name. Sets apply in the order written, so a later `Set` wins, including one that sets a field promoted from an embedded struct an earlier `Set` replaced
 - `Ref`: customize the auto-created node behind a relation and explicitly enable an optional relation
 - `Use`: reuse an existing record instead of inserting a new relation target
 - `Omit`: skip an optional relation
@@ -155,7 +155,11 @@ func TestUser(t *testing.T) {
 
 For runnable examples of these options, see [`example_test.go`](../example_test.go).
 
-With a pointer blueprint (`Blueprint[*Model]`, as generated for ent), the package-level `With` / `Generate` / `GenerateE` options take `*Model` and mutate the record in place. The `Builder` methods of the same name take `**Model` instead, because they are parameterized on the blueprint type itself; use `Apply` with the package-level option when you want the `*Model` form. `Root()` and `NodeAs` hand back the inserted pointer, and `Cleanup` deletes each record as `Insert` returned it, so mutating that pointer afterwards does not change which rows are removed.
+Options resolve the same way on every insert path (`InsertOne`, `InsertMany`, `Build`, and the `Builder`). Traits expand in place first, and inside `InsertMany` the `Seq`, `SeqRef`, and `SeqUse` options are resolved for each record during that expansion, so they also work when defined in a blueprint trait or returned by `SeqRef`. `WithContext` is read from the expanded root options, so it may sit inside a trait, and it overrides the `ctx` passed to `InsertOneE`, `InsertManyE`, or `Plan.InsertE`.
+
+Every record owns the values it is built from. A slice, map, or pointer passed to `Set` is copied for each record, including each record of an `InsertMany` batch, and a nullable `*T` foreign key receives its own copy of the parent's key, so an `Insert` callback that mutates them changes neither the caller's value nor another record.
+
+With a pointer blueprint (`Blueprint[*Model]`, as generated for ent), the package-level `With` / `Generate` / `GenerateE` options take `*Model` and mutate the record in place. The `Builder` methods of the same name take `**Model` instead, because they are parameterized on the blueprint type itself; use `Apply` with the package-level option when you want the `*Model` form. `Root()` and `NodeAs` hand back the inserted pointer, and `Cleanup` deletes each record as it was when its `Insert` returned, so mutating that pointer afterwards, or from a later `Insert`, does not change which rows are removed.
 
 ## Relationship Patterns
 
@@ -165,7 +169,7 @@ With a pointer blueprint (`Blueprint[*Model]`, as generated for ent), the packag
 - Composite keys: use `PKFields`, `LocalFields`, `RefFields`, and `RemoteFields`
 - Non-primary references: set `RefField` or `RefFields` on `BelongsTo` when the foreign key references a unique parent field other than its primary key (for example, `CountryCode` referencing `Country.Code`)
 - Matching field types: a referenced parent field of type `T` can populate a child FK of type `T` or nullable `*T`. No other implicit conversion or pointer unwrapping is performed. Named and underlying types (for example, `type UserID int64` and `int64`) remain distinct
-- Self/mutual references (e.g. `employees.manager_id → employees.id`, or `A ↔ B`) must be `Optional`: a *required* reference back to a blueprint already being expanded has no finite expansion and is rejected with `ErrCycleDetected`. A `HasMany` child bound back to the parent that created it is not such a reference: `Employee → Department → HasMany Employee` inserts the department's employees with their `DepartmentID` set to that department
+- Self/mutual references (e.g. `employees.manager_id → employees.id`, or `A ↔ B`) must be `Optional`: a *required* reference back to a blueprint already being expanded has no finite expansion and is rejected with `ErrCycleDetected`. A `HasMany` child bound back to the parent that created it is not such a reference: `Employee → Department → HasMany Employee` inserts the department's employees with their `DepartmentID` set to that department. Because that binding is structural, a `Use` or `Ref` on the child's back-reference (for example `Ref("employees", Use("department", d))`) is rejected with `ErrInvalidOption` instead of being ignored
 
 The execution model and graph expansion rules are documented in [ARCHITECTURE.md](../ARCHITECTURE.md).
 
@@ -192,7 +196,7 @@ When you use `database/sql`, [`WithTx`](https://pkg.go.dev/github.com/mhiro2/see
 - `Result.Cleanup` / `CleanupE`: delete inserted rows in reverse dependency order when transaction rollback is not available. Every blueprint in the inserted graph must define `Delete` (records supplied through `Use` are skipped); the callbacks are validated up front, so a missing one fails with `ErrDeleteNotDefined` before any row is deleted
 - `BatchResult.DebugString`: inspect the full batch execution graph with primary-key values
 - `BatchResult.Node(name)`: searches across the full batch, so use it only when cross-root ambiguity is acceptable
-- `BatchResult.NodeAt(rootIndex, name)` / `NodesForRoot(rootIndex, name)`: inspect one root and its shared ancestors without mixing in sibling roots
+- `BatchResult.NodeAt(rootIndex, name)` / `NodesForRoot(rootIndex, name)`: inspect one root, its shared ancestors, and the records generated under those ancestors (such as their `HasMany` children) without mixing in sibling roots
 - `BatchResult.Cleanup` / `CleanupE`: delete rows inserted by `InsertManyE`; the same `Delete` requirement applies, and cleanup is fail-fast and stops at the first delete error
 
 ## CLI

@@ -20,10 +20,15 @@ func (e *expander) expandRelation(
 	// A structural back-reference binds the child to the parent that created it
 	// (e.g. an employee's belongs_to(department) inside department's has_many).
 	// This FK must always be set, independent of When/Omit on the child relation,
-	// otherwise the auto-generated child would be orphaned with a zero FK.
+	// otherwise the auto-generated child would be orphaned with a zero FK. A Use
+	// or Ref on that relation would have to replace or rebuild the parent that
+	// already exists, so it is rejected instead of silently dropped.
 	bound, err := e.bindRelationNode(bp.Name, node, rel, bindings)
-	if err != nil || bound {
+	if err != nil {
 		return err
+	}
+	if bound {
+		return boundRelationOverride(bp.Name, rel.Name, bindings[rel.Name].BlueprintName, opts)
 	}
 
 	shouldExpand, err := relationExpansion(node.Value, rel, opts)
@@ -44,6 +49,21 @@ func (e *expander) expandRelation(
 	default:
 		return fmt.Errorf("%w: unsupported relation kind %q on blueprint %q", errx.ErrInvalidOption, rel.Kind, bp.Name)
 	}
+}
+
+// boundRelationOverride reports a Use or Ref given for a relation that is
+// already bound to the parent that created the node.
+func boundRelationOverride(blueprint, relation, parent string, opts *OptionSet) error {
+	var option string
+	switch {
+	case relationUsed(opts, relation):
+		option = "Use"
+	case relationReferenced(opts, relation):
+		option = "Ref"
+	default:
+		return nil
+	}
+	return fmt.Errorf("validate relation %q options: %w", relation, errx.BoundRelationOverride(blueprint, relation, parent, option))
 }
 
 // relationExpansion reports whether a relation that is not a structural
@@ -410,8 +430,8 @@ func shareableOptionSet(opts *OptionSet) bool {
 	if len(opts.Seqs) > 0 {
 		return false
 	}
-	for _, value := range opts.Sets {
-		if !shareableValue(value) {
+	for _, set := range opts.Sets {
+		if !shareableValue(set.Value) {
 			return false
 		}
 	}

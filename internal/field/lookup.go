@@ -6,6 +6,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/mhiro2/seedling/internal/clone"
 	"github.com/mhiro2/seedling/internal/errx"
 )
 
@@ -209,9 +210,20 @@ func Copy(src any, srcName string, dstPtr any, dstName string) error {
 	if !dstField.CanSet() {
 		return fmt.Errorf("%w: field %q is unexported", errx.ErrFieldNotFound, dstName)
 	}
-	if dstField.Kind() == reflect.Pointer && srcField.Type().AssignableTo(dstField.Type().Elem()) {
+	// The destination always receives storage of its own. Sharing a parent's
+	// pointer, slice, or map would let the child's Insert rewrite the parent's
+	// key, both in the returned result and in the value cleanup deletes.
+	value := srcField
+	//nolint:exhaustive // only reference kinds carry storage that could be shared
+	switch srcField.Kind() {
+	case reflect.Pointer, reflect.Slice, reflect.Map:
+		if !srcField.IsNil() {
+			value = reflect.ValueOf(clone.Value(srcField.Interface()))
+		}
+	}
+	if dstField.Kind() == reflect.Pointer && value.Type().AssignableTo(dstField.Type().Elem()) {
 		wrapped := reflect.New(dstField.Type().Elem())
-		wrapped.Elem().Set(srcField)
+		wrapped.Elem().Set(value)
 		dstField.Set(wrapped)
 		return nil
 	}
@@ -219,7 +231,7 @@ func Copy(src any, srcName string, dstPtr any, dstName string) error {
 		return fmt.Errorf("set field %q: %w", dstName, errx.TypeMismatch(dstName, dstField.Type().String(), srcField.Type().String()))
 	}
 
-	dstField.Set(srcField)
+	dstField.Set(value)
 	return nil
 }
 

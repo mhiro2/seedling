@@ -223,6 +223,46 @@ func TestCopy_WrapsValueForNullableDestination(t *testing.T) {
 	}
 }
 
+func TestCopy_PointerSourceGetsIndependentDestinationStorage(t *testing.T) {
+	type source struct {
+		ID *int
+	}
+	type destination struct {
+		SourceID *int
+	}
+
+	id := 42
+	var dst destination
+	if err := field.Copy(source{ID: &id}, "ID", &dst, "SourceID"); err != nil {
+		t.Fatal(err)
+	}
+	if dst.SourceID == nil || *dst.SourceID != 42 {
+		t.Fatalf("SourceID = %v, want pointer to 42", dst.SourceID)
+	}
+	if dst.SourceID == &id {
+		t.Fatal("destination shares the source pointer")
+	}
+
+	type nestedDestination struct {
+		SourceID **int
+	}
+	var nested nestedDestination
+	if err := field.Copy(source{ID: &id}, "ID", &nested, "SourceID"); err != nil {
+		t.Fatal(err)
+	}
+	if nested.SourceID == nil || *nested.SourceID == &id || **nested.SourceID != 42 {
+		t.Fatalf("SourceID = %v, want a fresh pointer to a fresh 42", nested.SourceID)
+	}
+
+	var nilDst destination
+	if err := field.Copy(source{}, "ID", &nilDst, "SourceID"); err != nil {
+		t.Fatal(err)
+	}
+	if nilDst.SourceID != nil {
+		t.Fatalf("SourceID = %v, want nil", nilDst.SourceID)
+	}
+}
+
 func TestCopy_NilEmbeddedPointerSourceReturnsError(t *testing.T) {
 	type embedded struct {
 		ID int
