@@ -96,7 +96,7 @@ func (s Session[T]) InsertManyE(ctx context.Context, db DBTX, n int, opts ...Opt
 	internalOpts := make([]*planner.OptionSet, n)
 
 	for i := range n {
-		prepared, err := prepareRootOptions(s.registry, rootType, opts, i)
+		prepared, err := resolveRootOptions(s.registry, rootType, opts, i)
 		if err != nil {
 			return zero, err
 		}

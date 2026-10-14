@@ -258,6 +258,14 @@ func TestRef_RejectsRootOnlyOptions(t *testing.T) {
 			name: "insert_log",
 			opt:  seedling.WithInsertLog(func(seedling.InsertLog) {}),
 		},
+		{
+			name: "only",
+			opt:  seedling.Only(),
+		},
+		{
+			name: "inside_inline_trait",
+			opt:  seedling.InlineTrait(seedling.WithContext(ctx)),
+		},
 	}
 
 	for _, tt := range tests {

@@ -26,7 +26,7 @@ At a high level:
 
 `BuildE[T]` resolves the root blueprint, collects options, and delegates graph construction to `internal/planner`.
 
-Root options go through one expansion pass shared by `BuildE`, `InsertOneE`, and `InsertManyE`: traits expand in place, `Ref` options are expanded against the relation's blueprint, and for `InsertMany` each record's `Seq`, `SeqRef`, and `SeqUse` are resolved during the same pass. Validation and root-only options such as `WithContext` read the expanded result, so an option behaves the same whether it is written directly or inside a trait.
+Root options go through one resolution pass shared by `BuildE`, `InsertOneE`, and `InsertManyE`. Each option resolves itself into the option set of its node in written order: traits expand in place, `Ref` options resolve into the child option set of their relation against that relation's blueprint, and for `InsertMany` each record's `Seq`, `SeqRef`, and `SeqUse` become the `Set`, `Ref`, and `Use` they produce. Placement rules are checked as each option resolves — root-only options (`WithContext`, `AfterInsert`, `WithInsertLog`, `Only`) are rejected under `Ref`, sequence options outside `InsertMany`, and after-insert callbacks for another type — so an option behaves the same whether it is written directly or inside a trait. The resolved tree is then converted to the planner's option sets, which carry only plain node options.
 
 `Plan[T]` is intentionally reusable:
 

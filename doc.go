@@ -223,6 +223,17 @@
 // inferred blueprint relations before generating code. Use `--json` for the
 // same report in machine-readable form.
 //
+// # Option Precedence
+//
+// Every insert path — [InsertOne], [InsertMany], [Build], and [Builder] —
+// resolves options the same way. Options apply in the order they are written,
+// and [BlueprintTrait] and [InlineTrait] expand in place, so a later option
+// overrides an earlier one. Field values are applied in fixed stages
+// regardless of that order: blueprint Defaults, then [Generate], then [Set],
+// then [With]. [WithContext], [AfterInsert], [AfterInsertE], [WithInsertLog],
+// and [Only] apply only to the root record and return [ErrInvalidOption] under
+// [Ref].
+//
 // # Related APIs
 //
 // Frequently used APIs:
