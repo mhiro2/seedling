@@ -11,50 +11,10 @@ import (
 
 // Option configures how a record is built and inserted.
 type Option interface {
-	applyOption(o *optionSet)
-}
-
-// optionSet collects all options for a single node.
-type optionSet struct {
-	sets         []planner.FieldSet                 // Set options in the order they were written
-	uses         map[string]any                     // relation name → existing value
-	refs         map[string][]Option                // relation name → nested options
-	omits        map[string]bool                    // relation name → true
-	whens        map[string]func(any) (bool, error) // relation name → dynamic expansion predicate
-	withFns      []withFn                           // typed root mutators
-	ctx          context.Context                    // optional context for insert operations
-	seqs         map[string]any                     // field name → func(int) T (sequence generators)
-	seqRefs      map[string]any                     // relation name → func(int) []Option
-	seqUses      map[string]any                     // relation name → func(int) T
-	afterInserts []any                              // func(T, DBTX) closures run after insert
-	genFns       []generateFn                       // typed rand-driven mutators
-	rand         *rand.Rand                         // optional RNG for Generate options
-	traits       []string                           // blueprint trait names left unexpanded (always empty after optionExpander)
-	logFn        func(InsertLog)                    // optional insert log callback
-	only         map[string]bool                    // Only option: nil = insert all, non-nil = insert only specified relations
-}
-
-type withFn func(value any) (any, error)
-
-type generateFn func(r *rand.Rand, value any) (any, error)
-
-func newOptionSet() *optionSet {
-	return &optionSet{
-		uses:    make(map[string]any),
-		refs:    make(map[string][]Option),
-		omits:   make(map[string]bool),
-		seqs:    make(map[string]any),
-		seqRefs: make(map[string]any),
-		seqUses: make(map[string]any),
-	}
-}
-
-func collectOptions(opts []Option) *optionSet {
-	os := newOptionSet()
-	for _, o := range opts {
-		o.applyOption(os)
-	}
-	return os
+	// applyOption resolves the option into the node's option set. Structural
+	// options (traits, sequences, Ref) resolve their nested options through r,
+	// and options limited to the root record reject any other placement.
+	applyOption(r *optionResolver, o *optionSet) error
 }
 
 // Set overrides a struct field value by its Go field name.
@@ -72,8 +32,9 @@ type setOption struct {
 	value any
 }
 
-func (s setOption) applyOption(o *optionSet) {
+func (s setOption) applyOption(_ *optionResolver, o *optionSet) error {
 	o.sets = append(o.sets, planner.FieldSet{Field: s.field, Value: s.value})
+	return nil
 }
 
 // Use provides an existing record for a direct relation, skipping auto-creation.
@@ -88,16 +49,18 @@ type useOption struct {
 	value any
 }
 
-func (u useOption) applyOption(o *optionSet) {
+func (u useOption) applyOption(_ *optionResolver, o *optionSet) error {
 	o.uses[u.name] = u.value
+	return nil
 }
 
 // Ref applies nested options to a specific relation's blueprint.
 // It also enables expansion for optional relations.
 //
 // Options that only apply to the root record — [WithContext], [AfterInsert],
-// [AfterInsertE], and [WithInsertLog] — cannot appear under Ref (including
-// inside traits resolved for that relation) and return [ErrInvalidOption].
+// [AfterInsertE], [WithInsertLog], and [Only] — cannot appear under Ref
+// (including inside traits resolved for that relation) and return
+// [ErrInvalidOption].
 //
 //	seedling.Ref("project", seedling.Set("Name", "renewal"))
 func Ref(name string, opts ...Option) Option {
@@ -109,8 +72,11 @@ type refOption struct {
 	opts []Option
 }
 
-func (r refOption) applyOption(o *optionSet) {
-	o.refs[r.name] = append(o.refs[r.name], r.opts...)
+func (r refOption) applyOption(res *optionResolver, o *optionSet) error {
+	if err := res.resolve(r.opts, res.refTarget(o, r.name)); err != nil {
+		return fmt.Errorf("resolve options for ref %q: %w", r.name, err)
+	}
+	return nil
 }
 
 // Omit prevents auto-creation of an optional relation.
@@ -124,8 +90,9 @@ type omitOption struct {
 	name string
 }
 
-func (om omitOption) applyOption(o *optionSet) {
+func (om omitOption) applyOption(_ *optionResolver, o *optionSet) error {
 	o.omits[om.name] = true
+	return nil
 }
 
 // When conditionally expands a relation based on the current record's state.
@@ -157,11 +124,12 @@ type whenOption struct {
 	fn   func(any) (bool, error)
 }
 
-func (w whenOption) applyOption(o *optionSet) {
+func (w whenOption) applyOption(_ *optionResolver, o *optionSet) error {
 	if o.whens == nil {
 		o.whens = make(map[string]func(any) (bool, error))
 	}
 	o.whens[w.name] = w.fn
+	return nil
 }
 
 // With applies a type-safe modification function to the root struct.
@@ -175,13 +143,14 @@ type withOption[T any] struct {
 	fn func(*T)
 }
 
-func (w withOption[T]) applyOption(o *optionSet) {
+func (w withOption[T]) applyOption(_ *optionResolver, o *optionSet) error {
 	o.withFns = append(o.withFns, func(value any) (any, error) {
 		return applyTypedMutation("With", value, func(target *T) error {
 			w.fn(target)
 			return nil
 		})
 	})
+	return nil
 }
 
 // WithContext sets the context used for insert operations. It applies wherever
@@ -200,13 +169,17 @@ type contextOption struct {
 	ctx context.Context
 }
 
-func (c contextOption) applyOption(o *optionSet) {
+func (c contextOption) applyOption(_ *optionResolver, o *optionSet) error {
+	if !o.root {
+		return rootOnlyError("with-context")
+	}
 	// A nil context still counts as given, so it overrides the caller's ctx
 	// the same way any other WithContext does.
 	o.ctx = c.ctx
 	if o.ctx == nil {
 		o.ctx = context.Background()
 	}
+	return nil
 }
 
 // Seq sets a field value based on the index when used with InsertMany.
@@ -224,8 +197,12 @@ type seqOption struct {
 	fn    func(int) any
 }
 
-func (s seqOption) applyOption(o *optionSet) {
-	o.seqs[s.field] = s.fn
+func (s seqOption) applyOption(r *optionResolver, o *optionSet) error {
+	i, err := r.sequenceIndex()
+	if err != nil {
+		return err
+	}
+	return setOption{field: s.field, value: s.fn(i)}.applyOption(r, o)
 }
 
 // SeqRef generates per-record Ref options when used with InsertMany.
@@ -245,8 +222,12 @@ type seqRefOption struct {
 	fn   func(int) []Option
 }
 
-func (s seqRefOption) applyOption(o *optionSet) {
-	o.seqRefs[s.name] = s.fn
+func (s seqRefOption) applyOption(r *optionResolver, o *optionSet) error {
+	i, err := r.sequenceIndex()
+	if err != nil {
+		return err
+	}
+	return refOption{name: s.name, opts: s.fn(i)}.applyOption(r, o)
 }
 
 // SeqUse provides per-record existing records for a relation when used with InsertMany.
@@ -264,8 +245,12 @@ type seqUseOption struct {
 	fn   func(int) any
 }
 
-func (s seqUseOption) applyOption(o *optionSet) {
-	o.seqUses[s.name] = s.fn
+func (s seqUseOption) applyOption(r *optionResolver, o *optionSet) error {
+	i, err := r.sequenceIndex()
+	if err != nil {
+		return err
+	}
+	return useOption{name: s.name, value: s.fn(i)}.applyOption(r, o)
 }
 
 // AfterInsert registers a callback that runs after the root record is inserted.
@@ -284,8 +269,8 @@ type afterInsertOption[T any] struct {
 	fn func(T, DBTX)
 }
 
-func (a afterInsertOption[T]) applyOption(o *optionSet) {
-	o.afterInserts = append(o.afterInserts, a.fn)
+func (a afterInsertOption[T]) applyOption(r *optionResolver, o *optionSet) error {
+	return o.addAfterInsert(r, a.fn)
 }
 
 // AfterInsertE registers a callback that runs after the root record is inserted.
@@ -303,8 +288,8 @@ type afterInsertEOption[T any] struct {
 	fn func(T, DBTX) error
 }
 
-func (a afterInsertEOption[T]) applyOption(o *optionSet) {
-	o.afterInserts = append(o.afterInserts, a.fn)
+func (a afterInsertEOption[T]) applyOption(r *optionResolver, o *optionSet) error {
+	return o.addAfterInsert(r, a.fn)
 }
 
 // BlueprintTrait applies a named trait defined on the target blueprint.
@@ -323,8 +308,8 @@ type blueprintTraitOption struct {
 	name string
 }
 
-func (tr blueprintTraitOption) applyOption(o *optionSet) {
-	o.traits = append(o.traits, tr.name)
+func (tr blueprintTraitOption) applyOption(r *optionResolver, o *optionSet) error {
+	return r.resolveTrait(tr.name, o)
 }
 
 // InlineTrait creates a group of options that is expanded immediately.
@@ -341,10 +326,8 @@ type inlineTraitOption struct {
 	opts []Option
 }
 
-func (tr inlineTraitOption) applyOption(o *optionSet) {
-	for _, opt := range tr.opts {
-		opt.applyOption(o)
-	}
+func (tr inlineTraitOption) applyOption(r *optionResolver, o *optionSet) error {
+	return r.resolve(tr.opts, o)
 }
 
 // Generate applies a rand-driven mutation function to the current node before
@@ -362,13 +345,14 @@ type generateOption[T any] struct {
 	fn func(*rand.Rand, *T)
 }
 
-func (g generateOption[T]) applyOption(o *optionSet) {
+func (g generateOption[T]) applyOption(_ *optionResolver, o *optionSet) error {
 	o.genFns = append(o.genFns, func(r *rand.Rand, value any) (any, error) {
 		return applyTypedMutation("Generate", value, func(target *T) error {
 			g.fn(r, target)
 			return nil
 		})
 	})
+	return nil
 }
 
 // GenerateE applies a rand-driven mutation function that can return an error.
@@ -388,12 +372,13 @@ type generateEOption[T any] struct {
 	fn func(*rand.Rand, *T) error
 }
 
-func (g generateEOption[T]) applyOption(o *optionSet) {
+func (g generateEOption[T]) applyOption(_ *optionResolver, o *optionSet) error {
 	o.genFns = append(o.genFns, func(r *rand.Rand, value any) (any, error) {
 		return applyTypedMutation("Generate", value, func(target *T) error {
 			return g.fn(r, target)
 		})
 	})
+	return nil
 }
 
 // WithRand sets the RNG used by Generate options on the current node.
@@ -405,8 +390,9 @@ type randOption struct {
 	rand *rand.Rand
 }
 
-func (r randOption) applyOption(o *optionSet) {
+func (r randOption) applyOption(_ *optionResolver, o *optionSet) error {
 	o.rand = r.rand
+	return nil
 }
 
 // WithSeed is a convenience wrapper around WithRand(rand.New(rand.NewPCG(seed, seed^goldenGamma))).
@@ -444,8 +430,12 @@ type insertLogOption struct {
 	fn func(InsertLog)
 }
 
-func (l insertLogOption) applyOption(o *optionSet) {
+func (l insertLogOption) applyOption(_ *optionResolver, o *optionSet) error {
+	if !o.root {
+		return rootOnlyError("insert log")
+	}
 	o.logFn = l.fn
+	return nil
 }
 
 // Only restricts the planner to build only the root node and the specified
@@ -476,13 +466,17 @@ type onlyOption struct {
 	relations []string
 }
 
-func (o onlyOption) applyOption(os *optionSet) {
+func (o onlyOption) applyOption(_ *optionResolver, os *optionSet) error {
+	if !os.root {
+		return rootOnlyError("only")
+	}
 	if os.only == nil {
 		os.only = make(map[string]bool)
 	}
 	for _, r := range o.relations {
 		os.only[r] = true
 	}
+	return nil
 }
 
 func applyTypedMutation[T any](kind string, value any, fn func(*T) error) (any, error) {

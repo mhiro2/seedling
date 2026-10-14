@@ -424,12 +424,6 @@ func shareableOptionSet(opts *OptionSet) bool {
 	if len(opts.Uses) > 0 || len(opts.WithFns) > 0 || len(opts.GenFns) > 0 || len(opts.Whens) > 0 || opts.Rand != nil {
 		return false
 	}
-	// Seqs hold per-index func(int) any generators; their function values cannot
-	// be compared by reflect.DeepEqual, so option sets carrying Seqs must never
-	// participate in batch sharing.
-	if len(opts.Seqs) > 0 {
-		return false
-	}
 	for _, set := range opts.Sets {
 		if !shareableValue(set.Value) {
 			return false
