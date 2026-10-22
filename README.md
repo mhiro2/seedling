@@ -280,7 +280,7 @@ The [Guide](./docs/guide.md#debugging-and-cleanup) lists the full set of debuggi
 
 `make fmt` and `make lint` cover the root, `integration`, and `seedlingpgx` modules; `make test` runs the root and `seedlingpgx` unit tests. The integration suites run separately with `make test-integration-{postgres,mysql,sqlite}`. PostgreSQL and MySQL start containers with testcontainers and skip when Docker is unavailable; set `SEEDLING_INTEGRATION_REQUIRED=1` (as CI does) to turn that skip into a failure. SQLite runs in-process and never skips. Fuzz targets run weekly in CI and on demand with `make fuzz`.
 
-Releases are built from `vX.Y.Z` tags. Because `seedlingpgx` is a separate module, it pins the `seedling` version its consumers resolve; `make check-seedlingpgx-parent-version` reports whether that pin still matches the newest published release.
+Releases are built from `vX.Y.Z` tags, and `seedlingpgx/vX.Y.Z` is tagged on the same commit. Because `seedlingpgx` is a separate module, it pins the `seedling` version its consumers resolve, while a `replace` directive builds it against the in-repo root during development. Before tagging, set that pin to the release being cut; `make check-seedlingpgx-parent-version VERSION=vX.Y.Z` verifies it.
 
 ## 📝 License
 

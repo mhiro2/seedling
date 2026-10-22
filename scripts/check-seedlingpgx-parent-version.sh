@@ -33,37 +33,65 @@ if [[ -z "$required" ]]; then
   exit 1
 fi
 
-# A stable seedlingpgx release must build on a stable parent, so prereleases are
-# never candidates. The tag under release is excluded because it does not exist
-# yet from the perspective of the module graph.
-# Enumerating the remote is the only step that can fail for reasons unrelated to
-# the invariant, so its exit status is checked before anything reads the result.
+# The replace directive points seedlingpgx at the in-repo parent, so the
+# requirement can name a release that is not tagged yet. Consumers ignore it and
+# resolve the required version instead.
+replacement="$(
+  awk -v module="$parent_module" '
+    $1 == "replace" && $2 == module && $3 == "=>" { print $4; exit }
+    $1 == "replace" && $2 == "(" { in_block = 1; next }
+    in_block && $1 == ")" { in_block = 0; next }
+    in_block && $1 == module && $2 == "=>" { print $3; exit }
+  ' "$module_go_mod"
+)"
+if [[ "$replacement" != "../" && "$replacement" != ".." ]]; then
+  echo "${module_go_mod} must replace ${parent_module} with the in-repo module (../)" >&2
+  exit 1
+fi
+
+readonly update_hint="Run: (cd seedlingpgx && GOWORK=off go mod edit -require=${parent_module}@<version> && GOWORK=off go mod tidy)"
+
+# seedlingpgx/vX.Y.Z is tagged on the same commit as vX.Y.Z, so the release
+# must require exactly the parent version it ships alongside.
+if [[ -n "$release_tag" ]]; then
+  if [[ "$required" != "$release_tag" ]]; then
+    echo "${module_go_mod} requires ${parent_module} ${required}, expected ${release_tag}" >&2
+    echo "${update_hint/<version>/${release_tag}}" >&2
+    exit 1
+  fi
+  echo "${module_go_mod} requires ${parent_module} ${required}, matching the release tag"
+  exit 0
+fi
+
+# Without a release tag, the requirement names either the latest release or the
+# one being prepared, and must never fall behind what is already published.
 if ! remote_refs="$(git ls-remote --tags origin 'refs/tags/v*')"; then
   echo "Failed to list ${parent_module} tags from origin" >&2
   exit 1
 fi
 
-latest=""
-while read -r tag; do
-  if [[ "$tag" != "$release_tag" ]]; then
-    latest="$tag"
-  fi
-done < <(
+latest="$(
   printf '%s\n' "$remote_refs" |
     sed -e 's|^.*refs/tags/||' -e 's|\^{}$||' |
     grep -E "$stable_version_pattern" |
-    sort -V -u
-)
+    sort -V -u |
+    tail -n 1 ||
+    true
+)"
 
 if [[ -z "$latest" ]]; then
-  echo "No stable ${parent_module} release precedes ${release_tag:-this check}, so there is nothing to track yet"
+  echo "No stable ${parent_module} release is published yet, so there is nothing to compare against"
   exit 0
 fi
 
-if [[ "$required" != "$latest" ]]; then
-  echo "${module_go_mod} requires ${parent_module} ${required}, expected ${latest}" >&2
-  echo "Run: (cd seedlingpgx && GOWORK=off go get ${parent_module}@${latest} && GOWORK=off go mod tidy)" >&2
+# sort -V orders vX.Y.Z before vX.Y.Z-rc.N, so prereleases are compared by
+# their core version and count as behind a stable release of that version.
+required_core="${required%%-*}"
+if [[ "$(printf '%s\n%s\n' "$latest" "$required_core" | sort -V | head -n 1)" != "$latest" ||
+  ("$required_core" == "$latest" && "$required" != "$latest") ]]; then
+  echo "${module_go_mod} requires ${parent_module} ${required}, older than the latest published ${latest}" >&2
+  echo "${update_hint}" >&2
   exit 1
 fi
 
-echo "${module_go_mod} requires ${parent_module} ${required}, matching the latest published tag"
+echo "${module_go_mod} requires ${parent_module} ${required}, not behind the latest published ${latest}"
