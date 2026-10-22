@@ -10,7 +10,7 @@ GO_LICENSES_FLAGS := --include_tests --disallowed_types=unknown,restricted,forbi
 
 COVERPROFILE := coverage.out
 
-.PHONY: help tools fmt fmt-root fmt-integration fmt-seedlingpgx fmt-check fmt-check-root fmt-check-integration fmt-check-seedlingpgx lint lint-root lint-integration lint-seedlingpgx check-licenses check-licenses-root check-licenses-integration check-licenses-seedlingpgx check-seedlingpgx-parent-version test test-root test-seedlingpgx test-seedlingpgx-inrepo test-integration-postgres test-integration-mysql test-integration-sqlite test-integration bench fuzz clean
+.PHONY: help tools fmt fmt-root fmt-integration fmt-seedlingpgx fmt-check fmt-check-root fmt-check-integration fmt-check-seedlingpgx lint lint-root lint-integration lint-seedlingpgx check-licenses check-licenses-root check-licenses-integration check-licenses-seedlingpgx check-seedlingpgx-parent-version test test-root test-seedlingpgx test-integration-postgres test-integration-mysql test-integration-sqlite test-integration bench fuzz clean
 
 help:
 	@printf '%s\n' \
@@ -20,8 +20,8 @@ help:
 		'  make fmt-check        Check formatting in all maintained modules' \
 		'  make lint             Lint all maintained modules' \
 		'  make check-licenses   Check licenses in all maintained modules' \
-		'  make check-seedlingpgx-parent-version  Check seedlingpgx tracks the latest published seedling release' \
-		'  make test             Run root and seedlingpgx unit tests against published and in-repo dependencies' \
+		'  make check-seedlingpgx-parent-version [VERSION=vX.Y.Z]  Check seedlingpgx requires the seedling release being cut' \
+		'  make test             Run root and seedlingpgx unit tests' \
 		'  make test-integration-postgres Run PostgreSQL integration tests' \
 		'  make test-integration-mysql    Run MySQL integration tests' \
 		'  make test-integration-sqlite   Run SQLite integration tests' \
@@ -90,24 +90,15 @@ check-licenses-seedlingpgx:
 	cd seedlingpgx && $(GO_LICENSES) check ./... $(GO_LICENSES_FLAGS) --ignore=github.com/mhiro2/seedling/seedlingpgx
 
 check-seedlingpgx-parent-version:
-	bash scripts/check-seedlingpgx-parent-version.sh
+	bash scripts/check-seedlingpgx-parent-version.sh $(VERSION)
 
-test: test-root test-seedlingpgx test-seedlingpgx-inrepo
+test: test-root test-seedlingpgx
 
 test-root:
 	$(GOTESTSUM) -- -race -shuffle=on -count=1 -covermode=atomic -coverprofile=$(COVERPROFILE) ./...
 
 test-seedlingpgx:
 	cd seedlingpgx && GOWORK=off $(GOTESTSUM) -- -race -shuffle=on -count=1 -covermode=atomic -coverprofile=$(COVERPROFILE) ./...
-
-test-seedlingpgx-inrepo:
-	@set -eu; \
-	SEEDLINGPGX_WORKSPACE=$$(mktemp -d); \
-	trap 'rm -rf -- "$${SEEDLINGPGX_WORKSPACE:?}"' EXIT; \
-	cd "$$SEEDLINGPGX_WORKSPACE"; \
-	GOWORK=off $(GO) work init "$(abspath .)" "$(abspath seedlingpgx)"; \
-	cd "$(abspath seedlingpgx)"; \
-	GOWORK="$$SEEDLINGPGX_WORKSPACE/go.work" $(GO) test -mod=readonly -race -shuffle=on -count=1 ./...
 
 test-integration-postgres:
 	cd integration && $(GOTESTSUM) -- -race --shuffle=on -tags=integration -count=1 ./postgres/...
