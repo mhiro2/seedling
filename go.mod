@@ -2,6 +2,8 @@ module github.com/mhiro2/seedling
 
 go 1.26.0
 
+toolchain go1.26.10
+
 require (
 	github.com/goccy/go-yaml v1.19.2
 	golang.org/x/tools v0.52.0
