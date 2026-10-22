@@ -397,7 +397,7 @@ func entFieldsBySchemaName(entity *types.Struct, schemaFields []EntField) (map[s
 		if !field.Exported() || field.Name() == "Edges" || field.Name() == "ID" && !hasExplicitID {
 			continue
 		}
-		jsonName := strings.Split(reflect.StructTag(entity.Tag(i)).Get("json"), ",")[0]
+		jsonName, _, _ := strings.Cut(reflect.StructTag(entity.Tag(i)).Get("json"), ",")
 		generated = append(generated, generatedEntField{field: field, jsonName: jsonName})
 	}
 
