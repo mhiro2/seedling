@@ -84,5 +84,7 @@ formatters:
       local-prefixes:
         - "github.com/mhiro2/seedling"
     gofumpt:
-      extra-rules: true
+      extra:
+        group-params: true
+        clothe-returns: true
       module-path: "github.com/mhiro2/seedling"
