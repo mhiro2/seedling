@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 )
@@ -23,19 +24,36 @@ func TestCliVersion_ExplicitVersion(t *testing.T) {
 	}
 }
 
-func TestCliVersion_DevFallback(t *testing.T) {
-	// Arrange
-	prev := version
-	version = "dev"
-	t.Cleanup(func() { version = prev })
+func TestCliVersion_BuildInfoFallback(t *testing.T) {
+	tests := []struct {
+		name      string
+		version   string
+		buildInfo *debug.BuildInfo
+		want      string
+	}{
+		{name: "no build info", version: "dev", buildInfo: nil, want: "dev"},
+		{name: "empty module version", version: "dev", buildInfo: &debug.BuildInfo{}, want: "dev"},
+		{name: "devel module version", version: "dev", buildInfo: &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}}, want: "dev"},
+		{name: "module version", version: "dev", buildInfo: &debug.BuildInfo{Main: debug.Module{Version: "v1.4.0"}}, want: "v1.4.0"},
+		{name: "ldflags version wins", version: "v2.0.0", buildInfo: &debug.BuildInfo{Main: debug.Module{Version: "v1.4.0"}}, want: "v2.0.0"},
+	}
 
-	// Act
-	got := cliVersion()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			prevVersion, prevReadBuildInfo := version, readBuildInfo
+			t.Cleanup(func() { version, readBuildInfo = prevVersion, prevReadBuildInfo })
+			version = tt.version
+			readBuildInfo = func() (*debug.BuildInfo, bool) { return tt.buildInfo, tt.buildInfo != nil }
 
-	// Assert
-	// In test context, ReadBuildInfo may return (devel), so we expect "dev" fallback
-	if got == "" {
-		t.Fatal("cliVersion should not return empty string")
+			// Act
+			got := cliVersion()
+
+			// Assert
+			if got != tt.want {
+				t.Fatalf("got %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
