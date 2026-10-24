@@ -480,20 +480,59 @@ func TestGenerateGorm_OmitsTimeImportForTimeKeysOnly(t *testing.T) {
 	}
 }
 
-func TestToSnakeCase(t *testing.T) {
-	tests := []struct {
-		input, want string
-	}{
-		{"ID", "i_d"},
-		{"Name", "name"},
-		{"CompanyID", "company_i_d"},
-		{"CreatedAt", "created_at"},
+func TestParseGormDir_DefaultNamesFollowGormNamingStrategy(t *testing.T) {
+	// Arrange: without TableName methods or column tags, GORM's default
+	// NamingStrategy keeps initialisms together and pluralizes table names
+	// with English inflection rules.
+	dir := t.TempDir()
+	writeFile(t, dir, "models.go", "package models\n\n"+
+		"type APIKey struct {\n"+
+		"\tID         uint\n"+
+		"\tCompanyID  uint\n"+
+		"\tHTTPServer string\n"+
+		"\tUTF8Name   string\n"+
+		"\tLabel      string `gorm:\"column:display_label\"`\n"+
+		"}\n\n"+
+		"type Company struct{ ID uint }\n\n"+
+		"type Person struct{ ID uint }\n\n"+
+		"type OrderItem struct{ ID uint }\n")
+
+	// Act
+	models, err := ParseGormDir(dir)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, tt := range tests {
-		got := toSnakeCase(tt.input)
-		if got != tt.want {
-			t.Errorf("toSnakeCase(%q) = %q, want %q", tt.input, got, tt.want)
-		}
+
+	// Assert: the expected names are what gorm.io/gorm/schema.NamingStrategy{}
+	// returns from TableName and ColumnName for the same Go names.
+	tables := make(map[string]string, len(models))
+	for _, model := range models {
+		tables[model.Name] = model.Table
+	}
+	wantTables := map[string]string{
+		"APIKey":    "api_keys",
+		"Company":   "companies",
+		"Person":    "people",
+		"OrderItem": "order_items",
+	}
+	if !maps.Equal(tables, wantTables) {
+		t.Fatalf("tables = %v, want %v", tables, wantTables)
+	}
+
+	apiKey := models[slices.IndexFunc(models, func(m GormModel) bool { return m.Name == "APIKey" })]
+	columns := make(map[string]string, len(apiKey.Fields))
+	for _, field := range apiKey.Fields {
+		columns[field.Name] = field.ColumnName
+	}
+	wantColumns := map[string]string{
+		"ID":         "id",
+		"CompanyID":  "company_id",
+		"HTTPServer": "http_server",
+		"UTF8Name":   "utf8_name",
+		"Label":      "display_label",
+	}
+	if !maps.Equal(columns, wantColumns) {
+		t.Fatalf("columns = %v, want %v", columns, wantColumns)
 	}
 }
 
