@@ -68,6 +68,34 @@ func TestGeneratorOutputsCompile(t *testing.T) {
 		ensureCompiles(t, "sql_keywords", buf.String())
 	})
 
+	t.Run("sql tables without a primary key", func(t *testing.T) {
+		// Arrange
+		tables, err := ParseSchema(`
+CREATE TABLE legacy_users (
+    id BIGINT NOT NULL,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE audit_logs (
+    message TEXT NOT NULL
+);
+
+CREATE TABLE configs ();
+`)
+		if err != nil {
+			t.Fatalf("ParseSchema: %v", err)
+		}
+
+		// Act
+		var buf strings.Builder
+		if err := Generate(&buf, "compile", tables); err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+
+		// Assert
+		ensureCompilesAndRuns(t, "sql_without_pk", buf.String(), sqlWithoutPKLifecycleTest)
+	})
+
 	t.Run("sqlc", func(t *testing.T) {
 		tables := []Table{
 			{
@@ -243,6 +271,36 @@ replace gorm.io/gorm => %s
 		t.Fatalf("go test compile %s: %v\n%s", name, err, output)
 	}
 }
+
+const sqlWithoutPKLifecycleTest = `package compile
+
+import (
+	"testing"
+
+	"github.com/mhiro2/seedling"
+)
+
+func validateAndInsert[T any](t *testing.T, reg *seedling.Registry) {
+	t.Helper()
+	plan, err := seedling.NewSession[T](reg).BuildE()
+	if err != nil {
+		t.Fatalf("build %T plan: %v", *new(T), err)
+	}
+	if err := plan.Validate(); err != nil {
+		t.Fatalf("validate %T plan: %v", *new(T), err)
+	}
+	if _, err := seedling.NewSession[T](reg).InsertOneE(t.Context(), nil); err != nil {
+		t.Fatalf("insert %T: %v", *new(T), err)
+	}
+}
+
+func TestGeneratedBlueprintsWithoutPrimaryKey(t *testing.T) {
+	reg := NewRegistry()
+	validateAndInsert[LegacyUser](t, reg)
+	validateAndInsert[AuditLog](t, reg)
+	validateAndInsert[Config](t, reg)
+}
+`
 
 const sqlcLifecycleTest = `package compile
 

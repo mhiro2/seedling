@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -303,29 +305,68 @@ CREATE TABLE tags (
 	}
 }
 
-func TestNormalizeTableModels_ZeroColumnTableDefaultsPK(t *testing.T) {
+func TestGenerate_PrimaryKeyFallback(t *testing.T) {
 	// Arrange
-	tables := []Table{
-		{
-			Name:        "configs",
-			GoName:      "Config",
-			BlueprintID: "config",
-		},
-	}
+	tables := mustParseSchema(t, `
+CREATE TABLE users (
+    user_key BIGINT PRIMARY KEY
+);
+
+CREATE TABLE legacy_users (
+    id BIGINT NOT NULL,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE audit_logs (
+    message TEXT NOT NULL
+);
+
+CREATE TABLE configs ();
+`)
 
 	// Act
-	models := normalizeTableModels(tables)
+	var buf bytes.Buffer
+	if err := Generate(&buf, "blueprints", tables); err != nil {
+		t.Fatalf("Generate error: %v", err)
+	}
 
-	// Assert
-	if len(models) != 1 {
-		t.Fatalf("expected 1 model, got %d", len(models))
+	// Assert: each blueprint names only a key field its struct has.
+	output := buf.String()
+	tests := []struct {
+		blueprint string
+		want      string
+	}{
+		{blueprint: "user", want: `PKField: "UserKey"`},
+		{blueprint: "legacy_user", want: `PKField: "ID"`},
+		{blueprint: "audit_log", want: ""},
+		{blueprint: "config", want: ""},
 	}
-	if len(models[0].Fields) != 0 {
-		t.Fatalf("expected no fields, got %d", len(models[0].Fields))
+	for _, tt := range tests {
+		block := generatedBlueprintBlock(t, output, tt.blueprint)
+		if tt.want == "" {
+			if strings.Contains(block, "PKField") {
+				t.Errorf("blueprint %q should declare no primary key, got:\n%s", tt.blueprint, block)
+			}
+			continue
+		}
+		if !strings.Contains(block, tt.want) {
+			t.Errorf("blueprint %q should contain %q, got:\n%s", tt.blueprint, tt.want, block)
+		}
 	}
-	if len(models[0].PKFields) != 1 || models[0].PKFields[0] != "ID" {
-		t.Fatalf("expected PKFields to default to ID, got %v", models[0].PKFields)
+}
+
+// generatedBlueprintBlock returns the MustRegisterTo call that registers the
+// named blueprint in generated output.
+func generatedBlueprintBlock(t *testing.T, output, name string) string {
+	t.Helper()
+	nameField := regexp.MustCompile(`\bName:\s+` + regexp.QuoteMeta(strconv.Quote(name)) + `,`)
+	for block := range strings.SplitSeq(output, "seedling.MustRegisterTo(") {
+		if nameField.MatchString(block) {
+			return block
+		}
 	}
+	t.Fatalf("blueprint %q not found in output:\n%s", name, output)
+	return ""
 }
 
 func TestParseSchema_GoKeywordIdentifiersRemainValidGoNames(t *testing.T) {

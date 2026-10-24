@@ -84,8 +84,8 @@ func RegisterBlueprints(reg *seedling.Registry) {
 		Table: {{quote $model.TableName}},
 {{- if isCompositePK $model}}
 		PKFields: []string{ {{- range $i, $field := $model.PKFields}}{{if $i}}, {{end}}{{quote $field}}{{end}} },
-{{- else}}
-		PKField: {{quote (pkField $model)}},
+{{- else if $model.PKFields}}
+		PKField: {{quote (index $model.PKFields 0)}},
 {{- end}}
 		Defaults: func() {{$model.TypeExpr}} {
 			return {{ defaultLiteral $model }}
@@ -138,9 +138,6 @@ func generateNormalizedCode(w io.Writer, kind, pkg string, imports []string, mod
 	}
 
 	blueprints, err := renderNormalizedTemplate("blueprints", normalizedBlueprintTemplate, models, template.FuncMap{
-		"pkField": func(model normalizedModel) string {
-			return normalizedPKField(model.PKFields)
-		},
 		"isCompositePK": func(model normalizedModel) bool {
 			return len(model.PKFields) > 1
 		},
@@ -734,6 +731,9 @@ func normalizeEntModels(schemas []EntSchema) []normalizedModel {
 	return models
 }
 
+// normalizedPKFields returns the declared primary key columns, falling back to
+// a conventional id column. A table with neither gets no key, so the generated
+// blueprint never names a field its struct lacks.
 func normalizedPKFields(columns []Column) []string {
 	fields := make([]string, 0, len(columns))
 	for _, column := range columns {
@@ -741,17 +741,15 @@ func normalizedPKFields(columns []Column) []string {
 			fields = append(fields, column.GoName)
 		}
 	}
-	if len(fields) == 0 {
-		return []string{"ID"}
+	if len(fields) > 0 {
+		return fields
 	}
-	return fields
-}
-
-func normalizedPKField(fields []string) string {
-	if len(fields) == 0 {
-		return "ID"
+	for _, column := range columns {
+		if strings.EqualFold(column.Name, "id") {
+			return []string{column.GoName}
+		}
 	}
-	return fields[0]
+	return nil
 }
 
 // mapSqlcModelFields pairs each schema column with the struct field sqlc
