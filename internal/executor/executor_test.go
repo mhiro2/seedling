@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -358,79 +360,107 @@ func TestExecute_ContextCanceledDuringInsert(t *testing.T) {
 	}
 }
 
-func TestExecute_InsertError(t *testing.T) {
-	// Arrange
-	g := graph.New()
-	g.AddNode(&graph.Node{ID: "company", BlueprintName: "company", Value: Company{Name: "fail"}, PKField: "ID"})
-
-	lookup := &mockLookup{
-		bps: map[string]*planner.BlueprintDef{
-			"company": {
-				Name:     "company",
-				PKFields: []string{"ID"},
-				Insert: func(ctx context.Context, db, v any) (any, error) {
-					return nil, errors.New("db error")
-				},
-			},
+func TestExecute_InsertErrorReturnsPartialResult(t *testing.T) {
+	tests := []struct {
+		name          string
+		failing       string
+		wantCalls     []string
+		wantCompleted []string
+	}{
+		{
+			name:          "first insert fails before anything completes",
+			failing:       "company",
+			wantCalls:     []string{"company"},
+			wantCompleted: []string{},
+		},
+		{
+			name:          "child insert fails after its root parent completes",
+			failing:       "user",
+			wantCalls:     []string{"company", "user"},
+			wantCompleted: []string{"company"},
 		},
 	}
 
-	// Act
-	_, err := executor.Execute(t.Context(), nil, g, lookup, nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			g := graph.New()
+			company := &graph.Node{ID: "company", BlueprintName: "company", Value: Company{Name: "acme"}, PKField: "ID"}
+			user := &graph.Node{ID: "user", BlueprintName: "user", Value: User{Name: "alice"}, PKField: "ID"}
+			g.AddNode(company)
+			g.AddNode(user)
+			g.AddEdge(company, user, "CompanyID")
 
-	// Assert
-	if !errors.Is(err, errx.ErrInsertFailed) {
-		t.Fatalf("got %v, want %v", err, errx.ErrInsertFailed)
-	}
-}
+			insertErr := errors.New("insert " + tt.failing)
+			lookup := newTestLookup()
+			var calls []string
+			for _, name := range []string{"company", "user"} {
+				bp := lookup.bps[name]
+				insert := bp.Insert
+				bp.Insert = func(ctx context.Context, db, v any) (any, error) {
+					calls = append(calls, name)
+					if name == tt.failing {
+						return nil, insertErr
+					}
+					return insert(ctx, db, v)
+				}
+			}
 
-func TestExecute_InsertErrorReturnsPartialResult(t *testing.T) {
-	// Arrange
-	g := graph.New()
-	company := &graph.Node{ID: "company", BlueprintName: "company", Value: Company{Name: "acme"}, PKField: "ID"}
-	user := &graph.Node{ID: "user", BlueprintName: "user", Value: User{Name: "alice"}, PKField: "ID"}
-	g.AddNode(company)
-	g.AddNode(user)
-	g.AddEdge(company, user, "CompanyID")
+			// Act
+			result, err := executor.Execute(t.Context(), nil, g, lookup, nil)
 
-	insertErr := errors.New("insert user")
-	lookup := newTestLookup()
-	lookup.bps["user"].Insert = func(ctx context.Context, db, v any) (any, error) {
-		return nil, insertErr
-	}
+			// Assert: the error keeps both the cause and the sentinel, and
+			// names the failing blueprint.
+			if !errors.Is(err, insertErr) {
+				t.Fatalf("got %v, want wrapped %v", err, insertErr)
+			}
+			if !errors.Is(err, errx.ErrInsertFailed) {
+				t.Fatalf("got %v, want wrapped %v", err, errx.ErrInsertFailed)
+			}
+			var insertFailed *errx.InsertFailedError
+			if !errors.As(err, &insertFailed) || insertFailed.Blueprint() != tt.failing {
+				t.Fatalf("got %v, want InsertFailedError for blueprint %q", err, tt.failing)
+			}
+			if !slices.Equal(calls, tt.wantCalls) {
+				t.Fatalf("got insert calls %v, want %v", calls, tt.wantCalls)
+			}
 
-	// Act
-	result, err := executor.Execute(t.Context(), nil, g, lookup, nil)
+			// Assert: only completed nodes survive in the result and its graph.
+			if got := slices.Sorted(maps.Keys(result.Nodes)); !slices.Equal(got, tt.wantCompleted) {
+				t.Fatalf("got completed nodes %v, want %v", got, tt.wantCompleted)
+			}
+			graphIDs := make([]string, 0, len(tt.wantCompleted))
+			for _, node := range result.Graph.Nodes() {
+				graphIDs = append(graphIDs, node.ID)
+			}
+			slices.Sort(graphIDs)
+			if !slices.Equal(graphIDs, tt.wantCompleted) {
+				t.Fatalf("got partial graph nodes %v, want %v", graphIDs, tt.wantCompleted)
+			}
 
-	// Assert
-	if !errors.Is(err, insertErr) {
-		t.Fatalf("got %v, want wrapped %v", err, insertErr)
-	}
-	if got, want := len(result.Nodes), 1; got != want {
-		t.Fatalf("got %d completed nodes, want %d", got, want)
-	}
-	insertedCompany, ok := result.Nodes["company"]
-	if !ok {
-		t.Fatal("expected successfully inserted company in partial result")
-	}
-	if insertedCompany.Value.(Company).ID == 0 {
-		t.Fatal("expected partial result to retain inserted company ID")
-	}
-	partialRoot, ok := result.Root.(Company)
-	if !ok {
-		t.Fatalf("got partial root %T, want Company", result.Root)
-	}
-	if partialRoot.ID == 0 {
-		t.Fatal("expected partial result to retain the successfully inserted root")
-	}
-	if got, want := len(result.Graph.Nodes()), 1; got != want {
-		t.Fatalf("got %d nodes in partial graph, want %d", got, want)
-	}
-	if result.Graph.Node("user") != nil {
-		t.Fatal("partial graph must not contain the failed user node")
-	}
-	if root := result.Graph.Root(); root == nil || root.ID != "company" {
-		t.Fatalf("partial graph root = %v, want the company node", root)
+			if len(tt.wantCompleted) == 0 {
+				if result.Root != nil {
+					t.Fatalf("got partial root %v, want nil", result.Root)
+				}
+				if root := result.Graph.Root(); root != nil {
+					t.Fatalf("partial graph root = %q, want none", root.ID)
+				}
+				return
+			}
+			if result.Nodes["company"].Value.(Company).ID == 0 {
+				t.Fatal("expected partial result to retain inserted company ID")
+			}
+			partialRoot, ok := result.Root.(Company)
+			if !ok {
+				t.Fatalf("got partial root %T, want Company", result.Root)
+			}
+			if partialRoot.ID == 0 {
+				t.Fatal("expected partial result to retain the successfully inserted root")
+			}
+			if root := result.Graph.Root(); root == nil || root.ID != "company" {
+				t.Fatalf("partial graph root = %v, want the company node", root)
+			}
+		})
 	}
 }
 
