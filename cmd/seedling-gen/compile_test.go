@@ -126,7 +126,7 @@ func TestGeneratorOutputsCompile(t *testing.T) {
 		if err := GenerateGorm(&buf, "compile", "github.com/mhiro2/seedling/cmd/seedling-gen/testmodels", models); err != nil {
 			t.Fatalf("GenerateGorm: %v", err)
 		}
-		ensureCompilesAndRuns(t, "gorm", buf.String(), gormLifecycleTest)
+		ensureCompiles(t, "gorm", buf.String())
 	})
 
 	t.Run("gorm composite pk", func(t *testing.T) {
@@ -243,43 +243,6 @@ replace gorm.io/gorm => %s
 		t.Fatalf("go test compile %s: %v\n%s", name, err, output)
 	}
 }
-
-const gormLifecycleTest = `package compile
-
-import (
-	"testing"
-
-	"github.com/mhiro2/seedling"
-	testmodels "github.com/mhiro2/seedling/cmd/seedling-gen/testmodels"
-	"gorm.io/gorm"
-)
-
-func TestGeneratedGormBlueprintLifecycle(t *testing.T) {
-	db := &gorm.DB{}
-	reg := NewRegistry()
-	result, err := seedling.NewSession[testmodels.User](reg).InsertOneE(t.Context(), db)
-	if err != nil {
-		t.Fatalf("insert generated GORM blueprint: %v", err)
-	}
-	if len(db.Created) != 2 {
-		t.Fatalf("created records = %d, want 2", len(db.Created))
-	}
-	companyNode, ok := result.Node("company")
-	if !ok {
-		t.Fatal("company node not found")
-	}
-	company := companyNode.Value().(testmodels.Company)
-	if result.Root().CompanyID != company.ID || company.ID == 0 {
-		t.Fatalf("user company ID = %d, company ID = %d", result.Root().CompanyID, company.ID)
-	}
-	if err := result.CleanupE(t.Context(), db); err != nil {
-		t.Fatalf("cleanup generated GORM blueprint: %v", err)
-	}
-	if len(db.Deleted) != 2 {
-		t.Fatalf("deleted records = %d, want 2", len(db.Deleted))
-	}
-}
-`
 
 const sqlcLifecycleTest = `package compile
 

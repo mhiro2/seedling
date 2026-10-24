@@ -303,42 +303,6 @@ CREATE TABLE tags (
 	}
 }
 
-func TestGenerate_EmptyInput(t *testing.T) {
-	// Arrange
-	var buf bytes.Buffer
-
-	// Act
-	err := Generate(&buf, "empty", nil)
-	// Assert
-	if err != nil {
-		t.Fatalf("Generate error: %v", err)
-	}
-
-	output := buf.String()
-	if !strings.Contains(output, "package empty") {
-		t.Fatalf("expected package declaration, got:\n%s", output)
-	}
-	if !strings.Contains(output, "func NewRegistry() *seedling.Registry") {
-		t.Fatalf("expected NewRegistry function, got:\n%s", output)
-	}
-	if !strings.Contains(output, "func RegisterBlueprints(reg *seedling.Registry)") {
-		t.Fatalf("expected RegisterBlueprints function, got:\n%s", output)
-	}
-}
-
-func TestNormalizeTableModels_EmptyInput(t *testing.T) {
-	// Arrange
-	var tables []Table
-
-	// Act
-	models := normalizeTableModels(tables)
-
-	// Assert
-	if len(models) != 0 {
-		t.Fatalf("expected no models, got %d", len(models))
-	}
-}
-
 func TestNormalizeTableModels_ZeroColumnTableDefaultsPK(t *testing.T) {
 	// Arrange
 	tables := []Table{
@@ -533,60 +497,6 @@ CREATE TABLE reviews (
 	}
 }
 
-func TestParseSchemaWithDialect_MySQL(t *testing.T) {
-	// Arrange
-	schema := "" +
-		"CREATE TABLE `companies` (\n" +
-		"    `id` BIGINT PRIMARY KEY AUTO_INCREMENT,\n" +
-		"    `name` VARCHAR(255) NOT NULL\n" +
-		") ENGINE=InnoDB;\n\n" +
-		"CREATE TABLE `users` (\n" +
-		"    `id` BIGINT PRIMARY KEY AUTO_INCREMENT,\n" +
-		"    `company_id` BIGINT NOT NULL,\n" +
-		"    CONSTRAINT `users_company_id_foreign` FOREIGN KEY (`company_id`) REFERENCES `companies`(`id`)\n" +
-		") ENGINE=InnoDB;\n"
-	// Act
-	tables, err := ParseSchemaWithDialect(schema, "mysql")
-	// Assert
-	if err != nil {
-		t.Fatalf("ParseSchemaWithDialect error: %v", err)
-	}
-	if len(tables) != 2 {
-		t.Fatalf("expected 2 tables, got %d", len(tables))
-	}
-	if tables[1].ForeignKeys[0].RefTable != "companies" {
-		t.Fatalf("expected mysql FK ref table companies, got %q", tables[1].ForeignKeys[0].RefTable)
-	}
-}
-
-func TestParseSchemaWithDialect_SQLite(t *testing.T) {
-	// Arrange
-	schema := `
-CREATE TABLE [companies] (
-    [id] INTEGER PRIMARY KEY,
-    [name] TEXT NOT NULL
-);
-
-CREATE TABLE [users] (
-    [id] INTEGER PRIMARY KEY,
-    [company_id] INTEGER NOT NULL REFERENCES [companies]([id])
-);
-`
-
-	// Act
-	tables, err := ParseSchemaWithDialect(schema, "sqlite")
-	// Assert
-	if err != nil {
-		t.Fatalf("ParseSchemaWithDialect error: %v", err)
-	}
-	if len(tables) != 2 {
-		t.Fatalf("expected 2 tables, got %d", len(tables))
-	}
-	if tables[1].Columns[1].FKRefTable != "companies" {
-		t.Fatalf("expected sqlite FK ref table companies, got %q", tables[1].Columns[1].FKRefTable)
-	}
-}
-
 func TestParseSchemaWithDialect_Unsupported(t *testing.T) {
 	// Act & Assert
 	if _, err := ParseSchemaWithDialect("CREATE TABLE x (id INT);", "oracle"); err == nil {
@@ -741,49 +651,6 @@ CREATE TABLE users (
 				t.Fatalf("expected output to contain %q\n\nGot:\n%s", tt.substr, output)
 			}
 		})
-	}
-}
-
-func TestGenerateSqlc_DeleteWithCompositePK(t *testing.T) {
-	// Arrange
-	schema := `
-CREATE TABLE items (
-    code TEXT NOT NULL,
-    region TEXT NOT NULL,
-    PRIMARY KEY (code, region)
-);
-`
-	tables := mustParseSchema(t, schema)
-	sqlcInfo := &SqlcInfo{
-		Package: "db",
-		Models: []SqlcModel{
-			{Name: "Item", Fields: []SqlcField{{Name: "Code", Type: "string"}, {Name: "Region", Type: "string"}}},
-		},
-		Queries: []SqlcQuery{
-			{Name: "InsertItem", ReturnType: "Item", ParamType: "InsertItemParams", ParamFields: []SqlcField{{Name: "Code", Type: "string"}, {Name: "Region", Type: "string"}}},
-		},
-		DeleteQueries: []SqlcDeleteQuery{
-			{
-				Name:      "DeleteItem",
-				ParamType: "DeleteItemParams",
-				ParamFields: []SqlcField{
-					{Name: "Code", Type: "string"},
-					{Name: "Region", Type: "string"},
-				},
-			},
-		},
-	}
-
-	// Act
-	var buf bytes.Buffer
-	if err := GenerateSqlc(&buf, "testutil", "github.com/myapp/internal/db", tables, sqlcInfo); err != nil {
-		t.Fatalf("GenerateSqlc error: %v", err)
-	}
-
-	// Assert
-	output := buf.String()
-	if !strings.Contains(output, "Delete") {
-		t.Fatalf("expected Delete function in output, got:\n%s", output)
 	}
 }
 

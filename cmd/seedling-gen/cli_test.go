@@ -206,6 +206,55 @@ CREATE TABLE users (
 	}
 }
 
+func TestRun_RejectsSchemaWithoutTables(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		file    string
+		content string
+		wantErr string
+	}{
+		{
+			name:    "sql",
+			command: "sql",
+			file:    "schema.sql",
+			content: "-- no tables yet\nCREATE INDEX idx_users_email ON users (email);\n",
+			wantErr: "no CREATE TABLE statements found in",
+		},
+		{
+			name:    "atlas",
+			command: "atlas",
+			file:    "schema.hcl",
+			content: "schema \"public\" {}\n",
+			wantErr: "no tables found in",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			dir := t.TempDir()
+			writeFile(t, dir, tt.file, tt.content)
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+
+			// Act
+			exitCode := run([]string{tt.command, filepath.Join(dir, tt.file)}, &stdout, &stderr)
+
+			// Assert
+			if got, want := exitCode, 1; got != want {
+				t.Fatalf("got %v, want %v", got, want)
+			}
+			if s := stdout.String(); s != "" {
+				t.Errorf("got %v, want empty string", s)
+			}
+			if !strings.Contains(stderr.String(), tt.wantErr) {
+				t.Errorf("stderr = %q, want it to contain %q", stderr.String(), tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestParseSchemaWithDialect_DialectsHandleForeignKeys(t *testing.T) {
 	tests := []struct {
 		name              string
@@ -240,12 +289,12 @@ CREATE TABLE IF NOT EXISTS public.users (
 			schema: "" +
 				"CREATE TABLE `companies` (\n" +
 				"    `id` BIGINT PRIMARY KEY AUTO_INCREMENT\n" +
-				");\n" +
+				") ENGINE=InnoDB;\n" +
 				"CREATE TABLE `users` (\n" +
 				"    `id` BIGINT PRIMARY KEY AUTO_INCREMENT,\n" +
 				"    `company_id` BIGINT NOT NULL,\n" +
 				"    CONSTRAINT `users_company_id_foreign` FOREIGN KEY (`company_id`) REFERENCES `companies`(`id`)\n" +
-				");\n",
+				") ENGINE=InnoDB;\n",
 			wantTableName:     "users",
 			wantColumnType:    "int64",
 			wantRefTable:      "companies",

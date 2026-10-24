@@ -281,44 +281,6 @@ func TestParseAtlasRefColumns(t *testing.T) {
 	}
 }
 
-func TestGenerateAtlas_ViaGenerate(t *testing.T) {
-	// Arrange
-	hcl := `
-table "tags" {
-  column "id" {
-    type = serial
-    null = false
-  }
-  column "label" {
-    type = text
-    null = false
-  }
-  primary_key {
-    columns = [column.id]
-  }
-}
-`
-	tables := mustParseAtlasHCL(t, hcl)
-
-	// Act
-	var buf bytes.Buffer
-	if err := Generate(&buf, "testutil", tables); err != nil {
-		t.Fatal(err)
-	}
-
-	// Assert
-	output := buf.String()
-	if !strings.Contains(output, "package testutil") {
-		t.Fatalf("expected package testutil, got:\n%s", output)
-	}
-	if !strings.Contains(output, `Name:    "tag"`) {
-		t.Fatalf("expected blueprint name 'tag', got:\n%s", output)
-	}
-	if !strings.Contains(output, `Table:   "tags"`) {
-		t.Fatalf("expected table 'tags', got:\n%s", output)
-	}
-}
-
 func TestParseAtlasHCL_UnclosedBrace(t *testing.T) {
 	tests := []struct {
 		name string
@@ -401,6 +363,9 @@ table "items" {
 	}
 	if !strings.Contains(output, `Name:    "item"`) {
 		t.Fatalf("expected blueprint name 'item', got:\n%s", output)
+	}
+	if !strings.Contains(output, `Table:   "items"`) {
+		t.Fatalf("expected table 'items', got:\n%s", output)
 	}
 }
 
