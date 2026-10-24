@@ -2,18 +2,17 @@ package withtx
 
 import (
 	"context"
-	"sync/atomic"
+	"database/sql"
+	"fmt"
 
 	"github.com/mhiro2/seedling"
 )
 
-var idSeq atomic.Int64
-
-func nextID() int {
-	return int(idSeq.Add(1))
-}
-
 // RegisterBlueprints registers the Company and User blueprints for SQL transaction examples in reg.
+//
+// The Insert functions expect the *sql.Tx returned by seedling.WithTx, so every
+// row a test inserts belongs to that transaction and disappears when the
+// transaction is rolled back at test cleanup.
 func RegisterBlueprints(reg *seedling.Registry) {
 	seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
 		Name:    "company",
@@ -23,7 +22,17 @@ func RegisterBlueprints(reg *seedling.Registry) {
 			return Company{Name: "test-company"}
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
-			v.ID = nextID()
+			tx, err := txFrom(db)
+			if err != nil {
+				return Company{}, err
+			}
+			err = tx.QueryRowContext(ctx,
+				"INSERT INTO companies (name) VALUES ($1) RETURNING id",
+				v.Name,
+			).Scan(&v.ID)
+			if err != nil {
+				return Company{}, fmt.Errorf("insert company: %w", err)
+			}
 			return v, nil
 		},
 	})
@@ -39,13 +48,27 @@ func RegisterBlueprints(reg *seedling.Registry) {
 			{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v User) (User, error) {
-			v.ID = nextID()
+			tx, err := txFrom(db)
+			if err != nil {
+				return User{}, err
+			}
+			err = tx.QueryRowContext(ctx,
+				"INSERT INTO users (company_id, name, email) VALUES ($1, $2, $3) RETURNING id",
+				v.CompanyID, v.Name, v.Email,
+			).Scan(&v.ID)
+			if err != nil {
+				return User{}, fmt.Errorf("insert user: %w", err)
+			}
 			return v, nil
 		},
 	})
 }
 
-// ResetIDs resets the in-memory ID sequence used by this example package.
-func ResetIDs() {
-	idSeq.Store(0)
+// txFrom narrows the opaque seedling.DBTX handle to the *sql.Tx these blueprints require.
+func txFrom(db seedling.DBTX) (*sql.Tx, error) {
+	tx, ok := db.(*sql.Tx)
+	if !ok {
+		return nil, fmt.Errorf("withtx: expected *sql.Tx from seedling.WithTx, got %T", db)
+	}
+	return tx, nil
 }
