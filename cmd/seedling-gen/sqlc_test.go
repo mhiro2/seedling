@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -749,10 +750,12 @@ type TestOnly struct {
 		t.Fatal(err)
 	}
 
+	names := make([]string, 0, len(info.Models))
 	for _, m := range info.Models {
-		if m.Name == "TestOnly" {
-			t.Fatal("should not include types from test files")
-		}
+		names = append(names, m.Name)
+	}
+	if !slices.Equal(names, []string{"Foo"}) {
+		t.Fatalf("parsed models = %v, want [Foo] (types from _test.go files must be skipped)", names)
 	}
 }
 
@@ -886,12 +889,11 @@ CREATE TABLE users (
 		{"ref blueprint", `RefBlueprint: "company"`},
 		{"required (no Optional)", `RefBlueprint: "company"}`},
 		{"delete function", "DeleteUser"},
-		{"no struct definition", ""},
 	}
 
 	for _, check := range checks {
 		t.Run(check.name, func(t *testing.T) {
-			if check.substr != "" && !strings.Contains(output, check.substr) {
+			if !strings.Contains(output, check.substr) {
 				t.Fatalf("expected output to contain %q\n\nGot:\n%s", check.substr, output)
 			}
 		})

@@ -196,14 +196,13 @@ table "items" {
 		{"price", "float64"},
 		{"created_at", "time.Time"},
 	}
+	if len(tables[0].Columns) != len(tests) {
+		t.Fatalf("expected %d columns, got %d", len(tests), len(tables[0].Columns))
+	}
 	for _, tt := range tests {
-		for _, col := range tables[0].Columns {
-			if col.Name == tt.colName {
-				if col.GoType != tt.goType {
-					t.Errorf("column %q: expected GoType %q, got %q", tt.colName, tt.goType, col.GoType)
-				}
-				break
-			}
+		col := findColumnByName(t, tables[0], tt.colName)
+		if col.GoType != tt.goType {
+			t.Errorf("column %q: expected GoType %q, got %q", tt.colName, tt.goType, col.GoType)
 		}
 	}
 }

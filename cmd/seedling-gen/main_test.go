@@ -405,14 +405,14 @@ CREATE TABLE products (
 	if len(tables) != 1 {
 		t.Fatalf("expected 1 table, got %d", len(tables))
 	}
-	cols := tables[0].Columns
-	for _, col := range cols {
-		if col.Name == "sku" && col.GoType != "string" {
-			t.Errorf("VARCHAR(50) should map to string, got %q", col.GoType)
-		}
-		if col.Name == "price" && col.GoType != "float64" {
-			t.Errorf("NUMERIC(10,2) should map to float64, got %q", col.GoType)
-		}
+	if len(tables[0].Columns) != 3 {
+		t.Fatalf("expected 3 columns, got %d", len(tables[0].Columns))
+	}
+	if got := findColumnByName(t, tables[0], "sku").GoType; got != "string" {
+		t.Errorf("VARCHAR(50) should map to string, got %q", got)
+	}
+	if got := findColumnByName(t, tables[0], "price").GoType; got != "float64" {
+		t.Errorf("NUMERIC(10,2) should map to float64, got %q", got)
 	}
 }
 
