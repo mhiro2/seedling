@@ -291,45 +291,96 @@ func TestCleanup_WithCleanupTimeoutOverridesBudget(t *testing.T) {
 	}
 }
 
+// deadlineTB reports a fixed test deadline so the default cleanup budget can
+// be checked without depending on the real -timeout of the test binary.
+type deadlineTB struct {
+	testing.TB
+	deadline    time.Time
+	hasDeadline bool
+	calls       *int
+}
+
+func (d deadlineTB) Deadline() (time.Time, bool) {
+	*d.calls++
+	return d.deadline, d.hasDeadline
+}
+
 func TestCleanup_DefaultBudgetFollowsTestDeadline(t *testing.T) {
-	// Arrange
-	deadline, hasDeadline := t.Deadline()
-	if !hasDeadline {
-		t.Skip("test binary runs without a deadline")
+	// cleanupBudgetFloor mirrors the minimum budget used when the test has no
+	// usable deadline (for example `go test -timeout 0`).
+	const cleanupBudgetFloor = 5 * time.Second
+
+	tests := []struct {
+		name           string
+		deadlineOffset *time.Duration // nil: the TB has no Deadline method
+		hasDeadline    bool
+		wantFloor      bool
+	}{
+		{name: "follows a distant deadline", deadlineOffset: new(time.Hour), hasDeadline: true},
+		{name: "floors a deadline closer than the minimum", deadlineOffset: new(time.Second), hasDeadline: true, wantFloor: true},
+		{name: "floors an expired deadline", deadlineOffset: new(-time.Minute), hasDeadline: true, wantFloor: true},
+		{name: "floors when the test has no deadline", deadlineOffset: new(time.Duration(0)), wantFloor: true},
+		{name: "floors when the TB cannot report a deadline", wantFloor: true},
 	}
-	var cleanupDeadline time.Time
 
-	ids := seedlingtest.NewIDSequence()
-	reg := seedling.NewRegistry()
-	seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
-		Name:    "company",
-		Table:   "companies",
-		PKField: "ID",
-		Defaults: func() Company {
-			return Company{Name: "test-company"}
-		},
-		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
-			v.ID = ids.Next()
-			return v, nil
-		},
-		Delete: func(ctx context.Context, db seedling.DBTX, v Company) error {
-			cleanupDeadline, _ = ctx.Deadline()
-			return nil
-		},
-	})
-	useTestRegistry(t, reg)
-	result := build[Company](t).Insert(t, nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			var cleanupDeadline time.Time
+			var hasCleanupDeadline bool
 
-	// Act
-	result.Cleanup(t, nil)
+			ids := seedlingtest.NewIDSequence()
+			reg := seedling.NewRegistry()
+			seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
+				Name:    "company",
+				Table:   "companies",
+				PKField: "ID",
+				Defaults: func() Company {
+					return Company{Name: "test-company"}
+				},
+				Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
+					v.ID = ids.Next()
+					return v, nil
+				},
+				Delete: func(ctx context.Context, db seedling.DBTX, v Company) error {
+					cleanupDeadline, hasCleanupDeadline = ctx.Deadline()
+					return nil
+				},
+			})
+			useTestRegistry(t, reg)
+			result := build[Company](t).Insert(t, nil)
 
-	// Assert
-	// The default budget tracks the test deadline rather than a fixed constant,
-	// so a long -timeout must not be shortened to the floor.
-	if remaining := time.Until(deadline); remaining > time.Minute {
-		if cleanupDeadline.Before(deadline.Add(-time.Second)) {
-			t.Fatalf("cleanup deadline %v is well before the test deadline %v", cleanupDeadline, deadline)
-		}
+			var calls int
+			tb := testing.TB(struct{ testing.TB }{t})
+			var testDeadline time.Time
+			if tt.deadlineOffset != nil {
+				testDeadline = time.Now().Add(*tt.deadlineOffset)
+				tb = deadlineTB{TB: t, deadline: testDeadline, hasDeadline: tt.hasDeadline, calls: &calls}
+			}
+
+			// Act
+			before := time.Now()
+			result.Cleanup(tb, nil)
+			after := time.Now()
+
+			// Assert
+			if !hasCleanupDeadline {
+				t.Fatal("cleanup context has no deadline")
+			}
+			if tt.deadlineOffset != nil && calls != 1 {
+				t.Fatalf("Deadline called %d times, want 1", calls)
+			}
+			// The budget is computed somewhere between before and after, which
+			// bounds the resulting context deadline on both sides.
+			wantMin, wantMax := before.Add(cleanupBudgetFloor), after.Add(cleanupBudgetFloor)
+			if !tt.wantFloor {
+				elapsed := after.Sub(before)
+				wantMin, wantMax = testDeadline.Add(-elapsed), testDeadline.Add(elapsed)
+			}
+			if cleanupDeadline.Before(wantMin) || cleanupDeadline.After(wantMax) {
+				t.Fatalf("cleanup deadline %v, want within [%v, %v]", cleanupDeadline, wantMin, wantMax)
+			}
+		})
 	}
 }
 
