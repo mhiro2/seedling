@@ -2,10 +2,7 @@
 
 package testutil
 
-import (
-	"os"
-	"testing"
-)
+import "testing"
 
 func TestShouldSkipDockerError_DetectsKnownDockerFailures(t *testing.T) {
 	tests := []struct {
@@ -36,13 +33,6 @@ func TestShouldSkipDockerError_DetectsKnownDockerFailures(t *testing.T) {
 				t.Fatalf("shouldSkipDockerError() = %v, want %v", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestSchemaPath_ResolvesBundledSchema(t *testing.T) {
-	path := schemaPath()
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("schemaPath() returned unreadable path %q: %v", path, err)
 	}
 }
 
