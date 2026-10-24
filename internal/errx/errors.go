@@ -23,14 +23,6 @@ func BlueprintNotFound(name string) error {
 	return fmt.Errorf("%w: %q", ErrBlueprintNotFound, name)
 }
 
-func RelationNotFound(blueprint, relation string) error {
-	return fmt.Errorf("%w: relation %q on blueprint %q", ErrRelationNotFound, relation, blueprint)
-}
-
-func FieldNotFound(typeName, field string) error {
-	return fmt.Errorf("%w: field %q on type %q", ErrFieldNotFound, field, typeName)
-}
-
 func TypeMismatch(field, expected, got string) error {
 	return fmt.Errorf("%w: field %q expects %s but got %s", ErrTypeMismatch, field, expected, got)
 }

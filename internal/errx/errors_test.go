@@ -20,40 +20,6 @@ func TestBlueprintNotFound(t *testing.T) {
 	}
 }
 
-func TestRelationNotFound(t *testing.T) {
-	// Act
-	err := RelationNotFound("posts", "author")
-
-	// Assert
-	if !errors.Is(err, ErrRelationNotFound) {
-		t.Fatalf("got %v, want %v", err, ErrRelationNotFound)
-	}
-	msg := err.Error()
-	if !strings.Contains(msg, "author") {
-		t.Errorf("expected error to contain %q, got %v", "author", msg)
-	}
-	if !strings.Contains(msg, "posts") {
-		t.Errorf("expected error to contain %q, got %v", "posts", msg)
-	}
-}
-
-func TestFieldNotFound(t *testing.T) {
-	// Act
-	err := FieldNotFound("User", "email")
-
-	// Assert
-	if !errors.Is(err, ErrFieldNotFound) {
-		t.Fatalf("got %v, want %v", err, ErrFieldNotFound)
-	}
-	msg := err.Error()
-	if !strings.Contains(msg, "email") {
-		t.Errorf("expected error to contain %q, got %v", "email", msg)
-	}
-	if !strings.Contains(msg, "User") {
-		t.Errorf("expected error to contain %q, got %v", "User", msg)
-	}
-}
-
 func TestTypeMismatch(t *testing.T) {
 	// Act
 	err := TypeMismatch("age", "int", "string")
@@ -358,14 +324,14 @@ func TestSentinelsAreDistinguishable(t *testing.T) {
 			others:   []error{ErrRelationNotFound, ErrFieldNotFound, ErrTypeMismatch, ErrInsertFailed, ErrDuplicateBlueprint, ErrCycleDetected, ErrInvalidOption},
 		},
 		{
-			name:     "RelationNotFound",
-			err:      RelationNotFound("x", "y"),
+			name:     "RelationNotFoundWithHint",
+			err:      RelationNotFoundWithHint("x", "y", nil),
 			sentinel: ErrRelationNotFound,
 			others:   []error{ErrBlueprintNotFound, ErrFieldNotFound, ErrTypeMismatch, ErrInsertFailed, ErrDuplicateBlueprint, ErrCycleDetected, ErrInvalidOption},
 		},
 		{
-			name:     "FieldNotFound",
-			err:      FieldNotFound("x", "y"),
+			name:     "FieldNotFoundWithHint",
+			err:      FieldNotFoundWithHint("x", "y", nil),
 			sentinel: ErrFieldNotFound,
 			others:   []error{ErrBlueprintNotFound, ErrRelationNotFound, ErrTypeMismatch, ErrInsertFailed, ErrDuplicateBlueprint, ErrCycleDetected, ErrInvalidOption},
 		},
