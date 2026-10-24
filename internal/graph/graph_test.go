@@ -2,6 +2,7 @@ package graph_test
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -359,7 +360,8 @@ func TestClone_ValueIndependence(t *testing.T) {
 		Tags  []string
 		Meta  map[string]string
 		Inner *Inner
-		Arr   [2]int
+		Arr   [2]*Inner
+		label string
 	}
 	g := graph.New()
 	node := &graph.Node{ID: "item", BlueprintName: "item", Value: Item{
@@ -367,20 +369,28 @@ func TestClone_ValueIndependence(t *testing.T) {
 		Tags:  []string{"a", "b"},
 		Meta:  map[string]string{"x": "y"},
 		Inner: &Inner{Name: "inner"},
-		Arr:   [2]int{10, 20},
+		Arr:   [2]*Inner{{Name: "first"}, {Name: "second"}},
+		label: "hidden",
 	}}
 	g.AddNode(node)
 
 	// Act
 	cloned := g.Clone()
 	clonedValue := cloned.Node("item").Value.(Item)
+
+	// Assert: the clone carries every value, including the unexported one.
+	if !reflect.DeepEqual(clonedValue, node.Value) {
+		t.Fatalf("got %+v, want %+v", clonedValue, node.Value)
+	}
+
 	clonedValue.Tags[0] = "mutated"
 	clonedValue.Meta["x"] = "mutated"
 	clonedValue.Inner.Name = "mutated"
-	clonedValue.Arr[0] = 99
-
-	// Assert
+	clonedValue.Arr[0].Name = "mutated"
 	origValue := g.Node("item").Value.(Item)
+	if origValue.Arr[0].Name != "first" {
+		t.Fatal("Clone did not deep-copy array element")
+	}
 	if origValue.Tags[0] != "a" {
 		t.Fatal("Clone did not deep-copy slice value")
 	}
@@ -458,26 +468,6 @@ func TestClone_SelfReferentialPointerValue(t *testing.T) {
 	}
 	if cv.Self != cv {
 		t.Fatal("Clone did not preserve the self-reference")
-	}
-}
-
-func TestClone_StructWithUnexportedField(t *testing.T) {
-	// Arrange
-	type withUnexported struct {
-		ID   int
-		name string //nolint:unused // tests that clone skips unexported fields
-	}
-	g := graph.New()
-	node := &graph.Node{ID: "n", BlueprintName: "n", Value: withUnexported{ID: 1}}
-	g.AddNode(node)
-
-	// Act
-	cloned := g.Clone()
-
-	// Assert
-	v := cloned.Node("n").Value.(withUnexported)
-	if v.ID != 1 {
-		t.Fatalf("expected ID=1, got %d", v.ID)
 	}
 }
 
