@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -535,13 +536,8 @@ func TestParseGormTag(t *testing.T) {
 			got := parseGormTag(tt.tag)
 
 			// Assert
-			if len(got) != len(tt.want) {
-				t.Fatalf("got %d parts, want %d", len(got), len(tt.want))
-			}
-			for k, v := range tt.want {
-				if got[k] != v {
-					t.Fatalf("got[%q] = %q, want %q", k, got[k], v)
-				}
+			if !maps.Equal(got, tt.want) {
+				t.Fatalf("got %q, want %q", got, tt.want)
 			}
 		})
 	}
