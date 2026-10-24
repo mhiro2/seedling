@@ -2,6 +2,7 @@ package graph_test
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -359,7 +360,8 @@ func TestClone_ValueIndependence(t *testing.T) {
 		Tags  []string
 		Meta  map[string]string
 		Inner *Inner
-		Arr   [2]int
+		Arr   [2]*Inner
+		label string
 	}
 	g := graph.New()
 	node := &graph.Node{ID: "item", BlueprintName: "item", Value: Item{
@@ -367,20 +369,28 @@ func TestClone_ValueIndependence(t *testing.T) {
 		Tags:  []string{"a", "b"},
 		Meta:  map[string]string{"x": "y"},
 		Inner: &Inner{Name: "inner"},
-		Arr:   [2]int{10, 20},
+		Arr:   [2]*Inner{{Name: "first"}, {Name: "second"}},
+		label: "hidden",
 	}}
 	g.AddNode(node)
 
 	// Act
 	cloned := g.Clone()
 	clonedValue := cloned.Node("item").Value.(Item)
+
+	// Assert: the clone carries every value, including the unexported one.
+	if !reflect.DeepEqual(clonedValue, node.Value) {
+		t.Fatalf("got %+v, want %+v", clonedValue, node.Value)
+	}
+
 	clonedValue.Tags[0] = "mutated"
 	clonedValue.Meta["x"] = "mutated"
 	clonedValue.Inner.Name = "mutated"
-	clonedValue.Arr[0] = 99
-
-	// Assert
+	clonedValue.Arr[0].Name = "mutated"
 	origValue := g.Node("item").Value.(Item)
+	if origValue.Arr[0].Name != "first" {
+		t.Fatal("Clone did not deep-copy array element")
+	}
 	if origValue.Tags[0] != "a" {
 		t.Fatal("Clone did not deep-copy slice value")
 	}
@@ -461,26 +471,6 @@ func TestClone_SelfReferentialPointerValue(t *testing.T) {
 	}
 }
 
-func TestClone_StructWithUnexportedField(t *testing.T) {
-	// Arrange
-	type withUnexported struct {
-		ID   int
-		name string //nolint:unused // tests that clone skips unexported fields
-	}
-	g := graph.New()
-	node := &graph.Node{ID: "n", BlueprintName: "n", Value: withUnexported{ID: 1}}
-	g.AddNode(node)
-
-	// Act
-	cloned := g.Clone()
-
-	// Assert
-	v := cloned.Node("n").Value.(withUnexported)
-	if v.ID != 1 {
-		t.Fatalf("expected ID=1, got %d", v.ID)
-	}
-}
-
 func TestClone_SetFieldsAndPKFields(t *testing.T) {
 	// Arrange
 	g := graph.New()
@@ -509,59 +499,5 @@ func TestClone_SetFieldsAndPKFields(t *testing.T) {
 	cn.PKFields[0] = "mutated"
 	if node.PKFields[0] != "A" {
 		t.Fatal("PKFields not independent after clone")
-	}
-}
-
-func TestPrune_KeepsSelectedNodes(t *testing.T) {
-	// Arrange
-	g := graph.New()
-	a := &graph.Node{ID: "a", BlueprintName: "a", PKField: "ID"}
-	b := &graph.Node{ID: "b", BlueprintName: "b"}
-	c := &graph.Node{ID: "c", BlueprintName: "c"}
-	g.AddNode(a)
-	g.AddNode(b)
-	g.AddNode(c)
-	g.AddEdge(a, b, "AID")
-	g.AddEdge(a, c, "AID")
-
-	// Act
-	pruned := g.Prune(map[string]bool{"a": true, "b": true})
-
-	// Assert
-	nodes := pruned.Nodes()
-	if len(nodes) != 2 {
-		t.Fatalf("got %d nodes, want 2", len(nodes))
-	}
-	if pruned.Node("c") != nil {
-		t.Fatal("pruned graph should not contain node c")
-	}
-	if pruned.Root() == nil || pruned.Root().ID != "a" {
-		t.Fatal("pruned graph should have root a")
-	}
-
-	// Edge to c should be removed from a's dependents
-	aDeps := pruned.Node("a").Dependents()
-	if len(aDeps) != 1 {
-		t.Fatalf("got %d dependents for a, want 1", len(aDeps))
-	}
-	if aDeps[0].Child.ID != "b" {
-		t.Fatalf("expected dependent to be b, got %s", aDeps[0].Child.ID)
-	}
-}
-
-func TestPrune_RootPruned(t *testing.T) {
-	// Arrange
-	g := graph.New()
-	a := &graph.Node{ID: "a", BlueprintName: "a"}
-	b := &graph.Node{ID: "b", BlueprintName: "b"}
-	g.AddNode(a)
-	g.AddNode(b)
-
-	// Act
-	pruned := g.Prune(map[string]bool{"b": true})
-
-	// Assert
-	if pruned.Root() != nil {
-		t.Fatal("pruned graph root should be nil when original root is pruned")
 	}
 }

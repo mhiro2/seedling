@@ -407,9 +407,9 @@ func TestGenerateEnt_SkipsZeroOptionalNonNillableForeignKey(t *testing.T) {
 	if !strings.Contains(generated, `"reflect"`) {
 		t.Fatalf("generated output does not import reflect:\n%s", generated)
 	}
-	if !strings.Contains(generated, `if !reflect.ValueOf(v.CompanyID).IsZero() {`) {
-		t.Fatalf("generated output does not guard the optional FK setter:\n%s", generated)
-	}
+	fset, insert := generatedHook(t, generated, "user", "Insert")
+	requireGuardedCall(t, fset, insert, "SetCompanyID",
+		"!reflect.ValueOf(v.CompanyID).IsZero()", "builder.SetCompanyID(v.CompanyID)")
 }
 
 func TestGenerateEnt_PointerForeignKeyUsesNilGuardWithoutReflect(t *testing.T) {
@@ -448,9 +448,9 @@ func TestGenerateEnt_PointerForeignKeyUsesNilGuardWithoutReflect(t *testing.T) {
 	if strings.Contains(generated, `"reflect"`) {
 		t.Fatalf("generated output imports reflect for a nil-guarded FK setter:\n%s", generated)
 	}
-	if !strings.Contains(generated, `if v.CompanyID != nil {`) {
-		t.Fatalf("generated output does not nil-guard the pointer FK setter:\n%s", generated)
-	}
+	fset, insert := generatedHook(t, generated, "user", "Insert")
+	requireGuardedCall(t, fset, insert, "SetCompanyID",
+		"v.CompanyID != nil", "builder.SetCompanyID(*v.CompanyID)")
 }
 
 func TestRun_EntRequiresImportPath(t *testing.T) {

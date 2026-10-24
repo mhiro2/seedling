@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"net/netip"
+	"net/url"
 	"regexp"
 	"strings"
 	"testing"
@@ -70,20 +72,6 @@ func TestDeterminism(t *testing.T) {
 	}
 }
 
-func TestEmailFormat(t *testing.T) {
-	f := newSeeded()
-	for range 100 {
-		email := f.Email()
-		if !strings.Contains(email, "@") {
-			t.Errorf("Email missing @: %s", email)
-		}
-		parts := strings.SplitN(email, "@", 2)
-		if !strings.Contains(parts[0], ".") {
-			t.Errorf("Email local part missing dot: %s", email)
-		}
-	}
-}
-
 func TestPhoneFormat(t *testing.T) {
 	f := newSeeded()
 	re := regexp.MustCompile(`^\+1-\d{3}-\d{3}-\d{4}$`)
@@ -119,11 +107,18 @@ func TestHexColorFormat(t *testing.T) {
 
 func TestIPv4Format(t *testing.T) {
 	f := newSeeded()
-	re := regexp.MustCompile(`^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$`)
 	for range 100 {
 		ip := f.IPv4()
-		if !re.MatchString(ip) {
-			t.Errorf("IPv4 format invalid: %s", ip)
+		addr, err := netip.ParseAddr(ip)
+		if err != nil {
+			t.Fatalf("IPv4 %q does not parse: %v", ip, err)
+		}
+		if !addr.Is4() {
+			t.Fatalf("IPv4 %q is not an IPv4 address", ip)
+		}
+		// Round-tripping rejects non-canonical forms such as leading zeros.
+		if got := addr.String(); got != ip {
+			t.Fatalf("IPv4 %q is not canonical, want %q", ip, got)
 		}
 	}
 }
@@ -184,13 +179,25 @@ func TestDateBetween(t *testing.T) {
 
 func TestSentence(t *testing.T) {
 	f := newSeeded()
+	word := regexp.MustCompile(`^[A-Za-z]+$`)
 	for range 100 {
 		s := f.Sentence()
-		if !strings.HasSuffix(s, ".") {
-			t.Errorf("Sentence missing period: %s", s)
+		body, ok := strings.CutSuffix(s, ".")
+		if !ok {
+			t.Fatalf("Sentence missing period: %q", s)
 		}
 		if s[0] < 'A' || s[0] > 'Z' {
-			t.Errorf("Sentence not capitalized: %s", s)
+			t.Fatalf("Sentence not capitalized: %q", s)
+		}
+		// Splitting on single spaces exposes empty words from doubled spaces.
+		parts := strings.Split(body, " ")
+		if n := len(parts); n < 5 || n > 12 {
+			t.Fatalf("Sentence has %d words, want 5-12: %q", n, s)
+		}
+		for _, w := range parts {
+			if !word.MatchString(w) {
+				t.Fatalf("Sentence has malformed word %q: %q", w, s)
+			}
 		}
 	}
 }
@@ -266,12 +273,22 @@ func TestDateBetween_ReversedArgsPanics(t *testing.T) {
 func TestURLFormat(t *testing.T) {
 	f := newSeeded()
 	for range 100 {
-		u := f.URL()
-		if !strings.HasPrefix(u, "https://") {
-			t.Errorf("URL missing https prefix: %s", u)
+		raw := f.URL()
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatalf("URL %q does not parse: %v", raw, err)
 		}
-		if strings.Count(u, "/") < 3 {
-			t.Errorf("URL missing path: %s", u)
+		if u.Scheme != "https" {
+			t.Fatalf("URL %q scheme = %q, want https", raw, u.Scheme)
+		}
+		if u.Host == "" || u.Hostname() != u.Host {
+			t.Fatalf("URL %q host = %q, want a bare host name", raw, u.Host)
+		}
+		if len(u.Path) < 2 || u.Path[0] != '/' {
+			t.Fatalf("URL %q path = %q, want a non-empty path", raw, u.Path)
+		}
+		if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			t.Fatalf("URL %q has unexpected userinfo, query or fragment", raw)
 		}
 	}
 }

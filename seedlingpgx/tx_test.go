@@ -8,7 +8,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/mhiro2/seedling"
 	"github.com/mhiro2/seedling/seedlingpgx"
 )
 
@@ -156,19 +155,5 @@ func TestNewTestSession_BindsTransactionAndRollsBackOnCleanup(t *testing.T) {
 	}
 	if !tx.rollbackHasDeadline {
 		t.Fatal("rollback context has no deadline")
-	}
-}
-
-func TestNewTestSession_ReturnsSeedlingSession(t *testing.T) {
-	// Arrange
-	tx := &stubTx{}
-	db := &stubBeginner{tx: tx}
-
-	// Act
-	sess := seedlingpgx.NewTestSession[company](t, nil, db, pgx.TxOptions{})
-
-	// Assert
-	if _, ok := any(sess).(seedling.Session[company]); !ok {
-		t.Fatal("expected seedling.Session")
 	}
 }

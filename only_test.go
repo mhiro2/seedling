@@ -1,53 +1,78 @@
 package seedling_test
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/mhiro2/seedling"
 )
 
 func TestOnly_SelectiveInsert(t *testing.T) {
-	setupBlueprints(t)
+	t.Run("includes dependencies of the selected relation", func(t *testing.T) {
+		setupBlueprints(t)
 
-	// Task has two BelongsTo relations: project (→ company), assignee (→ company).
-	// Only("project") should insert: task, project, company (project's dep).
-	// The assignee relation should be skipped.
-	result := session[Task](t).InsertOne(t, nil, seedling.Only("project"))
+		// Task has two BelongsTo relations: project (→ company), assignee (→ company).
+		// Only("project") should insert: task, project, company (project's dep).
+		// The assignee relation should be skipped.
+		result := session[Task](t).InsertOne(t, nil, seedling.Only("project"))
 
-	task := result.Root()
-	if task.ID == 0 {
-		t.Fatal("expected non-zero root ID")
-	}
-	if task.ProjectID == 0 {
-		t.Fatal("expected non-zero ProjectID")
-	}
+		task := result.Root()
+		if task.ID == 0 {
+			t.Fatal("expected non-zero root ID")
+		}
+		if task.ProjectID == 0 {
+			t.Fatal("expected non-zero ProjectID")
+		}
 
-	// project should exist in result
-	projectNode, ok := result.Node("project")
-	if !ok {
-		t.Fatal("expected project node in result")
-	}
-	project := projectNode.Value().(Project)
-	if project.ID == 0 {
-		t.Fatal("expected non-zero project ID")
-	}
+		// project should exist in result
+		projectNode, ok := result.Node("project")
+		if !ok {
+			t.Fatal("expected project node in result")
+		}
+		project := projectNode.Value().(Project)
+		if project.ID == 0 {
+			t.Fatal("expected non-zero project ID")
+		}
 
-	// company (project's parent) should exist
-	companyNode, ok := result.Node("company")
-	if !ok {
-		t.Fatal("expected company node (project's dependency) in result")
-	}
-	company := companyNode.Value().(Company)
-	if company.ID == 0 {
-		t.Fatal("expected non-zero company ID")
-	}
+		// company (project's parent) should exist
+		companyNode, ok := result.Node("company")
+		if !ok {
+			t.Fatal("expected company node (project's dependency) in result")
+		}
+		company := companyNode.Value().(Company)
+		if company.ID == 0 {
+			t.Fatal("expected non-zero company ID")
+		}
 
-	// assignee should NOT exist in result
-	_, ok = result.Node("user")
-	if ok {
-		t.Fatal("expected user/assignee node to be absent from result")
-	}
+		// assignee should NOT exist in result
+		_, ok = result.Node("user")
+		if ok {
+			t.Fatal("expected user/assignee node to be absent from result")
+		}
+	})
+
+	t.Run("includes a direct parent", func(t *testing.T) {
+		setupBlueprints(t)
+
+		// Only("company") on User: root + company (the BelongsTo parent).
+		result := session[User](t).InsertOne(t, nil, seedling.Only("company"))
+
+		user := result.Root()
+		if user.ID == 0 {
+			t.Fatal("expected non-zero root ID")
+		}
+		if got := len(result.All()); got != 2 {
+			t.Fatalf("expected 2 nodes, got %d", got)
+		}
+
+		companyNode, ok := result.Node("company")
+		if !ok {
+			t.Fatal("expected company node in result")
+		}
+		company := companyNode.Value().(Company)
+		if company.ID == 0 || user.CompanyID != company.ID {
+			t.Fatalf("got CompanyID %d, want non-zero company ID %d", user.CompanyID, company.ID)
+		}
+	})
 }
 
 func TestOnly_RootOnly(t *testing.T) {
@@ -68,30 +93,6 @@ func TestOnly_RootOnly(t *testing.T) {
 	all := result.All()
 	if len(all) != 1 {
 		t.Fatalf("expected 1 node, got %d", len(all))
-	}
-}
-
-func TestOnly_WithRelationIncludesDeps(t *testing.T) {
-	setupBlueprints(t)
-
-	// Only("company") on User: root + company (the BelongsTo parent).
-	result := session[User](t).InsertOne(t, nil, seedling.Only("company"))
-
-	user := result.Root()
-	if user.ID == 0 {
-		t.Fatal("expected non-zero root ID")
-	}
-	if user.CompanyID == 0 {
-		t.Fatal("expected non-zero CompanyID")
-	}
-
-	companyNode, ok := result.Node("company")
-	if !ok {
-		t.Fatal("expected company node in result")
-	}
-	company := companyNode.Value().(Company)
-	if company.ID == 0 {
-		t.Fatal("expected non-zero company ID")
 	}
 }
 
@@ -127,13 +128,14 @@ func TestOnly_PlanDebugStringShowsLazyGraph(t *testing.T) {
 	plan := build[Task](t, seedling.Only("project"))
 	debug := plan.DebugString()
 
-	// Lazy graph should include project subtree but not assignee.
-	if !strings.Contains(debug, "project") {
-		t.Fatal("expected 'project' in debug output")
-	}
-	// The assignee relation should NOT appear because it was not expanded.
-	if strings.Contains(debug, "assignee") {
-		t.Fatal("expected 'assignee' to be absent from lazy plan debug output")
+	// The tree renders blueprint names, so the skipped assignee branch would
+	// show up as a "user" node with its own company. Only the project subtree
+	// should be planned.
+	want := "task\n" +
+		"└─ project\n" +
+		"   └─ company\n"
+	if debug != want {
+		t.Fatalf("got debug output:\n%s\nwant:\n%s", debug, want)
 	}
 }
 

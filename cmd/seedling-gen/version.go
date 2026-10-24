@@ -4,12 +4,15 @@ import "runtime/debug"
 
 var version = "dev"
 
+// readBuildInfo is replaced in tests to exercise each build-info outcome.
+var readBuildInfo = debug.ReadBuildInfo
+
 func cliVersion() string {
 	if version != "" && version != "dev" {
 		return version
 	}
 
-	info, ok := debug.ReadBuildInfo()
+	info, ok := readBuildInfo()
 	if !ok {
 		return version
 	}

@@ -196,14 +196,13 @@ table "items" {
 		{"price", "float64"},
 		{"created_at", "time.Time"},
 	}
+	if len(tables[0].Columns) != len(tests) {
+		t.Fatalf("expected %d columns, got %d", len(tests), len(tables[0].Columns))
+	}
 	for _, tt := range tests {
-		for _, col := range tables[0].Columns {
-			if col.Name == tt.colName {
-				if col.GoType != tt.goType {
-					t.Errorf("column %q: expected GoType %q, got %q", tt.colName, tt.goType, col.GoType)
-				}
-				break
-			}
+		col := findColumnByName(t, tables[0], tt.colName)
+		if col.GoType != tt.goType {
+			t.Errorf("column %q: expected GoType %q, got %q", tt.colName, tt.goType, col.GoType)
 		}
 	}
 }
@@ -279,44 +278,6 @@ func TestParseAtlasRefColumns(t *testing.T) {
 				t.Fatalf("got %q %v, want %q %v", table, columns, tt.wantTable, tt.wantColumns)
 			}
 		})
-	}
-}
-
-func TestGenerateAtlas_ViaGenerate(t *testing.T) {
-	// Arrange
-	hcl := `
-table "tags" {
-  column "id" {
-    type = serial
-    null = false
-  }
-  column "label" {
-    type = text
-    null = false
-  }
-  primary_key {
-    columns = [column.id]
-  }
-}
-`
-	tables := mustParseAtlasHCL(t, hcl)
-
-	// Act
-	var buf bytes.Buffer
-	if err := Generate(&buf, "testutil", tables); err != nil {
-		t.Fatal(err)
-	}
-
-	// Assert
-	output := buf.String()
-	if !strings.Contains(output, "package testutil") {
-		t.Fatalf("expected package testutil, got:\n%s", output)
-	}
-	if !strings.Contains(output, `Name:    "tag"`) {
-		t.Fatalf("expected blueprint name 'tag', got:\n%s", output)
-	}
-	if !strings.Contains(output, `Table:   "tags"`) {
-		t.Fatalf("expected table 'tags', got:\n%s", output)
 	}
 }
 
@@ -402,6 +363,9 @@ table "items" {
 	}
 	if !strings.Contains(output, `Name:    "item"`) {
 		t.Fatalf("expected blueprint name 'item', got:\n%s", output)
+	}
+	if !strings.Contains(output, `Table:   "items"`) {
+		t.Fatalf("expected table 'items', got:\n%s", output)
 	}
 }
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/mhiro2/seedling"
@@ -60,21 +62,36 @@ func (e *customError) Error() string {
 	return fmt.Sprintf("code=%d: %s", e.Code, e.Message)
 }
 
-func TestRefAndOmitCombination(t *testing.T) {
-	// Arrange
-	setupBlueprints(t)
+func TestOmitConflictsOnOptionalRelation(t *testing.T) {
+	// The relation is optional so that Omit itself is valid and the error
+	// comes from the conflicting option; Omit on a required relation is
+	// covered by TestOmitRequiredRelation.
+	tests := []struct {
+		name   string
+		option seedling.Option
+		want   string
+	}{
+		{name: "ref", option: seedling.Ref("company", seedling.Set("Name", "x")), want: "has both Omit and Ref"},
+		{name: "use", option: seedling.Use("company", Company{ID: 99, Name: "existing"}), want: "has both Omit and Use"},
+		{name: "when", option: seedling.When("company", func(User) bool { return true }), want: "has both Omit and When"},
+	}
 
-	// Act
-	// When both Ref and Omit are specified for a required relation,
-	// it should now return an error because Omit on a required relation is invalid.
-	_, err := buildE[Task](t,
-		seedling.Ref("assignee", seedling.Set("Name", "x")),
-		seedling.Omit("assignee"),
-	)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			setupOptionalBelongsToBlueprints(t)
 
-	// Assert
-	if err == nil {
-		t.Fatal("expected error for Omit on required relation")
+			// Act
+			_, err := buildE[User](t, tt.option, seedling.Omit("company"))
+
+			// Assert
+			if !errors.Is(err, seedling.ErrInvalidOption) {
+				t.Fatalf("got %v, want %v", err, seedling.ErrInvalidOption)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error %q does not contain %q", err, tt.want)
+			}
+		})
 	}
 }
 
@@ -328,6 +345,7 @@ func TestSetOnFKField(t *testing.T) {
 func TestDeepNesting(t *testing.T) {
 	// Arrange
 	seedling.ResetRegistry()
+	var inserted []string
 
 	seedling.MustRegister(seedling.Blueprint[L1]{
 		Name:    "l1",
@@ -337,6 +355,7 @@ func TestDeepNesting(t *testing.T) {
 			return L1{Name: "level1"}
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v L1) (L1, error) {
+			inserted = append(inserted, "l1")
 			v.ID = nextID()
 			return v, nil
 		},
@@ -353,6 +372,7 @@ func TestDeepNesting(t *testing.T) {
 			{Name: "l1", Kind: seedling.BelongsTo, LocalField: "L1ID", RefBlueprint: "l1"},
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v L2) (L2, error) {
+			inserted = append(inserted, "l2")
 			v.ID = nextID()
 			return v, nil
 		},
@@ -369,6 +389,7 @@ func TestDeepNesting(t *testing.T) {
 			{Name: "l2", Kind: seedling.BelongsTo, LocalField: "L2ID", RefBlueprint: "l2"},
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v L3) (L3, error) {
+			inserted = append(inserted, "l3")
 			v.ID = nextID()
 			return v, nil
 		},
@@ -385,6 +406,7 @@ func TestDeepNesting(t *testing.T) {
 			{Name: "l3", Kind: seedling.BelongsTo, LocalField: "L3ID", RefBlueprint: "l3"},
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v L4) (L4, error) {
+			inserted = append(inserted, "l4")
 			v.ID = nextID()
 			return v, nil
 		},
@@ -401,20 +423,44 @@ func TestDeepNesting(t *testing.T) {
 			{Name: "l4", Kind: seedling.BelongsTo, LocalField: "L4ID", RefBlueprint: "l4"},
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v L5) (L5, error) {
+			inserted = append(inserted, "l5")
 			v.ID = nextID()
 			return v, nil
 		},
 	})
 
 	// Act
-	l5 := seedling.InsertOne[L5](t, nil).Root()
+	result := seedling.InsertOne[L5](t, nil)
 
 	// Assert
+	wantOrder := []string{"l1", "l2", "l3", "l4", "l5"}
+	if !slices.Equal(inserted, wantOrder) {
+		t.Fatalf("insert order = %v, want %v", inserted, wantOrder)
+	}
+	if got := len(result.All()); got != 5 {
+		t.Fatalf("got %d nodes, want %d", got, 5)
+	}
+
+	l1 := result.MustNode("l1").Value().(L1)
+	l2 := result.MustNode("l2").Value().(L2)
+	l3 := result.MustNode("l3").Value().(L3)
+	l4 := result.MustNode("l4").Value().(L4)
+	l5 := result.Root()
+	for _, link := range []struct {
+		name     string
+		fk, want int
+	}{
+		{name: "L2.L1ID", fk: l2.L1ID, want: l1.ID},
+		{name: "L3.L2ID", fk: l3.L2ID, want: l2.ID},
+		{name: "L4.L3ID", fk: l4.L3ID, want: l3.ID},
+		{name: "L5.L4ID", fk: l5.L4ID, want: l4.ID},
+	} {
+		if link.want == 0 || link.fk != link.want {
+			t.Fatalf("%s = %d, want non-zero parent ID %d", link.name, link.fk, link.want)
+		}
+	}
 	if l5.ID == 0 {
 		t.Fatal("expected L5 ID to be set")
-	}
-	if l5.L4ID == 0 {
-		t.Fatal("expected L5.L4ID to be set (deep nesting should resolve all 5 levels)")
 	}
 }
 
@@ -726,23 +772,56 @@ func TestNodeWithMultipleSameBlueprintNodes(t *testing.T) {
 	// Building a Task creates:
 	// - project (which depends on company)
 	// - assignee/user (which depends on company)
-	// So there are 2 company nodes in the graph.
-	plan := build[Task](t)
+	// So there are 2 company nodes in the graph. Give them different names so
+	// the selected node can be identified.
+	plan := build[Task](t,
+		seedling.Ref("project", seedling.Ref("company", seedling.Set("Name", "project-company"))),
+		seedling.Ref("assignee", seedling.Ref("company", seedling.Set("Name", "assignee-company"))),
+	)
 
 	// Act
 	result := plan.Insert(t, nil)
 
 	// Assert
-	companyNode, ok := result.Node("company")
-	if !ok {
-		t.Fatal("expected to find a 'company' node in result")
+	// Node documents that it picks the lexicographically smallest node ID.
+	var companyIDs []string
+	for id, node := range result.All() {
+		if node.Name() == "company" {
+			companyIDs = append(companyIDs, id)
+		}
 	}
-
-	company := companyNode.Value().(Company)
-	if company.ID == 0 {
+	if len(companyIDs) != 2 {
+		t.Fatalf("got %d company nodes, want %d", len(companyIDs), 2)
+	}
+	want := result.All()[slices.Min(companyIDs)].Value().(Company)
+	if want.ID == 0 {
 		t.Fatal("expected company ID to be set")
 	}
-	if companyNode.Name() != "company" {
-		t.Errorf("got %v, want %v", companyNode.Name(), "company")
+
+	companies := result.Nodes("company")
+	names := []string{companies[0].Value().(Company).Name, companies[1].Value().(Company).Name}
+	slices.Sort(names)
+	if !slices.Equal(names, []string{"assignee-company", "project-company"}) {
+		t.Fatalf("got company names %v, want both branch companies", names)
+	}
+
+	// Repeat lookups so map iteration order cannot pick a different node.
+	for range 20 {
+		companyNode, ok := result.Node("company")
+		if !ok {
+			t.Fatal("expected to find a 'company' node in result")
+		}
+		if companyNode.Name() != "company" {
+			t.Fatalf("got %v, want %v", companyNode.Name(), "company")
+		}
+		if got := companyNode.Value().(Company); got != want {
+			t.Fatalf("Node(company) = %+v, want %+v", got, want)
+		}
+		if got := result.MustNode("company").Value().(Company); got != want {
+			t.Fatalf("MustNode(company) = %+v, want %+v", got, want)
+		}
+		if got := seedling.MustNodeAs[Company](result, "company"); got != want {
+			t.Fatalf("MustNodeAs(company) = %+v, want %+v", got, want)
+		}
 	}
 }

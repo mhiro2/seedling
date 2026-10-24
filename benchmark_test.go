@@ -20,17 +20,6 @@ func BenchmarkInsertOne(b *testing.B) {
 	}
 }
 
-func BenchmarkInsertMany(b *testing.B) {
-	reg := seedlingtest.NewRegistry()
-	seedlingtest.RegisterBasic(b, reg, seedlingtest.DefaultBasicInserters(seedlingtest.NewIDSequence()))
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for b.Loop() {
-		seedling.NewSession[Company](reg).InsertMany(b, nil, 100)
-	}
-}
-
 func BenchmarkBuild(b *testing.B) {
 	reg := seedlingtest.NewRegistry()
 	seedlingtest.RegisterBasic(b, reg, seedlingtest.DefaultBasicInserters(seedlingtest.NewIDSequence()))

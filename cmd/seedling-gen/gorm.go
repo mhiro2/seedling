@@ -116,7 +116,7 @@ func ParseGormDir(dir string) ([]GormModel, error) {
 			model.Table = table
 		}
 		if model.Table == "" {
-			model.Table = toSnakeCase(name) + "s"
+			model.Table = gormTableName(name)
 		}
 		models = append(models, model)
 	}
@@ -295,21 +295,6 @@ func stripSlicePrefix(s string) string {
 
 func stripPointer(s string) string {
 	return strings.TrimPrefix(s, "*")
-}
-
-func toSnakeCase(s string) string {
-	var b strings.Builder
-	for i, r := range s {
-		if r >= 'A' && r <= 'Z' {
-			if i > 0 {
-				b.WriteByte('_')
-			}
-			b.WriteRune(r + 32)
-		} else {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }
 
 // GenerateGorm generates Blueprint registration code for GORM models.

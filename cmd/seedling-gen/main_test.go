@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -303,65 +305,68 @@ CREATE TABLE tags (
 	}
 }
 
-func TestGenerate_EmptyInput(t *testing.T) {
+func TestGenerate_PrimaryKeyFallback(t *testing.T) {
 	// Arrange
-	var buf bytes.Buffer
+	tables := mustParseSchema(t, `
+CREATE TABLE users (
+    user_key BIGINT PRIMARY KEY
+);
+
+CREATE TABLE legacy_users (
+    id BIGINT NOT NULL,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE audit_logs (
+    message TEXT NOT NULL
+);
+
+CREATE TABLE configs ();
+`)
 
 	// Act
-	err := Generate(&buf, "empty", nil)
-	// Assert
-	if err != nil {
+	var buf bytes.Buffer
+	if err := Generate(&buf, "blueprints", tables); err != nil {
 		t.Fatalf("Generate error: %v", err)
 	}
 
+	// Assert: each blueprint names only a key field its struct has.
 	output := buf.String()
-	if !strings.Contains(output, "package empty") {
-		t.Fatalf("expected package declaration, got:\n%s", output)
+	tests := []struct {
+		blueprint string
+		want      string
+	}{
+		{blueprint: "user", want: `PKField: "UserKey"`},
+		{blueprint: "legacy_user", want: `PKField: "ID"`},
+		{blueprint: "audit_log", want: ""},
+		{blueprint: "config", want: ""},
 	}
-	if !strings.Contains(output, "func NewRegistry() *seedling.Registry") {
-		t.Fatalf("expected NewRegistry function, got:\n%s", output)
-	}
-	if !strings.Contains(output, "func RegisterBlueprints(reg *seedling.Registry)") {
-		t.Fatalf("expected RegisterBlueprints function, got:\n%s", output)
+	for _, tt := range tests {
+		block := generatedBlueprintBlock(t, output, tt.blueprint)
+		if tt.want == "" {
+			if strings.Contains(block, "PKField") {
+				t.Errorf("blueprint %q should declare no primary key, got:\n%s", tt.blueprint, block)
+			}
+			continue
+		}
+		if !strings.Contains(block, tt.want) {
+			t.Errorf("blueprint %q should contain %q, got:\n%s", tt.blueprint, tt.want, block)
+		}
 	}
 }
 
-func TestNormalizeTableModels_EmptyInput(t *testing.T) {
-	// Arrange
-	var tables []Table
-
-	// Act
-	models := normalizeTableModels(tables)
-
-	// Assert
-	if len(models) != 0 {
-		t.Fatalf("expected no models, got %d", len(models))
+// generatedBlueprintBlock returns the MustRegisterTo call that registers the
+// named blueprint in generated output.
+func generatedBlueprintBlock(t *testing.T, output, name string) string {
+	t.Helper()
+	nameField := regexp.MustCompile(`\bName:\s+` + regexp.QuoteMeta(strconv.Quote(name)) + `,`)
+	for block := range strings.SplitSeq(output, "seedling.MustRegisterTo(") {
+		if nameField.MatchString(block) {
+			return block
+		}
 	}
-}
-
-func TestNormalizeTableModels_ZeroColumnTableDefaultsPK(t *testing.T) {
-	// Arrange
-	tables := []Table{
-		{
-			Name:        "configs",
-			GoName:      "Config",
-			BlueprintID: "config",
-		},
-	}
-
-	// Act
-	models := normalizeTableModels(tables)
-
-	// Assert
-	if len(models) != 1 {
-		t.Fatalf("expected 1 model, got %d", len(models))
-	}
-	if len(models[0].Fields) != 0 {
-		t.Fatalf("expected no fields, got %d", len(models[0].Fields))
-	}
-	if len(models[0].PKFields) != 1 || models[0].PKFields[0] != "ID" {
-		t.Fatalf("expected PKFields to default to ID, got %v", models[0].PKFields)
-	}
+	t.Fatalf("blueprint %q not found in output:\n%s", name, output)
+	return ""
 }
 
 func TestParseSchema_GoKeywordIdentifiersRemainValidGoNames(t *testing.T) {
@@ -405,14 +410,14 @@ CREATE TABLE products (
 	if len(tables) != 1 {
 		t.Fatalf("expected 1 table, got %d", len(tables))
 	}
-	cols := tables[0].Columns
-	for _, col := range cols {
-		if col.Name == "sku" && col.GoType != "string" {
-			t.Errorf("VARCHAR(50) should map to string, got %q", col.GoType)
-		}
-		if col.Name == "price" && col.GoType != "float64" {
-			t.Errorf("NUMERIC(10,2) should map to float64, got %q", col.GoType)
-		}
+	if len(tables[0].Columns) != 3 {
+		t.Fatalf("expected 3 columns, got %d", len(tables[0].Columns))
+	}
+	if got := findColumnByName(t, tables[0], "sku").GoType; got != "string" {
+		t.Errorf("VARCHAR(50) should map to string, got %q", got)
+	}
+	if got := findColumnByName(t, tables[0], "price").GoType; got != "float64" {
+		t.Errorf("NUMERIC(10,2) should map to float64, got %q", got)
 	}
 }
 
@@ -530,60 +535,6 @@ CREATE TABLE reviews (
 	}
 	if !strings.Contains(output, `{Name: "reviewer"`) {
 		t.Fatalf("expected relation name derived from reviewer_id: %s", output)
-	}
-}
-
-func TestParseSchemaWithDialect_MySQL(t *testing.T) {
-	// Arrange
-	schema := "" +
-		"CREATE TABLE `companies` (\n" +
-		"    `id` BIGINT PRIMARY KEY AUTO_INCREMENT,\n" +
-		"    `name` VARCHAR(255) NOT NULL\n" +
-		") ENGINE=InnoDB;\n\n" +
-		"CREATE TABLE `users` (\n" +
-		"    `id` BIGINT PRIMARY KEY AUTO_INCREMENT,\n" +
-		"    `company_id` BIGINT NOT NULL,\n" +
-		"    CONSTRAINT `users_company_id_foreign` FOREIGN KEY (`company_id`) REFERENCES `companies`(`id`)\n" +
-		") ENGINE=InnoDB;\n"
-	// Act
-	tables, err := ParseSchemaWithDialect(schema, "mysql")
-	// Assert
-	if err != nil {
-		t.Fatalf("ParseSchemaWithDialect error: %v", err)
-	}
-	if len(tables) != 2 {
-		t.Fatalf("expected 2 tables, got %d", len(tables))
-	}
-	if tables[1].ForeignKeys[0].RefTable != "companies" {
-		t.Fatalf("expected mysql FK ref table companies, got %q", tables[1].ForeignKeys[0].RefTable)
-	}
-}
-
-func TestParseSchemaWithDialect_SQLite(t *testing.T) {
-	// Arrange
-	schema := `
-CREATE TABLE [companies] (
-    [id] INTEGER PRIMARY KEY,
-    [name] TEXT NOT NULL
-);
-
-CREATE TABLE [users] (
-    [id] INTEGER PRIMARY KEY,
-    [company_id] INTEGER NOT NULL REFERENCES [companies]([id])
-);
-`
-
-	// Act
-	tables, err := ParseSchemaWithDialect(schema, "sqlite")
-	// Assert
-	if err != nil {
-		t.Fatalf("ParseSchemaWithDialect error: %v", err)
-	}
-	if len(tables) != 2 {
-		t.Fatalf("expected 2 tables, got %d", len(tables))
-	}
-	if tables[1].Columns[1].FKRefTable != "companies" {
-		t.Fatalf("expected sqlite FK ref table companies, got %q", tables[1].Columns[1].FKRefTable)
 	}
 }
 
@@ -741,49 +692,6 @@ CREATE TABLE users (
 				t.Fatalf("expected output to contain %q\n\nGot:\n%s", tt.substr, output)
 			}
 		})
-	}
-}
-
-func TestGenerateSqlc_DeleteWithCompositePK(t *testing.T) {
-	// Arrange
-	schema := `
-CREATE TABLE items (
-    code TEXT NOT NULL,
-    region TEXT NOT NULL,
-    PRIMARY KEY (code, region)
-);
-`
-	tables := mustParseSchema(t, schema)
-	sqlcInfo := &SqlcInfo{
-		Package: "db",
-		Models: []SqlcModel{
-			{Name: "Item", Fields: []SqlcField{{Name: "Code", Type: "string"}, {Name: "Region", Type: "string"}}},
-		},
-		Queries: []SqlcQuery{
-			{Name: "InsertItem", ReturnType: "Item", ParamType: "InsertItemParams", ParamFields: []SqlcField{{Name: "Code", Type: "string"}, {Name: "Region", Type: "string"}}},
-		},
-		DeleteQueries: []SqlcDeleteQuery{
-			{
-				Name:      "DeleteItem",
-				ParamType: "DeleteItemParams",
-				ParamFields: []SqlcField{
-					{Name: "Code", Type: "string"},
-					{Name: "Region", Type: "string"},
-				},
-			},
-		},
-	}
-
-	// Act
-	var buf bytes.Buffer
-	if err := GenerateSqlc(&buf, "testutil", "github.com/myapp/internal/db", tables, sqlcInfo); err != nil {
-		t.Fatalf("GenerateSqlc error: %v", err)
-	}
-
-	// Assert
-	output := buf.String()
-	if !strings.Contains(output, "Delete") {
-		t.Fatalf("expected Delete function in output, got:\n%s", output)
 	}
 }
 

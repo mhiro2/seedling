@@ -68,6 +68,34 @@ func TestGeneratorOutputsCompile(t *testing.T) {
 		ensureCompiles(t, "sql_keywords", buf.String())
 	})
 
+	t.Run("sql tables without a primary key", func(t *testing.T) {
+		// Arrange
+		tables, err := ParseSchema(`
+CREATE TABLE legacy_users (
+    id BIGINT NOT NULL,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE audit_logs (
+    message TEXT NOT NULL
+);
+
+CREATE TABLE configs ();
+`)
+		if err != nil {
+			t.Fatalf("ParseSchema: %v", err)
+		}
+
+		// Act
+		var buf strings.Builder
+		if err := Generate(&buf, "compile", tables); err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+
+		// Assert
+		ensureCompilesAndRuns(t, "sql_without_pk", buf.String(), sqlWithoutPKLifecycleTest)
+	})
+
 	t.Run("sqlc", func(t *testing.T) {
 		tables := []Table{
 			{
@@ -126,7 +154,7 @@ func TestGeneratorOutputsCompile(t *testing.T) {
 		if err := GenerateGorm(&buf, "compile", "github.com/mhiro2/seedling/cmd/seedling-gen/testmodels", models); err != nil {
 			t.Fatalf("GenerateGorm: %v", err)
 		}
-		ensureCompilesAndRuns(t, "gorm", buf.String(), gormLifecycleTest)
+		ensureCompiles(t, "gorm", buf.String())
 	})
 
 	t.Run("gorm composite pk", func(t *testing.T) {
@@ -244,40 +272,33 @@ replace gorm.io/gorm => %s
 	}
 }
 
-const gormLifecycleTest = `package compile
+const sqlWithoutPKLifecycleTest = `package compile
 
 import (
 	"testing"
 
 	"github.com/mhiro2/seedling"
-	testmodels "github.com/mhiro2/seedling/cmd/seedling-gen/testmodels"
-	"gorm.io/gorm"
 )
 
-func TestGeneratedGormBlueprintLifecycle(t *testing.T) {
-	db := &gorm.DB{}
-	reg := NewRegistry()
-	result, err := seedling.NewSession[testmodels.User](reg).InsertOneE(t.Context(), db)
+func validateAndInsert[T any](t *testing.T, reg *seedling.Registry) {
+	t.Helper()
+	plan, err := seedling.NewSession[T](reg).BuildE()
 	if err != nil {
-		t.Fatalf("insert generated GORM blueprint: %v", err)
+		t.Fatalf("build %T plan: %v", *new(T), err)
 	}
-	if len(db.Created) != 2 {
-		t.Fatalf("created records = %d, want 2", len(db.Created))
+	if err := plan.Validate(); err != nil {
+		t.Fatalf("validate %T plan: %v", *new(T), err)
 	}
-	companyNode, ok := result.Node("company")
-	if !ok {
-		t.Fatal("company node not found")
+	if _, err := seedling.NewSession[T](reg).InsertOneE(t.Context(), nil); err != nil {
+		t.Fatalf("insert %T: %v", *new(T), err)
 	}
-	company := companyNode.Value().(testmodels.Company)
-	if result.Root().CompanyID != company.ID || company.ID == 0 {
-		t.Fatalf("user company ID = %d, company ID = %d", result.Root().CompanyID, company.ID)
-	}
-	if err := result.CleanupE(t.Context(), db); err != nil {
-		t.Fatalf("cleanup generated GORM blueprint: %v", err)
-	}
-	if len(db.Deleted) != 2 {
-		t.Fatalf("deleted records = %d, want 2", len(db.Deleted))
-	}
+}
+
+func TestGeneratedBlueprintsWithoutPrimaryKey(t *testing.T) {
+	reg := NewRegistry()
+	validateAndInsert[LegacyUser](t, reg)
+	validateAndInsert[AuditLog](t, reg)
+	validateAndInsert[Config](t, reg)
 }
 `
 

@@ -15,29 +15,6 @@ type testCompany struct {
 	Name string
 }
 
-func TestRegister(t *testing.T) {
-	// Arrange
-	seedling.ResetRegistry()
-
-	// Act
-	err := seedling.Register(seedling.Blueprint[testCompany]{
-		Name:    "company",
-		Table:   "companies",
-		PKField: "ID",
-		Defaults: func() testCompany {
-			return testCompany{Name: "test-company"}
-		},
-		Insert: func(ctx context.Context, db seedling.DBTX, v testCompany) (testCompany, error) {
-			v.ID = 1
-			return v, nil
-		},
-	})
-	// Assert
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestRegisterTo_IsolatedRegistry(t *testing.T) {
 	// Arrange
 	seedling.ResetRegistry()
@@ -259,25 +236,6 @@ func TestRegister_DuplicateGoType(t *testing.T) {
 	}
 }
 
-func TestRegister_PointerToStruct(t *testing.T) {
-	// Arrange
-	reg := seedling.NewRegistry()
-
-	// Act
-	err := seedling.RegisterTo(reg, seedling.Blueprint[*testCompany]{
-		Name:    "ptr-company",
-		Table:   "companies",
-		PKField: "ID",
-		Insert: func(ctx context.Context, db seedling.DBTX, v *testCompany) (*testCompany, error) {
-			return v, nil
-		},
-	})
-	// Assert
-	if err != nil {
-		t.Fatalf("register pointer blueprint: %v", err)
-	}
-}
-
 func TestRegister_InterfaceTypeRejected(t *testing.T) {
 	// Arrange
 	reg := seedling.NewRegistry()
@@ -332,15 +290,15 @@ func TestRegistry_ConcurrentRegisterAndLookup(t *testing.T) {
 	})
 
 	var wg sync.WaitGroup
+	registerErrs := make([]error, numRegisters)
 
 	// Act
-	// Launch goroutines that concurrently Register blueprints with unique names.
+	// Launch goroutines that concurrently Register blueprints with unique names
+	// for the same Go type, so exactly one registration can win.
 	for i := range numRegisters {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			name := fmt.Sprintf("company-%d", idx)
-			_ = seedling.Register(seedling.Blueprint[testCompany]{
+		wg.Go(func() {
+			name := fmt.Sprintf("company-%d", i)
+			registerErrs[i] = seedling.Register(seedling.Blueprint[testCompany]{
 				Name:    name,
 				Table:   "companies",
 				PKField: "ID",
@@ -348,11 +306,11 @@ func TestRegistry_ConcurrentRegisterAndLookup(t *testing.T) {
 					return testCompany{Name: name}
 				},
 				Insert: func(ctx context.Context, db seedling.DBTX, v testCompany) (testCompany, error) {
-					v.ID = idx
+					v.ID = i + 1
 					return v, nil
 				},
 			})
-		}(i)
+		})
 	}
 
 	// Launch goroutines that concurrently call InsertOneE for the
@@ -368,4 +326,30 @@ func TestRegistry_ConcurrentRegisterAndLookup(t *testing.T) {
 	}
 
 	wg.Wait()
+
+	// Assert
+	winner := -1
+	for i, err := range registerErrs {
+		switch {
+		case err == nil:
+			if winner >= 0 {
+				t.Fatalf("registrations %d and %d both succeeded for the same Go type", winner, i)
+			}
+			winner = i
+		case !errors.Is(err, seedling.ErrDuplicateBlueprint):
+			t.Fatalf("registration %d: got %v, want %v", i, err, seedling.ErrDuplicateBlueprint)
+		}
+	}
+	if winner < 0 {
+		t.Fatal("expected exactly one registration to succeed")
+	}
+
+	got, err := seedling.InsertOneE[testCompany](t.Context(), nil)
+	if err != nil {
+		t.Fatalf("InsertOneE for the registered type failed: %v", err)
+	}
+	want := testCompany{ID: winner + 1, Name: fmt.Sprintf("company-%d", winner)}
+	if got.Root() != want {
+		t.Fatalf("got %+v, want the winning blueprint's record %+v", got.Root(), want)
+	}
 }
