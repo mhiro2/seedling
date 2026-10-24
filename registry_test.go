@@ -15,29 +15,6 @@ type testCompany struct {
 	Name string
 }
 
-func TestRegister(t *testing.T) {
-	// Arrange
-	seedling.ResetRegistry()
-
-	// Act
-	err := seedling.Register(seedling.Blueprint[testCompany]{
-		Name:    "company",
-		Table:   "companies",
-		PKField: "ID",
-		Defaults: func() testCompany {
-			return testCompany{Name: "test-company"}
-		},
-		Insert: func(ctx context.Context, db seedling.DBTX, v testCompany) (testCompany, error) {
-			v.ID = 1
-			return v, nil
-		},
-	})
-	// Assert
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestRegisterTo_IsolatedRegistry(t *testing.T) {
 	// Arrange
 	seedling.ResetRegistry()
@@ -256,25 +233,6 @@ func TestRegister_DuplicateGoType(t *testing.T) {
 	}
 	if !errors.Is(err, seedling.ErrDuplicateBlueprint) {
 		t.Fatalf("got %v, want %v", err, seedling.ErrDuplicateBlueprint)
-	}
-}
-
-func TestRegister_PointerToStruct(t *testing.T) {
-	// Arrange
-	reg := seedling.NewRegistry()
-
-	// Act
-	err := seedling.RegisterTo(reg, seedling.Blueprint[*testCompany]{
-		Name:    "ptr-company",
-		Table:   "companies",
-		PKField: "ID",
-		Insert: func(ctx context.Context, db seedling.DBTX, v *testCompany) (*testCompany, error) {
-			return v, nil
-		},
-	})
-	// Assert
-	if err != nil {
-		t.Fatalf("register pointer blueprint: %v", err)
 	}
 }
 

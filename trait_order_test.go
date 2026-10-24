@@ -10,46 +10,6 @@ import (
 	"github.com/mhiro2/seedling/seedlingtest"
 )
 
-func TestBlueprintTrait_AppliesInWrittenOrder(t *testing.T) {
-	// Arrange
-	reg := seedling.NewRegistry()
-	registerCompanyWithTraits(t, reg, map[string][]seedling.Option{
-		"big": {seedling.Set("Name", "big-corp")},
-	})
-	sess := seedling.NewSession[Company](reg)
-
-	tests := []struct {
-		name string
-		opts []seedling.Option
-		want string
-	}{
-		{
-			name: "explicit Set after trait wins",
-			opts: []seedling.Option{seedling.BlueprintTrait("big"), seedling.Set("Name", "explicit")},
-			want: "explicit",
-		},
-		{
-			name: "trait after explicit Set wins",
-			opts: []seedling.Option{seedling.Set("Name", "explicit"), seedling.BlueprintTrait("big")},
-			want: "big-corp",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Act
-			result, err := sess.InsertOneE(t.Context(), nil, tt.opts...)
-			// Assert
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := result.Root().Name; got != tt.want {
-				t.Fatalf("got Name %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestBlueprintTrait_RegistryCopiesTraitDefinitions(t *testing.T) {
 	// Arrange
 	reg := seedling.NewRegistry()

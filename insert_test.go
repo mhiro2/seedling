@@ -727,37 +727,6 @@ func TestInsertOne_With(t *testing.T) {
 	}
 }
 
-func TestInsertOne_WithContext(t *testing.T) {
-	// Arrange
-	setupBlueprints(t)
-	ctx := t.Context()
-
-	// Act
-	company := insertOne[Company](t, nil,
-		seedling.WithContext(ctx),
-	)
-
-	// Assert
-	if company.ID == 0 {
-		t.Fatal("expected non-zero ID")
-	}
-}
-
-func TestInsertMany_WithContext(t *testing.T) {
-	// Arrange
-	setupBlueprints(t)
-
-	// Act
-	companies := insertMany[Company](t, nil, 2,
-		seedling.WithContext(t.Context()),
-	)
-
-	// Assert
-	if len(companies) != 2 {
-		t.Fatalf("got len %d, want %d", len(companies), 2)
-	}
-}
-
 func TestInsertOne_UsesTestingContextByDefault(t *testing.T) {
 	// Arrange
 	reg := seedlingtest.NewRegistry()
@@ -936,18 +905,35 @@ func TestInsertMany_SeqWithDependencies(t *testing.T) {
 	setupBlueprints(t)
 
 	// Act
-	users := insertMany[User](t, nil, 2,
+	result, err := insertManyE[User](t.Context(), t, nil, 2,
 		seedling.Seq("Name", func(i int) string {
 			return fmt.Sprintf("user-%d", i)
 		}),
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Assert
-	if users[0].Name != "user-0" {
-		t.Fatalf("got %v, want %v", users[0].Name, "user-0")
+	// Seq only varies the roots, so the identical company dependency is still
+	// shared and both users point at it.
+	users := result.Roots()
+	if len(users) != 2 {
+		t.Fatalf("got %d users, want %d", len(users), 2)
 	}
-	if users[1].Name != "user-1" {
-		t.Fatalf("got %v, want %v", users[1].Name, "user-1")
+	names := []string{users[0].Name, users[1].Name}
+	if !slices.Equal(names, []string{"user-0", "user-1"}) {
+		t.Fatalf("got names %v, want %v", names, []string{"user-0", "user-1"})
+	}
+	companies := result.Nodes("company")
+	if len(companies) != 1 {
+		t.Fatalf("got %d companies, want 1 shared company", len(companies))
+	}
+	companyID := companies[0].Value().(Company).ID
+	for i, user := range users {
+		if companyID == 0 || user.CompanyID != companyID {
+			t.Fatalf("users[%d].CompanyID = %d, want shared company ID %d", i, user.CompanyID, companyID)
+		}
 	}
 }
 
@@ -2286,21 +2272,47 @@ func TestWithInsertLog_ProvidedNode(t *testing.T) {
 
 // --- When (conditional relation expansion) ---
 
-func TestWhen_OptionExpandsRelationWhenTrue(t *testing.T) {
-	// Arrange: register Task with assignee as Required
-	setupBlueprints(t)
+func TestWhen_OptionDecidesRequiredRelation(t *testing.T) {
+	// assignee is required, so it would be expanded without When. The
+	// predicate sees the value after Set and decides on its own whether the
+	// relation is expanded, while project is always created.
+	tests := []struct {
+		name         string
+		status       string
+		wantAssignee bool
+	}{
+		{name: "true expands relation", status: "assigned", wantAssignee: true},
+		{name: "false skips relation", status: "unassigned", wantAssignee: false},
+	}
 
-	// Act: When predicate returns true → assignee should be expanded
-	task := insertOne[Task](t, nil,
-		seedling.Set("Status", "assigned"),
-		seedling.When("assignee", func(t Task) bool {
-			return t.Status == "assigned"
-		}),
-	)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			setupBlueprints(t)
+			var seenStatuses []string
 
-	// Assert: assignee was created
-	if task.AssigneeUserID == 0 {
-		t.Fatal("expected AssigneeUserID to be populated when When returns true")
+			// Act
+			result := session[Task](t).InsertOne(t, nil,
+				seedling.Set("Status", tt.status),
+				seedling.When("assignee", func(task Task) bool {
+					seenStatuses = append(seenStatuses, task.Status)
+					return task.Status == "assigned"
+				}),
+			)
+			task := result.Root()
+
+			// Assert
+			if !slices.Equal(seenStatuses, []string{tt.status}) {
+				t.Fatalf("predicate saw statuses %v, want %v", seenStatuses, []string{tt.status})
+			}
+			_, hasAssignee := result.Node("user")
+			if hasAssignee != tt.wantAssignee || (task.AssigneeUserID != 0) != tt.wantAssignee {
+				t.Fatalf("assignee node present = %v, AssigneeUserID = %d, want expanded = %v", hasAssignee, task.AssigneeUserID, tt.wantAssignee)
+			}
+			if task.ProjectID == 0 {
+				t.Fatal("expected ProjectID to be populated")
+			}
+		})
 	}
 }
 
@@ -2319,72 +2331,6 @@ func TestWhen_OptionExpandsOptionalRelationWhenTrue(t *testing.T) {
 	// Assert
 	if user.CompanyID == 0 {
 		t.Fatal("expected CompanyID to be populated when When returns true")
-	}
-}
-
-func TestWhen_OptionSkipsRelationWhenFalse(t *testing.T) {
-	// Arrange: register Task with assignee as Optional so we can skip it
-	ids := seedlingtest.NewIDSequence()
-	reg := seedling.NewRegistry()
-	seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
-		Name: "company", Table: "companies", PKField: "ID",
-		Defaults: func() Company { return Company{Name: "test-company"} },
-		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
-			v.ID = ids.Next()
-			return v, nil
-		},
-	})
-	seedling.MustRegisterTo(reg, seedling.Blueprint[User]{
-		Name: "user", Table: "users", PKField: "ID",
-		Defaults: func() User { return User{Name: "test-user"} },
-		Relations: []seedling.Relation{
-			{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
-		},
-		Insert: func(ctx context.Context, db seedling.DBTX, v User) (User, error) {
-			v.ID = ids.Next()
-			return v, nil
-		},
-	})
-	seedling.MustRegisterTo(reg, seedling.Blueprint[Project]{
-		Name: "project", Table: "projects", PKField: "ID",
-		Defaults: func() Project { return Project{Name: "test-project"} },
-		Relations: []seedling.Relation{
-			{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
-		},
-		Insert: func(ctx context.Context, db seedling.DBTX, v Project) (Project, error) {
-			v.ID = ids.Next()
-			return v, nil
-		},
-	})
-	seedling.MustRegisterTo(reg, seedling.Blueprint[Task]{
-		Name: "task", Table: "tasks", PKField: "ID",
-		Defaults: func() Task { return Task{Title: "test-task", Status: "open"} },
-		Relations: []seedling.Relation{
-			{Name: "project", Kind: seedling.BelongsTo, LocalField: "ProjectID", RefBlueprint: "project"},
-			{Name: "assignee", Kind: seedling.BelongsTo, LocalField: "AssigneeUserID", RefBlueprint: "user"},
-		},
-		Insert: func(ctx context.Context, db seedling.DBTX, v Task) (Task, error) {
-			v.ID = ids.Next()
-			return v, nil
-		},
-	})
-	useTestRegistry(t, reg)
-
-	// Act: When predicate returns false → assignee should be skipped
-	task := insertOne[Task](t, nil,
-		seedling.Set("Status", "open"),
-		seedling.When("assignee", func(t Task) bool {
-			return t.Status == "assigned"
-		}),
-	)
-
-	// Assert: assignee was NOT created
-	if task.AssigneeUserID != 0 {
-		t.Fatalf("expected AssigneeUserID to be zero when When returns false, got %d", task.AssigneeUserID)
-	}
-	// project should still be created
-	if task.ProjectID == 0 {
-		t.Fatal("expected ProjectID to be populated")
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/mhiro2/seedling"
@@ -61,21 +62,36 @@ func (e *customError) Error() string {
 	return fmt.Sprintf("code=%d: %s", e.Code, e.Message)
 }
 
-func TestRefAndOmitCombination(t *testing.T) {
-	// Arrange
-	setupBlueprints(t)
+func TestOmitConflictsOnOptionalRelation(t *testing.T) {
+	// The relation is optional so that Omit itself is valid and the error
+	// comes from the conflicting option; Omit on a required relation is
+	// covered by TestOmitRequiredRelation.
+	tests := []struct {
+		name   string
+		option seedling.Option
+		want   string
+	}{
+		{name: "ref", option: seedling.Ref("company", seedling.Set("Name", "x")), want: "has both Omit and Ref"},
+		{name: "use", option: seedling.Use("company", Company{ID: 99, Name: "existing"}), want: "has both Omit and Use"},
+		{name: "when", option: seedling.When("company", func(User) bool { return true }), want: "has both Omit and When"},
+	}
 
-	// Act
-	// When both Ref and Omit are specified for a required relation,
-	// it should now return an error because Omit on a required relation is invalid.
-	_, err := buildE[Task](t,
-		seedling.Ref("assignee", seedling.Set("Name", "x")),
-		seedling.Omit("assignee"),
-	)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			setupOptionalBelongsToBlueprints(t)
 
-	// Assert
-	if err == nil {
-		t.Fatal("expected error for Omit on required relation")
+			// Act
+			_, err := buildE[User](t, tt.option, seedling.Omit("company"))
+
+			// Assert
+			if !errors.Is(err, seedling.ErrInvalidOption) {
+				t.Fatalf("got %v, want %v", err, seedling.ErrInvalidOption)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error %q does not contain %q", err, tt.want)
+			}
+		})
 	}
 }
 

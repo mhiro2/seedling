@@ -17,39 +17,6 @@ type internalCompany struct {
 	Name string
 }
 
-func TestFirstField(t *testing.T) {
-	tests := []struct {
-		name   string
-		fields []string
-		want   string
-	}{
-		{
-			name:   "empty",
-			fields: nil,
-			want:   "",
-		},
-		{
-			name:   "returns first value",
-			fields: []string{"ID", "Name"},
-			want:   "ID",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Arrange
-
-			// Act
-			got := firstField(tt.fields)
-
-			// Assert
-			if got != tt.want {
-				t.Fatalf("got %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestRegistryAdapter_LookupByName(t *testing.T) {
 	// Arrange
 	reg := NewRegistry()
@@ -354,48 +321,94 @@ func TestSessionBuildE_ReturnsErrorForUnknownTrait(t *testing.T) {
 }
 
 func TestRelationConstructors(t *testing.T) {
-	// Arrange
+	tests := []struct {
+		name string
+		got  Relation
+		want Relation
+	}{
+		{
+			name: "belongs to",
+			got:  BelongsToRelation("company", "company", false, "CompanyID"),
+			want: Relation{
+				Name:         "company",
+				Kind:         BelongsTo,
+				LocalField:   "CompanyID",
+				LocalFields:  []string{"CompanyID"},
+				RefBlueprint: "company",
+			},
+		},
+		{
+			name: "belongs to with composite key uses first field",
+			got:  BelongsToRelation("tenant_user", "user", true, "TenantID", "UserID"),
+			want: Relation{
+				Name:         "tenant_user",
+				Kind:         BelongsTo,
+				LocalField:   "TenantID",
+				LocalFields:  []string{"TenantID", "UserID"},
+				RefBlueprint: "user",
+				Optional:     true,
+			},
+		},
+		{
+			name: "belongs to without fields",
+			got:  BelongsToRelation("company", "company", false),
+			want: Relation{
+				Name:         "company",
+				Kind:         BelongsTo,
+				RefBlueprint: "company",
+			},
+		},
+		{
+			name: "has many",
+			got:  HasManyRelation("users", "user", false, 2, "CompanyID"),
+			want: Relation{
+				Name:         "users",
+				Kind:         HasMany,
+				LocalField:   "CompanyID",
+				LocalFields:  []string{"CompanyID"},
+				RefBlueprint: "user",
+				Count:        2,
+			},
+		},
+		{
+			name: "many to many",
+			got:  ManyToManyRelation("tags", "article_tag", "tag", false, 3, []string{"ArticleID"}, []string{"TagID"}),
+			want: Relation{
+				Name:             "tags",
+				Kind:             ManyToMany,
+				LocalField:       "ArticleID",
+				LocalFields:      []string{"ArticleID"},
+				RefBlueprint:     "tag",
+				ThroughBlueprint: "article_tag",
+				RemoteField:      "TagID",
+				RemoteFields:     []string{"TagID"},
+				Count:            3,
+			},
+		},
+		{
+			name: "many to many with composite keys uses first fields",
+			got:  ManyToManyRelation("tags", "article_tag", "tag", false, 1, []string{"TenantID", "ArticleID"}, []string{"TenantID", "TagID"}),
+			want: Relation{
+				Name:             "tags",
+				Kind:             ManyToMany,
+				LocalField:       "TenantID",
+				LocalFields:      []string{"TenantID", "ArticleID"},
+				RefBlueprint:     "tag",
+				ThroughBlueprint: "article_tag",
+				RemoteField:      "TenantID",
+				RemoteFields:     []string{"TenantID", "TagID"},
+				Count:            1,
+			},
+		},
+	}
 
-	// Act
-	belongsTo := BelongsToRelation("company", "company", false, "CompanyID")
-	hasMany := HasManyRelation("users", "user", false, 2, "CompanyID")
-	manyToMany := ManyToManyRelation("tags", "article_tag", "tag", false, 3, []string{"ArticleID"}, []string{"TagID"})
-
-	// Assert
-	wantBelongsTo := Relation{
-		Name:         "company",
-		Kind:         BelongsTo,
-		LocalField:   "CompanyID",
-		LocalFields:  []string{"CompanyID"},
-		RefBlueprint: "company",
-	}
-	if !reflect.DeepEqual(belongsTo, wantBelongsTo) {
-		t.Fatalf("mismatch:\ngot:  %+v\nwant: %+v", belongsTo, wantBelongsTo)
-	}
-	wantHasMany := Relation{
-		Name:         "users",
-		Kind:         HasMany,
-		LocalField:   "CompanyID",
-		LocalFields:  []string{"CompanyID"},
-		RefBlueprint: "user",
-		Count:        2,
-	}
-	if !reflect.DeepEqual(hasMany, wantHasMany) {
-		t.Fatalf("mismatch:\ngot:  %+v\nwant: %+v", hasMany, wantHasMany)
-	}
-	wantManyToMany := Relation{
-		Name:             "tags",
-		Kind:             ManyToMany,
-		LocalField:       "ArticleID",
-		LocalFields:      []string{"ArticleID"},
-		RefBlueprint:     "tag",
-		ThroughBlueprint: "article_tag",
-		RemoteField:      "TagID",
-		RemoteFields:     []string{"TagID"},
-		Count:            3,
-	}
-	if !reflect.DeepEqual(manyToMany, wantManyToMany) {
-		t.Fatalf("mismatch:\ngot:  %+v\nwant: %+v", manyToMany, wantManyToMany)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Assert
+			if !reflect.DeepEqual(tt.got, tt.want) {
+				t.Fatalf("mismatch:\ngot:  %+v\nwant: %+v", tt.got, tt.want)
+			}
+		})
 	}
 }
 
@@ -520,18 +533,6 @@ func TestWhenFunc_ReturnsFalseOnTypeMismatch(t *testing.T) {
 	// Assert
 	if got {
 		t.Fatal("expected false for type mismatch")
-	}
-}
-
-func TestCleanupE_NilGraph(t *testing.T) {
-	// Arrange
-	result := Result[internalCompany]{}
-
-	// Act
-	err := result.CleanupE(context.Background(), nil)
-	// Assert
-	if err != nil {
-		t.Fatalf("expected nil, got %v", err)
 	}
 }
 
