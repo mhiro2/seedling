@@ -44,6 +44,45 @@ func newEmptyOptionSet() *planner.OptionSet {
 	}
 }
 
+// graphNodeIDs returns the sorted IDs of every node in g.
+func graphNodeIDs(g *graph.Graph) []string {
+	nodes := g.Nodes()
+	ids := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		ids = append(ids, node.ID)
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+// graphEdges returns every edge in g as a sorted list of
+// "parent -> child (ParentField->ChildField, ...)" entries.
+func graphEdges(g *graph.Graph) []string {
+	nodes := g.Nodes()
+	edges := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		for _, edge := range node.Dependencies() {
+			bindings := make([]string, 0, len(edge.Bindings))
+			for _, binding := range edge.Bindings {
+				bindings = append(bindings, binding.ParentField+"->"+binding.ChildField)
+			}
+			edges = append(edges, edge.Parent.ID+" -> "+edge.Child.ID+" ("+strings.Join(bindings, ", ")+")")
+		}
+	}
+	slices.Sort(edges)
+	return edges
+}
+
+func assertGraphShape(t *testing.T, g *graph.Graph, wantNodes, wantEdges []string) {
+	t.Helper()
+	if got := graphNodeIDs(g); !slices.Equal(got, wantNodes) {
+		t.Fatalf("got nodes %q, want %q", got, wantNodes)
+	}
+	if got := graphEdges(g); !slices.Equal(got, wantEdges) {
+		t.Fatalf("got edges %q, want %q", got, wantEdges)
+	}
+}
+
 func TestPlan_SimpleCompany(t *testing.T) {
 	// Arrange
 	reg := newMockRegistry()
@@ -162,14 +201,23 @@ func TestPlan_TaskDiamond(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Each branch of the diamond gets its own company: a single-root plan does
+	// not share belongs-to parents across relation paths.
+	assertGraphShape(t, result.Graph,
+		[]string{"task", "task.assignee", "task.assignee.company", "task.project", "task.project.company"},
+		[]string{
+			"task.assignee -> task (ID->AssigneeUserID)",
+			"task.assignee.company -> task.assignee (ID->CompanyID)",
+			"task.project -> task (ID->ProjectID)",
+			"task.project.company -> task.project (ID->CompanyID)",
+		},
+	)
+	if root := result.Graph.Root(); root == nil || root.ID != "task" {
+		t.Fatalf("got root %v, want task", root)
+	}
 	order, err := result.Graph.TopoSort()
 	if err != nil {
 		t.Fatal(err)
-	}
-	// task, project, user, project.company, assignee.company = 5 nodes
-	// (two separate company nodes since they have different node IDs)
-	if len(order) < 4 {
-		t.Fatalf("got len %d, want >= %d", len(order), 4)
 	}
 	// Task should be last
 	last := order[len(order)-1]
@@ -689,57 +737,51 @@ func TestPlanMany_MultipleRoots(t *testing.T) {
 		t.Errorf("root[1] = %q, want %q", result.RootIDs[1], "root[1]")
 	}
 
-	// Each root should have a user node
-	for _, rootID := range result.RootIDs {
-		node := result.Graph.Node(rootID)
-		if node == nil {
-			t.Fatalf("expected node %q", rootID)
-		}
-		if node.BlueprintName != "user" {
-			t.Errorf("node %q blueprint = %q, want %q", rootID, node.BlueprintName, "user")
-		}
-	}
+	// Both roots hang off one shared default company.
+	assertGraphShape(t, result.Graph,
+		[]string{"root[0]", "root[1]", "shared.company"},
+		[]string{
+			"shared.company -> root[0] (ID->CompanyID)",
+			"shared.company -> root[1] (ID->CompanyID)",
+		},
+	)
 
-	order, err := result.Graph.TopoSort()
-	if err != nil {
-		t.Fatal(err)
-	}
-	// 2 users + shared company(s)
-	if len(order) < 3 {
-		t.Fatalf("got %d nodes, want >= 3", len(order))
+	// Each root carries its own planned values.
+	for i, wantName := range []string{"user-1", "user-2"} {
+		node := result.Graph.Node(result.RootIDs[i])
+		if node.BlueprintName != "user" {
+			t.Errorf("node %q blueprint = %q, want %q", node.ID, node.BlueprintName, "user")
+		}
+		if got := node.Value.(User).Name; got != wantName {
+			t.Errorf("node %q Name = %q, want %q", node.ID, got, wantName)
+		}
 	}
 }
 
 func TestPlanMany_NonShareableOptions(t *testing.T) {
-	// Arrange: each root has a WithFn on the company relation, making it non-shareable
+	// Arrange: both roots reuse the very same company Ref, so the WithFn is the
+	// only thing that can keep the company from being shared.
 	reg := newMockRegistry()
+	calls := 0
+	companyRef := &planner.OptionSet{
+		Sets:  []planner.FieldSet{{Field: "Name", Value: "same-company"}},
+		Uses:  make(map[string]any),
+		Refs:  make(map[string]*planner.OptionSet),
+		Omits: make(map[string]bool),
+		WithFns: []planner.WithFn{func(v any) (any, error) {
+			calls++
+			return v, nil
+		}},
+	}
 	opts := []*planner.OptionSet{
 		{
-			Sets: []planner.FieldSet{{Field: "Name", Value: "user-1"}},
-			Uses: make(map[string]any),
-			Refs: map[string]*planner.OptionSet{
-				"company": {
-					Sets:    []planner.FieldSet{{Field: "Name", Value: "company-a"}},
-					Uses:    make(map[string]any),
-					Refs:    make(map[string]*planner.OptionSet),
-					Omits:   make(map[string]bool),
-					WithFns: []planner.WithFn{func(v any) (any, error) { return v, nil }},
-				},
-			},
+			Uses:  make(map[string]any),
+			Refs:  map[string]*planner.OptionSet{"company": companyRef},
 			Omits: make(map[string]bool),
 		},
 		{
-			Sets: []planner.FieldSet{{Field: "Name", Value: "user-2"}},
-			Uses: make(map[string]any),
-			Refs: map[string]*planner.OptionSet{
-				"company": {
-					Sets:    []planner.FieldSet{{Field: "Name", Value: "company-b"}},
-					Uses:    make(map[string]any),
-					Refs:    make(map[string]*planner.OptionSet),
-					Omits:   make(map[string]bool),
-					WithFns: []planner.WithFn{func(v any) (any, error) { return v, nil }},
-				},
-			},
+			Uses:  make(map[string]any),
+			Refs:  map[string]*planner.OptionSet{"company": companyRef},
 			Omits: make(map[string]bool),
 		},
 	}
@@ -750,20 +792,17 @@ func TestPlanMany_NonShareableOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.RootIDs) != 2 {
-		t.Fatalf("got %d root IDs, want 2", len(result.RootIDs))
-	}
 
-	// With WithFns, companies should NOT be shared — each user gets its own
-	nodes := result.Graph.Nodes()
-	companyCount := 0
-	for _, n := range nodes {
-		if n.BlueprintName == "company" {
-			companyCount++
-		}
-	}
-	if companyCount < 2 {
-		t.Fatalf("expected at least 2 company nodes (non-shared), got %d", companyCount)
+	// Each root gets its own company, and the WithFn runs once per company.
+	assertGraphShape(t, result.Graph,
+		[]string{"root[0]", "root[0].company", "root[1]", "root[1].company"},
+		[]string{
+			"root[0].company -> root[0] (ID->CompanyID)",
+			"root[1].company -> root[1] (ID->CompanyID)",
+		},
+	)
+	if calls != 2 {
+		t.Fatalf("got %d WithFn calls, want 2", calls)
 	}
 }
 
