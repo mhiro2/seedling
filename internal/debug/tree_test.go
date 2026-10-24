@@ -8,60 +8,82 @@ import (
 	"github.com/mhiro2/seedling/internal/graph"
 )
 
-func TestTreeString_Simple(t *testing.T) {
-	// Arrange
-	g := graph.New()
-	company := &graph.Node{ID: "company", BlueprintName: "company"}
-	user := &graph.Node{ID: "user", BlueprintName: "user"}
-	g.AddNode(user)
-	g.AddNode(company)
-	g.AddEdge(company, user, "CompanyID")
-
-	// Act
-	out := debug.TreeString(g)
-
-	// Assert
-	if !strings.Contains(out, "user") {
-		t.Errorf("expected output to contain %q", "user")
+func TestTreeString_RendersStructure(t *testing.T) {
+	tests := []struct {
+		name  string
+		build func() *graph.Graph
+		want  string
+	}{
+		{
+			name: "belongs-to walks from the child root to its parent",
+			build: func() *graph.Graph {
+				g := graph.New()
+				company := &graph.Node{ID: "company", BlueprintName: "company"}
+				user := &graph.Node{ID: "user", BlueprintName: "user"}
+				g.AddNode(user)
+				g.AddNode(company)
+				g.AddEdge(company, user, "CompanyID")
+				return g
+			},
+			want: "user\n" +
+				"└─ company\n",
+		},
+		{
+			name: "diamond keeps each company under its own parent",
+			build: func() *graph.Graph {
+				g := graph.New()
+				task := &graph.Node{ID: "task", BlueprintName: "task"}
+				project := &graph.Node{ID: "task.project", BlueprintName: "project"}
+				user := &graph.Node{ID: "task.assignee", BlueprintName: "user"}
+				companyP := &graph.Node{ID: "task.project.company", BlueprintName: "company"}
+				companyU := &graph.Node{ID: "task.assignee.company", BlueprintName: "company"}
+				g.AddNode(task)
+				g.AddNode(project)
+				g.AddNode(user)
+				g.AddNode(companyP)
+				g.AddNode(companyU)
+				g.AddEdge(project, task, "ProjectID")
+				g.AddEdge(user, task, "AssigneeUserID")
+				g.AddEdge(companyP, project, "CompanyID")
+				g.AddEdge(companyU, user, "CompanyID")
+				return g
+			},
+			want: "task\n" +
+				"├─ user\n" +
+				"│  └─ company\n" +
+				"└─ project\n" +
+				"   └─ company\n",
+		},
+		{
+			name: "has-many walks from the parent root to its children",
+			build: func() *graph.Graph {
+				g := graph.New()
+				department := &graph.Node{ID: "department", BlueprintName: "department"}
+				employee0 := &graph.Node{ID: "department.employees[0]", BlueprintName: "employee"}
+				employee1 := &graph.Node{ID: "department.employees[1]", BlueprintName: "employee"}
+				g.AddNode(department)
+				g.AddNode(employee0)
+				g.AddNode(employee1)
+				g.AddEdge(department, employee0, "DepartmentID")
+				g.AddEdge(department, employee1, "DepartmentID")
+				return g
+			},
+			want: "department\n" +
+				"├─ employee\n" +
+				"└─ employee\n",
+		},
 	}
-	if !strings.Contains(out, "company") {
-		t.Errorf("expected output to contain %q", "company")
-	}
-}
 
-func TestTreeString_Diamond(t *testing.T) {
-	// Arrange
-	g := graph.New()
-	task := &graph.Node{ID: "task", BlueprintName: "task"}
-	project := &graph.Node{ID: "task.project", BlueprintName: "project"}
-	user := &graph.Node{ID: "task.assignee", BlueprintName: "user"}
-	companyP := &graph.Node{ID: "task.project.company", BlueprintName: "company"}
-	companyU := &graph.Node{ID: "task.assignee.company", BlueprintName: "company"}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Act
+			got := debug.TreeString(tt.build())
 
-	g.AddNode(task)
-	g.AddNode(project)
-	g.AddNode(user)
-	g.AddNode(companyP)
-	g.AddNode(companyU)
-
-	g.AddEdge(project, task, "ProjectID")
-	g.AddEdge(user, task, "AssigneeUserID")
-	g.AddEdge(companyP, project, "CompanyID")
-	g.AddEdge(companyU, user, "CompanyID")
-
-	// Act
-	out := debug.TreeString(g)
-	t.Log(out)
-
-	// Assert
-	if !strings.Contains(out, "task") {
-		t.Fatalf("expected output to contain %q", "task")
-	}
-	if !strings.Contains(out, "project") {
-		t.Fatalf("expected output to contain %q", "project")
-	}
-	if !strings.Contains(out, "company") {
-		t.Fatalf("expected output to contain %q", "company")
+			// Assert
+			if got != tt.want {
+				t.Fatalf("tree mismatch\ngot:\n%s\nwant:\n%s", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -137,31 +159,6 @@ func TestTreeString_Empty(t *testing.T) {
 	// Assert
 	if out != "(empty)" {
 		t.Errorf("got %q, want %q", out, "(empty)")
-	}
-}
-
-func TestTreeString_HasMany(t *testing.T) {
-	// Arrange
-	g := graph.New()
-	department := &graph.Node{ID: "department", BlueprintName: "department"}
-	employee0 := &graph.Node{ID: "department.employees[0]", BlueprintName: "employee"}
-	employee1 := &graph.Node{ID: "department.employees[1]", BlueprintName: "employee"}
-
-	g.AddNode(department)
-	g.AddNode(employee0)
-	g.AddNode(employee1)
-	g.AddEdge(department, employee0, "DepartmentID")
-	g.AddEdge(department, employee1, "DepartmentID")
-
-	// Act
-	out := debug.TreeString(g)
-
-	// Assert
-	if !strings.Contains(out, "department") {
-		t.Fatalf("expected output to contain %q", "department")
-	}
-	if got := strings.Count(out, "employee"); got != 2 {
-		t.Errorf("got %v, want %v", got, 2)
 	}
 }
 
