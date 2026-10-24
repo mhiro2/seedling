@@ -3,10 +3,14 @@
 package mysql_test
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
 	"testing"
+
+	"github.com/go-sql-driver/mysql"
 
 	"github.com/mhiro2/seedling"
 	"github.com/mhiro2/seedling/integration/mysql/testutil"
@@ -145,8 +149,14 @@ func TestMySQLInsertOneE_ReturnsForeignKeyViolation(t *testing.T) {
 	)
 
 	// Assert
-	if err == nil {
-		t.Fatal("expected error")
+	assertInsertFailed(t, err, "user")
+	var mysqlErr *mysql.MySQLError
+	if !errors.As(err, &mysqlErr) {
+		t.Fatalf("expected *mysql.MySQLError in chain, got %T: %v", err, err)
+	}
+	// ER_NO_REFERENCED_ROW_2: cannot add or update a child row.
+	if got, want := mysqlErr.Number, uint16(1452); got != want {
+		t.Fatalf("got MySQL error number %d, want %d: %v", got, want, err)
 	}
 
 	var count int
@@ -164,16 +174,21 @@ func TestMySQLInsertOneE_ReturnsConnectionError(t *testing.T) {
 	h := testutil.NewHarness(t)
 	db := h.DB
 	reg := h.Registry
-	if err := db.Close(); err != nil {
+	conn, err := db.Conn(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Close(); err != nil {
 		t.Fatal(err)
 	}
 
 	// Act
-	_, err := seedling.NewSession[company](reg).InsertOneE(t.Context(), db)
+	_, err = seedling.NewSession[company](reg).InsertOneE(t.Context(), conn)
 
 	// Assert
-	if err == nil {
-		t.Fatal("expected error")
+	assertInsertFailed(t, err, "company")
+	if !errors.Is(err, sql.ErrConnDone) {
+		t.Fatalf("expected sql.ErrConnDone in chain, got %v", err)
 	}
 }
 
@@ -348,5 +363,22 @@ func TestMySQLInsertOne_ManyToManyPersistsResolvedDependencies(t *testing.T) {
 	}
 	if got, want := count, 2; got != want {
 		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+// assertInsertFailed checks that err reports a failed Insert callback of the
+// named blueprint, so a planning error cannot satisfy the test instead.
+func assertInsertFailed(t *testing.T, err error, blueprint string) {
+	t.Helper()
+
+	if !errors.Is(err, seedling.ErrInsertFailed) {
+		t.Fatalf("expected ErrInsertFailed, got %v", err)
+	}
+	var insertErr *seedling.InsertFailedError
+	if !errors.As(err, &insertErr) {
+		t.Fatalf("expected *seedling.InsertFailedError, got %T: %v", err, err)
+	}
+	if got := insertErr.Blueprint(); got != blueprint {
+		t.Fatalf("got failed blueprint %q, want %q", got, blueprint)
 	}
 }
