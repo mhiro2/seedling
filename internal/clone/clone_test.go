@@ -21,20 +21,6 @@ type nestedSample struct {
 	Any    any
 }
 
-func TestValue_Struct(t *testing.T) {
-	// Arrange
-	orig := sample{ID: 1, Name: "a"}
-
-	// Act
-	cp := clone.Value(orig).(sample)
-	cp.Name = "b"
-
-	// Assert
-	if orig.Name != "a" {
-		t.Fatalf("original was mutated: got %v, want %v", orig.Name, "a")
-	}
-}
-
 func TestValue_Pointer(t *testing.T) {
 	// Arrange
 	orig := &sample{ID: 1, Name: "a"}
@@ -108,19 +94,37 @@ func TestValue_NilMap(t *testing.T) {
 }
 
 func TestValue_Array(t *testing.T) {
-	// Arrange
+	// Arrange: the elements are references, so copying the array by value alone
+	// would still share their pointees and backing arrays.
 	type S struct {
-		Arr [3]int
+		Ptrs   [2]*sample
+		Slices [2][]int
 	}
-	orig := S{Arr: [3]int{1, 2, 3}}
+	orig := S{
+		Ptrs:   [2]*sample{{ID: 1, Name: "a"}, {ID: 2, Name: "b"}},
+		Slices: [2][]int{{1, 2}, {3, 4}},
+	}
 
 	// Act
 	cp := clone.Value(orig).(S)
-	cp.Arr[0] = 99
 
 	// Assert
-	if orig.Arr[0] != 1 {
-		t.Fatal("original array was mutated")
+	if !reflect.DeepEqual(cp, orig) {
+		t.Fatalf("got %+v, want %+v", cp, orig)
+	}
+	for i := range orig.Ptrs {
+		if cp.Ptrs[i] == orig.Ptrs[i] {
+			t.Fatalf("Ptrs[%d] still points at the original element", i)
+		}
+	}
+
+	cp.Ptrs[0].Name = "mutated"
+	cp.Slices[1][0] = 99
+	if orig.Ptrs[0].Name != "a" {
+		t.Fatalf("original pointer element was mutated: got %v, want %v", orig.Ptrs[0].Name, "a")
+	}
+	if !reflect.DeepEqual(orig.Slices, [2][]int{{1, 2}, {3, 4}}) {
+		t.Fatalf("original slice element was mutated: got %v", orig.Slices)
 	}
 }
 
@@ -140,43 +144,32 @@ func TestValue_NilInterface(t *testing.T) {
 	}
 }
 
-type withUnexported struct {
-	Name     string
-	internal int //nolint:unused // intentionally unexported to test clone behavior
-}
-
-func TestValue_UnexportedField(t *testing.T) {
-	// Arrange
-	orig := withUnexported{Name: "test"}
-
-	// Act
-	cp := clone.Value(orig).(withUnexported)
-
-	// Assert
-	if cp.Name != "test" {
-		t.Fatalf("got %v, want %v", cp.Name, "test")
-	}
-}
-
 type unexportedRefs struct {
 	Name  string
+	count int
 	items []int
 }
 
 // TestValue_UnexportedReferenceFieldsAreShared characterizes the documented
-// limitation: unexported reference fields are shallow-copied and keep sharing
-// their backing with the original. Deep-copying them would require unsafe and
-// would also corrupt value types whose internals are unexported pointers (e.g.
-// time.Time's location); keep isolated mutable state in exported fields instead.
+// limitation: unexported fields are copied as-is, so scalars keep their value
+// while reference fields are shallow-copied and keep sharing their backing with
+// the original. Deep-copying them would require unsafe and would also corrupt
+// value types whose internals are unexported pointers (e.g. time.Time's
+// location); keep isolated mutable state in exported fields instead.
 func TestValue_UnexportedReferenceFieldsAreShared(t *testing.T) {
 	// Arrange
-	orig := unexportedRefs{Name: "root", items: []int{1, 2, 3}}
+	orig := unexportedRefs{Name: "root", count: 7, items: []int{1, 2, 3}}
 
 	// Act
 	cp := clone.Value(orig).(unexportedRefs)
-	cp.items[0] = 99
+
+	// Assert: every field keeps its value, exported or not.
+	if cp.Name != "root" || cp.count != 7 {
+		t.Fatalf("got Name=%q count=%d, want Name=%q count=%d", cp.Name, cp.count, "root", 7)
+	}
 
 	// Assert: backing is shared (documented behavior, not deep-copied).
+	cp.items[0] = 99
 	if orig.items[0] != 99 {
 		t.Fatalf("expected shared backing for unexported field, got %v", orig.items)
 	}
@@ -287,12 +280,20 @@ func TestValue_DeepCopy(t *testing.T) {
 
 	// Act
 	cp := clone.Value(orig).(nestedSample)
+
+	// Assert: the copy carries every value before it diverges.
+	if !reflect.DeepEqual(cp, orig) {
+		t.Fatalf("got %+v, want %+v", cp, orig)
+	}
+
+	cp.Name = "changed"
 	cp.Values[0] = 9
 	cp.Meta["a"] = "changed"
 	cp.Child.Name = "mutated"
 	cp.Any.(*sample).Name = "iface-mutated"
-
-	// Assert
+	if orig.Name != "root" {
+		t.Fatalf("got %v, want %v", orig.Name, "root")
+	}
 	if !reflect.DeepEqual(orig.Values, []int{1, 2, 3}) {
 		t.Fatalf("got %v, want %v", orig.Values, []int{1, 2, 3})
 	}
