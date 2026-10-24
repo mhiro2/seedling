@@ -2,6 +2,7 @@ package seedling_test
 
 import (
 	"context"
+	"fmt"
 	"math/rand/v2"
 	"reflect"
 	"testing"
@@ -145,18 +146,7 @@ func TestBuilder_Omit(t *testing.T) {
 	// Arrange
 	reg := seedlingtest.NewRegistry()
 	ids := seedlingtest.NewIDSequence()
-	seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
-		Name:    "company",
-		Table:   "companies",
-		PKField: "ID",
-		Defaults: func() Company {
-			return Company{Name: "test-company"}
-		},
-		Insert: func(_ context.Context, _ seedling.DBTX, v Company) (Company, error) {
-			v.ID = ids.Next()
-			return v, nil
-		},
-	})
+	var userInserts int
 	seedling.MustRegisterTo(reg, seedling.Blueprint[User]{
 		Name:    "user",
 		Table:   "users",
@@ -164,25 +154,8 @@ func TestBuilder_Omit(t *testing.T) {
 		Defaults: func() User {
 			return User{Name: "test-user"}
 		},
-		Relations: []seedling.Relation{
-			{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
-		},
 		Insert: func(_ context.Context, _ seedling.DBTX, v User) (User, error) {
-			v.ID = ids.Next()
-			return v, nil
-		},
-	})
-	seedling.MustRegisterTo(reg, seedling.Blueprint[Project]{
-		Name:    "project",
-		Table:   "projects",
-		PKField: "ID",
-		Defaults: func() Project {
-			return Project{Name: "test-project"}
-		},
-		Relations: []seedling.Relation{
-			{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
-		},
-		Insert: func(_ context.Context, _ seedling.DBTX, v Project) (Project, error) {
+			userInserts++
 			v.ID = ids.Next()
 			return v, nil
 		},
@@ -195,26 +168,43 @@ func TestBuilder_Omit(t *testing.T) {
 			return Task{Title: "test-task", Status: "open"}
 		},
 		Relations: []seedling.Relation{
-			{Name: "project", Kind: seedling.BelongsTo, LocalField: "ProjectID", RefBlueprint: "project"},
-			{Name: "assignee", Kind: seedling.BelongsTo, LocalField: "AssigneeUserID", RefBlueprint: "user", Optional: true},
+			// The optional assignee is expanded by default through the
+			// blueprint-level predicate, so only Omit can keep it out.
+			{
+				Name:         "assignee",
+				Kind:         seedling.BelongsTo,
+				LocalField:   "AssigneeUserID",
+				RefBlueprint: "user",
+				Optional:     true,
+				When:         func(any) bool { return true },
+			},
 		},
 		Insert: func(_ context.Context, _ seedling.DBTX, v Task) (Task, error) {
 			v.ID = ids.Next()
 			return v, nil
 		},
 	})
+	sess := seedling.NewSession[Task](reg)
 
 	// Act
-	task := seedling.ForSession(seedling.NewSession[Task](reg)).
+	expanded := seedling.ForSession(sess).Insert(t, nil).Root()
+	expandedInserts := userInserts
+	omitted := seedling.ForSession(sess).
 		Omit("assignee").
 		Insert(t, nil).Root()
 
 	// Assert
-	if task.ID == 0 {
+	if expanded.AssigneeUserID == 0 || expandedInserts != 1 {
+		t.Fatalf("baseline: got AssigneeUserID %d after %d user inserts, want an inserted assignee", expanded.AssigneeUserID, expandedInserts)
+	}
+	if omitted.ID == 0 {
 		t.Fatal("expected non-zero ID")
 	}
-	if task.AssigneeUserID != 0 {
-		t.Fatal("expected zero AssigneeUserID")
+	if omitted.AssigneeUserID != 0 {
+		t.Fatalf("got AssigneeUserID %d, want 0", omitted.AssigneeUserID)
+	}
+	if got := userInserts - expandedInserts; got != 0 {
+		t.Fatalf("got %d user inserts after Omit, want 0", got)
 	}
 }
 
@@ -320,21 +310,33 @@ func TestBuilder_GenerateE(t *testing.T) {
 
 func TestBuilder_WithContext(t *testing.T) {
 	// Arrange
-	reg := setupBuilderRegistry(t)
+	ids := seedlingtest.NewIDSequence()
+	inserters := seedlingtest.DefaultBasicInserters(ids)
+	var got any
+	inserters.Company = func(ctx context.Context, _ seedling.DBTX, v Company) (Company, error) {
+		got = ctx.Value(builderCtxKey{})
+		v.ID = ids.Next()
+		return v, nil
+	}
+	reg := seedlingtest.NewRegistry()
+	seedlingtest.RegisterBasic(t, reg, inserters)
 	sess := seedling.NewSession[Company](reg)
-	ctx := context.WithValue(t.Context(), builderCtxKey{}, "test-val")
+	builderCtx := context.WithValue(t.Context(), builderCtxKey{}, "builder")
+	callerCtx := context.WithValue(t.Context(), builderCtxKey{}, "caller")
 
 	// Act
 	result, err := seedling.ForSession(sess).
-		WithContext(ctx).
-		InsertE(ctx, nil)
+		WithContext(builderCtx).
+		InsertE(callerCtx, nil)
 		// Assert
 	if err != nil {
 		t.Fatal(err)
 	}
-	company := result.Root()
-	if company.ID == 0 {
+	if result.Root().ID == 0 {
 		t.Fatal("expected non-zero ID")
+	}
+	if got != "builder" {
+		t.Fatalf("insert saw context value %v, want %v", got, "builder")
 	}
 }
 
@@ -384,18 +386,24 @@ func TestBuilder_WithRand(t *testing.T) {
 	reg := setupBuilderRegistry(t)
 	sess := seedling.NewSession[Company](reg)
 	rng := rand.New(rand.NewPCG(99, 99))
+	want := fmt.Sprint(rand.New(rand.NewPCG(99, 99)).Uint64())
+	var gotRand *rand.Rand
 
 	// Act
 	company := seedling.ForSession(sess).
 		WithRand(rng).
 		Generate(func(r *rand.Rand, c *Company) {
-			c.Name = "with-rand"
+			gotRand = r
+			c.Name = fmt.Sprint(r.Uint64())
 		}).
 		Insert(t, nil).Root()
 
 	// Assert
-	if company.Name != "with-rand" {
-		t.Fatalf("got %v, want %v", company.Name, "with-rand")
+	if gotRand != rng {
+		t.Fatal("expected Generate to receive the RNG passed to WithRand")
+	}
+	if company.Name != want {
+		t.Fatalf("got %v, want %v", company.Name, want)
 	}
 }
 
@@ -403,18 +411,28 @@ func TestBuilder_WithSeed(t *testing.T) {
 	// Arrange
 	reg := setupBuilderRegistry(t)
 	sess := seedling.NewSession[Company](reg)
+	insertWithSeed := func(seed uint64) string {
+		return seedling.ForSession(sess).
+			WithSeed(seed).
+			Generate(func(r *rand.Rand, c *Company) {
+				c.Name = fmt.Sprintf("%x-%x", r.Uint64(), r.Uint64())
+			}).
+			Insert(t, nil).Root().Name
+	}
 
 	// Act
-	company := seedling.ForSession(sess).
-		WithSeed(123).
-		Generate(func(r *rand.Rand, c *Company) {
-			c.Name = "with-seed"
-		}).
-		Insert(t, nil).Root()
+	first := insertWithSeed(123)
+	again := insertWithSeed(123)
+	other := insertWithSeed(456)
 
 	// Assert
-	if company.Name != "with-seed" {
-		t.Fatalf("got %v, want %v", company.Name, "with-seed")
+	if first != again {
+		t.Fatalf("same seed produced %v and %v, want identical names", first, again)
+	}
+	// The default RNG is also fixed, so distinct seeds must diverge to prove
+	// the seed reached Generate.
+	if first == other {
+		t.Fatalf("seeds 123 and 456 both produced %v, want different names", first)
 	}
 }
 
@@ -437,25 +455,6 @@ func TestBuilder_Apply(t *testing.T) {
 	}
 	if task.Status != "done" {
 		t.Fatalf("got %v, want %v", task.Status, "done")
-	}
-}
-
-func TestBuilder_Insert(t *testing.T) {
-	// Arrange
-	reg := setupBuilderRegistry(t)
-	sess := seedling.NewSession[Company](reg)
-
-	// Act
-	company := seedling.ForSession(sess).
-		Set("Name", "insert").
-		Insert(t, nil).Root()
-
-	// Assert
-	if company.ID == 0 {
-		t.Fatal("expected non-zero ID")
-	}
-	if company.Name != "insert" {
-		t.Fatalf("got %v, want %v", company.Name, "insert")
 	}
 }
 
@@ -523,43 +522,69 @@ func TestBuilder_InsertManyE(t *testing.T) {
 		if company.ID == 0 {
 			t.Fatalf("result[%d] has zero ID", i)
 		}
+		if company.Name != "batchE" {
+			t.Fatalf("result[%d]: got Name %v, want %v", i, company.Name, "batchE")
+		}
 	}
 }
 
 func TestBuilder_Build(t *testing.T) {
-	// Arrange
-	reg := setupBuilderRegistry(t)
-	sess := seedling.NewSession[Task](reg)
-
-	// Act
-	plan := seedling.ForSession(sess).
-		Set("Title", "built").
-		Build(t)
-
-	// Assert
-	if plan == nil {
-		t.Fatal("expected non-nil")
+	tests := []struct {
+		name  string
+		build func(*testing.T, *seedling.Builder[Task]) *seedling.Plan[Task]
+	}{
+		{
+			name: "Build",
+			build: func(t *testing.T, b *seedling.Builder[Task]) *seedling.Plan[Task] {
+				t.Helper()
+				return b.Build(t)
+			},
+		},
+		{
+			name: "BuildE",
+			build: func(t *testing.T, b *seedling.Builder[Task]) *seedling.Plan[Task] {
+				t.Helper()
+				plan, err := b.BuildE()
+				if err != nil {
+					t.Fatal(err)
+				}
+				return plan
+			},
+		},
 	}
-	if plan.DebugString() == "" {
-		t.Fatal("expected non-empty DebugString")
-	}
-}
 
-func TestBuilder_BuildE(t *testing.T) {
-	// Arrange
-	reg := setupBuilderRegistry(t)
-	sess := seedling.NewSession[Task](reg)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			ids := seedlingtest.NewIDSequence()
+			inserters := seedlingtest.DefaultBasicInserters(ids)
+			var taskInserts int
+			inserters.Task = func(_ context.Context, _ seedling.DBTX, v Task) (Task, error) {
+				taskInserts++
+				v.ID = ids.Next()
+				return v, nil
+			}
+			reg := seedlingtest.NewRegistry()
+			seedlingtest.RegisterBasic(t, reg, inserters)
+			b := seedling.ForSession(seedling.NewSession[Task](reg)).
+				Set("Title", "planned")
 
-	// Act
-	plan, err := seedling.ForSession(sess).
-		Set("Title", "planned").
-		BuildE()
-		// Assert
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan == nil {
-		t.Fatal("expected non-nil")
+			// Act
+			plan := tt.build(t, b)
+			insertsAfterBuild := taskInserts
+			task := plan.Insert(t, nil).Root()
+
+			// Assert
+			if insertsAfterBuild != 0 {
+				t.Fatalf("got %d task inserts while building, want 0", insertsAfterBuild)
+			}
+			if taskInserts != 1 {
+				t.Fatalf("got %d task inserts after Plan.Insert, want 1", taskInserts)
+			}
+			if task.Title != "planned" {
+				t.Fatalf("got %v, want %v", task.Title, "planned")
+			}
+		})
 	}
 }
 
@@ -598,17 +623,20 @@ func TestPackageLevelInsertManyE(t *testing.T) {
 	}
 }
 
-func TestBuilder_Chaining_MultipleMethodCalls(t *testing.T) {
+func TestBuilder_Chaining_AppliesEveryOption(t *testing.T) {
 	// Arrange
 	reg := setupBuilderRegistry(t)
 	sess := seedling.NewSession[Task](reg)
+	assignee := User{ID: 77, Name: "existing-user"}
 
 	// Act
-	task := seedling.ForSession(sess).
+	result := seedling.ForSession(sess).
 		Set("Title", "chained").
 		Set("Status", "done").
 		Ref("project", seedling.Set("Name", "chain-proj")).
-		Insert(t, nil).Root()
+		Use("assignee", assignee).
+		Insert(t, nil)
+	task := result.Root()
 
 	// Assert
 	if task.ID == 0 {
@@ -620,7 +648,20 @@ func TestBuilder_Chaining_MultipleMethodCalls(t *testing.T) {
 	if task.Status != "done" {
 		t.Fatalf("got %v, want %v", task.Status, "done")
 	}
-	if task.ProjectID == 0 {
-		t.Fatal("expected non-zero ProjectID")
+	project, ok, err := seedling.NodeAs[Project](result, "project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected project node")
+	}
+	if project.Name != "chain-proj" {
+		t.Fatalf("got %v, want %v", project.Name, "chain-proj")
+	}
+	if task.ProjectID != project.ID {
+		t.Fatalf("got ProjectID %v, want %v", task.ProjectID, project.ID)
+	}
+	if task.AssigneeUserID != assignee.ID {
+		t.Fatalf("got AssigneeUserID %v, want %v", task.AssigneeUserID, assignee.ID)
 	}
 }
