@@ -1,7 +1,6 @@
 package seedling_test
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/mhiro2/seedling"
@@ -127,13 +126,14 @@ func TestOnly_PlanDebugStringShowsLazyGraph(t *testing.T) {
 	plan := build[Task](t, seedling.Only("project"))
 	debug := plan.DebugString()
 
-	// Lazy graph should include project subtree but not assignee.
-	if !strings.Contains(debug, "project") {
-		t.Fatal("expected 'project' in debug output")
-	}
-	// The assignee relation should NOT appear because it was not expanded.
-	if strings.Contains(debug, "assignee") {
-		t.Fatal("expected 'assignee' to be absent from lazy plan debug output")
+	// The tree renders blueprint names, so the skipped assignee branch would
+	// show up as a "user" node with its own company. Only the project subtree
+	// should be planned.
+	want := "task\n" +
+		"└─ project\n" +
+		"   └─ company\n"
+	if debug != want {
+		t.Fatalf("got debug output:\n%s\nwant:\n%s", debug, want)
 	}
 }
 

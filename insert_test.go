@@ -980,21 +980,76 @@ func TestAfterInsert(t *testing.T) {
 }
 
 func TestAfterInsert_WithDB(t *testing.T) {
-	// Arrange
-	setupBlueprints(t)
-	var capturedDB seedling.DBTX
+	type dbMarker struct{ name string }
+	boundDB := &dbMarker{name: "bound"}
+	explicitDB := &dbMarker{name: "explicit"}
 
-	// Act
-	// db is nil in tests, but AfterInsert should still pass it through.
-	insertOne[Company](t, nil,
-		seedling.AfterInsert(func(c Company, db seedling.DBTX) {
-			capturedDB = db
-		}),
-	)
+	tests := []struct {
+		name    string
+		boundDB seedling.DBTX
+		callDB  seedling.DBTX
+		want    *dbMarker
+	}{
+		{name: "explicit db", callDB: explicitDB, want: explicitDB},
+		{name: "session-bound db", boundDB: boundDB, want: boundDB},
+		{name: "explicit db overrides session-bound db", boundDB: boundDB, callDB: explicitDB, want: explicitDB},
+	}
 
-	// Assert
-	if capturedDB != nil {
-		t.Fatalf("expected nil, got %v", capturedDB)
+	// Session.InsertOne resolves the DB before running the plan, while a built
+	// plan resolves its own bound DB, so both paths are covered.
+	paths := []struct {
+		name   string
+		insert func(t *testing.T, sess seedling.Session[Company], db seedling.DBTX, opts ...seedling.Option)
+	}{
+		{
+			name: "InsertOne",
+			insert: func(t *testing.T, sess seedling.Session[Company], db seedling.DBTX, opts ...seedling.Option) {
+				t.Helper()
+				sess.InsertOne(t, db, opts...)
+			},
+		},
+		{
+			name: "Plan.Insert",
+			insert: func(t *testing.T, sess seedling.Session[Company], db seedling.DBTX, opts ...seedling.Option) {
+				t.Helper()
+				sess.Build(t, opts...).Insert(t, db)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		for _, path := range paths {
+			t.Run(tt.name+"/"+path.name, func(t *testing.T) {
+				// Arrange
+				setupBlueprints(t)
+				var afterInsertDBs, afterInsertEDBs []seedling.DBTX
+				sess := session[Company](t).WithDB(tt.boundDB)
+
+				// Act
+				path.insert(t, sess, tt.callDB,
+					seedling.AfterInsert(func(_ Company, db seedling.DBTX) {
+						afterInsertDBs = append(afterInsertDBs, db)
+					}),
+					seedling.AfterInsertE(func(_ Company, db seedling.DBTX) error {
+						afterInsertEDBs = append(afterInsertEDBs, db)
+						return nil
+					}),
+				)
+
+				// Assert
+				for kind, got := range map[string][]seedling.DBTX{
+					"AfterInsert":  afterInsertDBs,
+					"AfterInsertE": afterInsertEDBs,
+				} {
+					if len(got) != 1 {
+						t.Fatalf("%s called %d times, want 1", kind, len(got))
+					}
+					if got[0] != tt.want {
+						t.Fatalf("%s got db %v, want %v (same pointer)", kind, got[0], tt.want)
+					}
+				}
+			})
+		}
 	}
 }
 
@@ -1297,13 +1352,14 @@ func TestRef_HasManyAppliesToAllChildren(t *testing.T) {
 	result := plan.Insert(t, nil)
 
 	// Assert
-	for id, node := range result.All() {
-		if node.Name() != "employee" {
-			continue
-		}
+	employees := result.Nodes("employee")
+	if len(employees) != 2 {
+		t.Fatalf("got %d employees, want %d", len(employees), 2)
+	}
+	for i, node := range employees {
 		employee := node.Value().(Employee)
 		if employee.Name != "custom-employee" {
-			t.Fatalf("%s Name mismatch: got %v, want %v", id, employee.Name, "custom-employee")
+			t.Fatalf("employee[%d] Name mismatch: got %v, want %v", i, employee.Name, "custom-employee")
 		}
 	}
 }
@@ -2040,20 +2096,31 @@ func TestInterfaceModel_FieldOptions(t *testing.T) {
 func TestGenerate_WithSeed(t *testing.T) {
 	// Arrange
 	setupBlueprints(t)
+	// Draw several values so that two generators cannot agree by chance.
+	draw := func(r *rand.Rand) string {
+		return fmt.Sprintf("company-%x-%x-%x-%x", r.Uint64(), r.Uint64(), r.Uint64(), r.Uint64())
+	}
 	gen := seedling.Generate(func(r *rand.Rand, c *Company) {
-		c.Name = fmt.Sprintf("company-%d", r.IntN(1000))
+		c.Name = draw(r)
 	})
+	// WithSeed is documented as WithRand(rand.New(rand.NewPCG(seed, seed^goldenGamma))).
+	const goldenGamma uint64 = 0x9e3779b97f4a7c15
+	want := draw(rand.New(rand.NewPCG(42, 42^goldenGamma)))
 
 	// Act
 	first := insertOne[Company](t, nil, seedling.WithSeed(42), gen)
 	second := insertOne[Company](t, nil, seedling.WithSeed(42), gen)
+	other := insertOne[Company](t, nil, seedling.WithSeed(43), gen)
 
 	// Assert
-	if first.Name != second.Name {
+	if first.Name != want {
+		t.Fatalf("got %v, want %v", first.Name, want)
+	}
+	if second.Name != first.Name {
 		t.Fatalf("expected deterministic generated names: got %v and %v", first.Name, second.Name)
 	}
-	if first.Name == "test-company" {
-		t.Fatalf("expected generated name to differ from default, got %v", first.Name)
+	if other.Name == first.Name {
+		t.Fatalf("expected seeds 42 and 43 to generate different names, both got %v", first.Name)
 	}
 }
 
