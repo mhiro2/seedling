@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math/rand/v2"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -428,20 +430,27 @@ func TestInsertMany(t *testing.T) {
 	setupBlueprints(t)
 
 	// Act
+	// The blueprint defaults Status to "open", so use a different value to
+	// observe that Set reaches every record.
 	tasks := insertMany[Task](t, nil, 3,
-		seedling.Set("Status", "open"),
+		seedling.Set("Status", "in_progress"),
 	)
 
 	// Assert
 	if len(tasks) != 3 {
 		t.Fatalf("got len %d, want %d", len(tasks), 3)
 	}
+	seen := make(map[int]bool, len(tasks))
 	for i, task := range tasks {
 		if task.ID == 0 {
 			t.Fatalf("task[%d] ID should be set", i)
 		}
-		if task.Status != "open" {
-			t.Fatalf("task[%d] Status should be open, got %v", i, task.Status)
+		if seen[task.ID] {
+			t.Fatalf("task[%d] ID %d is duplicated", i, task.ID)
+		}
+		seen[task.ID] = true
+		if task.Status != "in_progress" {
+			t.Fatalf("task[%d] Status should be in_progress, got %v", i, task.Status)
 		}
 	}
 }
@@ -587,17 +596,63 @@ func TestInsertMany_BatchDoesNotShareSequenceSpecificDependencies(t *testing.T) 
 }
 
 func TestBuild_DebugString(t *testing.T) {
-	// Arrange
-	setupBlueprints(t)
+	tests := []struct {
+		name  string
+		build func(t *testing.T) string
+		want  string
+	}{
+		{
+			name: "dependency tree",
+			build: func(t *testing.T) string {
+				t.Helper()
+				setupBlueprints(t)
+				return build[Task](t).DebugString()
+			},
+			want: "task\n" +
+				"├─ user\n" +
+				"│  └─ company\n" +
+				"└─ project\n" +
+				"   └─ company\n",
+		},
+		{
+			name: "set fields on root and ref",
+			build: func(t *testing.T) string {
+				t.Helper()
+				setupBlueprints(t)
+				return build[Task](t,
+					seedling.Set("Title", "custom"),
+					seedling.Ref("project", seedling.Set("Name", "proj")),
+				).DebugString()
+			},
+			want: "task (Set: Title)\n" +
+				"├─ user\n" +
+				"│  └─ company\n" +
+				"└─ project (Set: Name)\n" +
+				"   └─ company\n",
+		},
+		{
+			name: "has-many children",
+			build: func(t *testing.T) string {
+				t.Helper()
+				setupHasManyBlueprints(t)
+				return build[Department](t).DebugString()
+			},
+			want: "department\n" +
+				"├─ employee\n" +
+				"└─ employee\n",
+		},
+	}
 
-	// Act
-	plan := build[Task](t)
-	out := plan.DebugString()
-	t.Log(out)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Act
+			got := tt.build(t)
 
-	// Assert
-	if out == "" {
-		t.Fatal("expected non-empty DebugString")
+			// Assert
+			if got != tt.want {
+				t.Fatalf("got debug output:\n%s\nwant:\n%s", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -896,24 +951,6 @@ func TestInsertMany_SeqWithDependencies(t *testing.T) {
 	}
 }
 
-func TestBuild_DebugStringWithSetFields(t *testing.T) {
-	// Arrange
-	setupBlueprints(t)
-
-	// Act
-	plan := build[Task](t,
-		seedling.Set("Title", "custom"),
-		seedling.Ref("project", seedling.Set("Name", "proj")),
-	)
-	out := plan.DebugString()
-	t.Log(out)
-
-	// Assert
-	if !strings.Contains(out, "Set:") {
-		t.Fatal("expected output to contain \"Set:\"")
-	}
-}
-
 func TestResult_DebugString(t *testing.T) {
 	// Arrange
 	setupBlueprints(t)
@@ -1115,8 +1152,10 @@ func TestTrait_Combined(t *testing.T) {
 func TestTrait_Nested(t *testing.T) {
 	// Arrange
 	setupBlueprints(t)
+	// Both values differ from the blueprint defaults, so each trait level is
+	// observable on its own.
 	baseTrait := seedling.InlineTrait(
-		seedling.Set("Status", "open"),
+		seedling.Set("Status", "blocked"),
 	)
 	fullTrait := seedling.InlineTrait(
 		baseTrait,
@@ -1127,8 +1166,8 @@ func TestTrait_Nested(t *testing.T) {
 	task := insertOne[Task](t, nil, fullTrait)
 
 	// Assert
-	if task.Status != "open" {
-		t.Fatalf("got %v, want %v", task.Status, "open")
+	if task.Status != "blocked" {
+		t.Fatalf("got %v, want %v", task.Status, "blocked")
 	}
 	if task.Title != "nested-trait-title" {
 		t.Fatalf("got %v, want %v", task.Title, "nested-trait-title")
@@ -1145,24 +1184,50 @@ func TestResult_All(t *testing.T) {
 	all := result.All()
 
 	// Assert
-	if len(all) == 0 {
-		t.Fatal("expected non-empty All()")
-	}
-
 	// Task blueprint creates: task (root), project, company (for project),
-	// assignee/user, company (for user) — at least 4-5 nodes.
-	if len(all) < 4 {
-		t.Fatalf("got len %d, want >= 4", len(all))
+	// assignee/user, company (for user).
+	counts := make(map[string]int, len(all))
+	var task Task
+	var project Project
+	var user User
+	var companyIDs []int
+	for id, nr := range all {
+		counts[nr.Name()]++
+		switch v := nr.Value().(type) {
+		case Task:
+			task = v
+		case Project:
+			project = v
+		case User:
+			user = v
+		case Company:
+			if v.ID == 0 {
+				t.Fatalf("node %q has zero company ID", id)
+			}
+			companyIDs = append(companyIDs, v.ID)
+		default:
+			t.Fatalf("node %q has unexpected value %T", id, v)
+		}
+	}
+	wantCounts := map[string]int{"task": 1, "project": 1, "user": 1, "company": 2}
+	if !maps.Equal(counts, wantCounts) {
+		t.Fatalf("got blueprint counts %v, want %v", counts, wantCounts)
 	}
 
-	// Verify that all nodes have non-empty names and values.
-	for id, nr := range all {
-		if nr.Name() == "" {
-			t.Errorf("node %q has empty name", id)
-		}
-		if nr.Value() == nil {
-			t.Errorf("node %q has nil value", id)
-		}
+	if task != result.Root() {
+		t.Fatalf("task node = %+v, want root %+v", task, result.Root())
+	}
+	if project.ID == 0 || task.ProjectID != project.ID {
+		t.Fatalf("task.ProjectID = %d, want project ID %d", task.ProjectID, project.ID)
+	}
+	if user.ID == 0 || task.AssigneeUserID != user.ID {
+		t.Fatalf("task.AssigneeUserID = %d, want user ID %d", task.AssigneeUserID, user.ID)
+	}
+	slices.Sort(companyIDs)
+	branchCompanyIDs := []int{project.CompanyID, user.CompanyID}
+	slices.Sort(branchCompanyIDs)
+	if companyIDs[0] == companyIDs[1] || !slices.Equal(companyIDs, branchCompanyIDs) {
+		t.Fatalf("got company IDs %v, want one distinct company per branch %v", companyIDs, branchCompanyIDs)
 	}
 }
 
@@ -1391,20 +1456,6 @@ func TestRef_OptionalHasManyExpandsRelation(t *testing.T) {
 	}
 }
 
-func TestBuild_DebugString_HasMany(t *testing.T) {
-	// Arrange
-	setupHasManyBlueprints(t)
-
-	// Act
-	plan := build[Department](t)
-	out := plan.DebugString()
-
-	// Assert
-	if !strings.Contains(out, "employee") {
-		t.Fatal("expected output to contain \"employee\"")
-	}
-}
-
 func TestResult_DebugString_HasMany(t *testing.T) {
 	// Arrange
 	setupHasManyBlueprints(t)
@@ -1415,8 +1466,24 @@ func TestResult_DebugString_HasMany(t *testing.T) {
 	out := result.DebugString()
 
 	// Assert
-	if !strings.Contains(out, "employee") {
-		t.Fatal("expected output to contain \"employee\"")
+	// Unlike the plan tree, the result tree marks each generated child as
+	// inserted and shows its primary key.
+	employees := result.Nodes("employee")
+	if len(employees) != 2 {
+		t.Fatalf("got %d employees, want %d", len(employees), 2)
+	}
+	if got := strings.Count(out, "employee [inserted] ID="); got != 2 {
+		t.Fatalf("got %d inserted employee lines, want 2 in:\n%s", got, out)
+	}
+	wantLines := make([]string, 0, 1+len(employees))
+	wantLines = append(wantLines, fmt.Sprintf("department [inserted] ID=%d\n", result.Root().ID))
+	for _, node := range employees {
+		wantLines = append(wantLines, fmt.Sprintf("employee [inserted] ID=%d\n", node.Value().(Employee).ID))
+	}
+	for _, line := range wantLines {
+		if !strings.Contains(out, line) {
+			t.Fatalf("expected output to contain %q, got:\n%s", line, out)
+		}
 	}
 }
 
