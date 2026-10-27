@@ -110,7 +110,7 @@ func SetOnFKField(blueprint, field, relation string) error {
 }
 
 func UseOnNonBelongsTo(blueprint, relation, kind string) error {
-	return fmt.Errorf("%w: relation %q on blueprint %q is %s; Use is only supported for belongs_to relations", ErrInvalidOption, relation, blueprint, kind)
+	return fmt.Errorf("%w: relation %q on blueprint %q is %s; Use is only supported for belongs_to relations and, with a slice of existing records, many_to_many relations", ErrInvalidOption, relation, blueprint, kind)
 }
 
 func UseTypeMismatch(relation, expected, got string) error {

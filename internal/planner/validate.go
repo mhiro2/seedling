@@ -54,10 +54,26 @@ func validateOptions(reg Registry, bp *BlueprintDef, opts *OptionSet) error {
 		}
 	}
 
-	// Validate Ref targets.
+	// Validate Ref targets. Collection relations carry their options per
+	// element in Collections instead.
 	for name := range opts.Refs {
-		if _, ok := rels.byName[name]; !ok {
+		rel, ok := rels.byName[name]
+		if !ok {
 			return fmt.Errorf("validate ref %q: %w", name, errx.RelationNotFoundWithHint(bp.Name, name, rels.available))
+		}
+		if rel.Kind != BelongsTo {
+			return fmt.Errorf("%w: ref %q on blueprint %q targets a %s relation; configure it per element", errx.ErrInvalidOption, name, bp.Name, rel.Kind)
+		}
+	}
+
+	// Validate collection targets.
+	for name := range opts.Collections {
+		rel, ok := rels.byName[name]
+		if !ok {
+			return fmt.Errorf("validate ref %q: %w", name, errx.RelationNotFoundWithHint(bp.Name, name, rels.available))
+		}
+		if rel.Kind != HasMany && rel.Kind != ManyToMany {
+			return fmt.Errorf("%w: relation %q on blueprint %q is %s; per-element options apply only to has_many and many_to_many relations", errx.ErrInvalidOption, name, bp.Name, rel.Kind)
 		}
 	}
 
@@ -90,6 +106,11 @@ func validateOptions(reg Registry, bp *BlueprintDef, opts *OptionSet) error {
 		}
 	}
 	for name := range opts.Refs {
+		if opts.Omits[name] {
+			return fmt.Errorf("validate relation %q options: %w", name, errx.OmitAndRefConflict(bp.Name, name))
+		}
+	}
+	for name := range opts.Collections {
 		if opts.Omits[name] {
 			return fmt.Errorf("validate relation %q options: %w", name, errx.OmitAndRefConflict(bp.Name, name))
 		}
@@ -129,6 +150,11 @@ func validateOptions(reg Registry, bp *BlueprintDef, opts *OptionSet) error {
 				return fmt.Errorf("validate relation %q options: %w", name, errx.OnlyExcludesConfigured(bp.Name, name, "Ref"))
 			}
 		}
+		for name := range opts.Collections {
+			if !opts.Only[name] {
+				return fmt.Errorf("validate relation %q options: %w", name, errx.OnlyExcludesConfigured(bp.Name, name, "Ref"))
+			}
+		}
 		for name := range opts.Whens {
 			if !opts.Only[name] {
 				return fmt.Errorf("validate relation %q options: %w", name, errx.OnlyExcludesConfigured(bp.Name, name, "When"))
@@ -147,7 +173,66 @@ func validateOptions(reg Registry, bp *BlueprintDef, opts *OptionSet) error {
 		}
 	}
 
+	for name, elements := range opts.Collections {
+		if err := validateCollection(reg, bp.Name, rels.byName[name], elements); err != nil {
+			return fmt.Errorf("validate ref %q: %w", name, err)
+		}
+	}
+
 	return nil
+}
+
+// validateCollection checks the per-element options of a has-many or
+// many-to-many relation.
+func validateCollection(reg Registry, blueprint string, rel RelationDef, elements []ElementOptions) error {
+	refBP, err := reg.LookupByName(rel.RefBlueprint)
+	if err != nil {
+		return fmt.Errorf("lookup ref blueprint %q: %w", rel.RefBlueprint, err)
+	}
+	var joinBP *BlueprintDef
+	if rel.Kind == ManyToMany && rel.ThroughBlueprint != "" {
+		if joinBP, err = reg.LookupByName(rel.ThroughBlueprint); err != nil {
+			return fmt.Errorf("lookup through blueprint %q: %w", rel.ThroughBlueprint, err)
+		}
+	}
+
+	for i, elem := range elements {
+		if elem.Through != nil && joinBP == nil {
+			return fmt.Errorf("%w: element %d of relation %q on blueprint %q has Through options, but only many_to_many relations have a join record", errx.ErrInvalidOption, i, rel.Name, blueprint)
+		}
+		if elem.Use != nil {
+			if rel.Kind != ManyToMany {
+				return fmt.Errorf("validate use %q: %w", rel.Name, errx.UseOnNonBelongsTo(blueprint, rel.Name, string(rel.Kind)))
+			}
+			if !optionSetEmpty(elem.Opts) {
+				return fmt.Errorf("%w: element %d of relation %q on blueprint %q is an existing record, so only Through options can apply to it", errx.ErrInvalidOption, i, rel.Name, blueprint)
+			}
+			rv := reflect.ValueOf(elem.Use)
+			if rv.Kind() == reflect.Pointer && rv.IsNil() {
+				return fmt.Errorf("%w: use %q element %d must not be nil", errx.ErrInvalidOption, rel.Name, i)
+			}
+			if err := validateUseValueType(rel.Name, refBP.ModelType, elem.Use); err != nil {
+				return err
+			}
+		}
+		if err := validateOptions(reg, refBP, elem.Opts); err != nil {
+			return fmt.Errorf("element %d: %w", i, err)
+		}
+		if elem.Through != nil {
+			if err := validateOptions(reg, joinBP, elem.Through); err != nil {
+				return fmt.Errorf("element %d through %q: %w", i, rel.ThroughBlueprint, err)
+			}
+		}
+	}
+	return nil
+}
+
+// optionSetEmpty reports whether opts configures nothing.
+func optionSetEmpty(opts *OptionSet) bool {
+	return opts == nil ||
+		len(opts.Sets) == 0 && len(opts.Uses) == 0 && len(opts.Refs) == 0 && len(opts.Collections) == 0 &&
+			len(opts.Omits) == 0 && len(opts.Whens) == 0 && len(opts.WithFns) == 0 && len(opts.GenFns) == 0 &&
+			opts.Rand == nil && opts.Only == nil
 }
 
 type relationIndex struct {

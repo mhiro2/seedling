@@ -53,3 +53,37 @@ func TestQuickStart_ReuseCompanyWithUse(t *testing.T) {
 		t.Fatalf("expected Name = %q, got %q", "alice", user.Name)
 	}
 }
+
+func TestQuickStart_CreateUsersFromCompany(t *testing.T) {
+	// Arrange
+	reg := setup(t)
+
+	// Act
+	result := seedling.NewSession[quickstart.Company](reg).InsertOne(t, nil,
+		seedling.Ref("users",
+			seedling.Count(3),
+			seedling.At(1, seedling.Set("Name", "admin")),
+		),
+	)
+
+	// Assert
+	users, err := seedling.NodesAs[quickstart.User](result, "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(users) != 3 {
+		t.Fatalf("expected 3 users, got %d", len(users))
+	}
+	admins := 0
+	for _, user := range users {
+		if user.CompanyID != result.Root().ID {
+			t.Fatalf("expected CompanyID = %d, got %d", result.Root().ID, user.CompanyID)
+		}
+		if user.Name == "admin" {
+			admins++
+		}
+	}
+	if admins != 1 {
+		t.Fatalf("expected exactly one admin, got %d", admins)
+	}
+}

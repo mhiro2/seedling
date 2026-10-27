@@ -123,6 +123,7 @@ seedling-gen atlas \
 - `atlas` reports an error for a `foreign_key` block it cannot resolve (missing `columns` or `ref_columns`, a column the table does not declare, mismatched column counts, or references to more than one table) instead of dropping the relation.
 - `--import-path` must be a full Go import path.
 - The `ent` import path must resolve to compilable entc output. `seedling-gen` reads exact field, mixin, setter, lifecycle, and ID signatures so custom acronyms are preserved and missing or incompatible generated signatures are rejected.
+- Every `BelongsTo` also produces an `Optional` `HasMany` relation on the parent (`users`, or `assignee_tasks` when the relation name differs from the parent). It never expands by default; tests opt in with `Ref("users", seedling.Count(n))`.
 - Generated `Defaults` fill common scalar fields deterministically, but skip primary keys (including GORM's untagged `ID` convention), relation foreign keys, and unsupported custom types. Fields promoted from an embedded `gorm.Model` are set through the embedded struct literal.
 - Customize through the `Blueprints` fields in hand-written code: assign `Insert` / `Delete`, wrap the generated `Defaults` (`base := b.User.Defaults; b.User.Defaults = func() User { u := base(); u.Name = "alice"; return u }`), set `Traits`, or `append` to `Relations`. Adding columns or relations and regenerating then needs no repair to that code.
 

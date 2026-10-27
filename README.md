@@ -66,7 +66,7 @@ seedling handles FK ordering, graph expansion, and cleanup so your tests stay fo
 - 🪶 Zero runtime dependencies in the core module; optional DB helpers live in companion packages
 - 🔗 Automatic FK resolution with topological insert ordering and minimal graph expansion
 - 🌿 First-class relation kinds: `BelongsTo`, `HasMany`, `ManyToMany`, plus composite keys
-- 🔧 Per-test overrides via `Set`, `Use`, and `Ref`
+- 🔧 Per-test overrides via `Set`, `Use`, and `Ref`, including the count and per-record options of `HasMany` / `ManyToMany` children
 - ♻️ `WithTx` for auto-rollback transactions -- no manual cleanup
 - 🔌 Works with sqlc, `database/sql`, pgx, GORM, ent, or any other DB handle you own
 - 🎲 Deterministic fake data via [`seedling/faker`](https://pkg.go.dev/github.com/mhiro2/seedling/faker) with multi-locale support (en, ja, zh, ko, de, fr)
