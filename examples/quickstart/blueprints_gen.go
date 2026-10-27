@@ -40,6 +40,9 @@ func NewBlueprints() Blueprints {
 			Defaults: func() Company {
 				return Company{Name: "company-name"}
 			},
+			Relations: []seedling.Relation{
+				{Name: "users", Kind: seedling.HasMany, LocalField: "CompanyID", RefField: "ID", RefBlueprint: "user", Optional: true},
+			},
 			// Insert is not generated: set it in hand-written code before Register.
 		},
 		User: seedling.Blueprint[User]{
