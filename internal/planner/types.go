@@ -62,15 +62,25 @@ type FieldSet struct {
 
 // OptionSet holds parsed options for a single node.
 type OptionSet struct {
-	Sets    []FieldSet                         // Set options in the order they were written
-	Uses    map[string]any                     // relation name → existing value
-	Refs    map[string]*OptionSet              // relation name → nested options
-	Omits   map[string]bool                    // relation name → true
-	Whens   map[string]func(any) (bool, error) // relation name → dynamic expansion predicate
-	WithFns []WithFn                           // typed root mutators
-	GenFns  []GenerateFn                       // typed rand-driven mutators
-	Rand    *rand.Rand                         // RNG used by GenFns
-	Only    map[string]bool                    // nil = expand all; non-nil = lazy mode (root-level relation filter)
+	Sets        []FieldSet                         // Set options in the order they were written
+	Uses        map[string]any                     // belongs-to relation name → existing value
+	Refs        map[string]*OptionSet              // belongs-to relation name → nested options
+	Collections map[string][]ElementOptions        // has-many/many-to-many relation name → per-element options
+	Omits       map[string]bool                    // relation name → true
+	Whens       map[string]func(any) (bool, error) // relation name → dynamic expansion predicate
+	WithFns     []WithFn                           // typed root mutators
+	GenFns      []GenerateFn                       // typed rand-driven mutators
+	Rand        *rand.Rand                         // RNG used by GenFns
+	Only        map[string]bool                    // nil = expand all; non-nil = lazy mode (root-level relation filter)
+}
+
+// ElementOptions configures one element of a has-many or many-to-many
+// relation. A configured relation creates exactly one record per element,
+// replacing the relation's Count.
+type ElementOptions struct {
+	Opts    *OptionSet // options for the related record
+	Through *OptionSet // options for the join record (many-to-many only)
+	Use     any        // existing related record (many-to-many only); nil creates one
 }
 
 // PlanResult is the output of the planner.

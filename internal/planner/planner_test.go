@@ -44,6 +44,15 @@ func newEmptyOptionSet() *planner.OptionSet {
 	}
 }
 
+// sameElements configures n collection elements that share opts.
+func sameElements(n int, opts *planner.OptionSet) []planner.ElementOptions {
+	elements := make([]planner.ElementOptions, n)
+	for i := range elements {
+		elements[i].Opts = opts
+	}
+	return elements
+}
+
 // graphNodeIDs returns the sorted IDs of every node in g.
 func graphNodeIDs(g *graph.Graph) []string {
 	nodes := g.Nodes()
@@ -525,13 +534,15 @@ func TestPlan_HasManyChildBackReferenceBindsDespiteWhen(t *testing.T) {
 	// the department that created it.
 	reg := newMockRegistry()
 	opts := newEmptyOptionSet()
-	opts.Refs["employees"] = &planner.OptionSet{
-		Uses:  make(map[string]any),
-		Refs:  make(map[string]*planner.OptionSet),
-		Omits: make(map[string]bool),
-		Whens: map[string]func(any) (bool, error){
-			"department": func(any) (bool, error) { return false, nil },
-		},
+	opts.Collections = map[string][]planner.ElementOptions{
+		"employees": sameElements(2, &planner.OptionSet{
+			Uses:  make(map[string]any),
+			Refs:  make(map[string]*planner.OptionSet),
+			Omits: make(map[string]bool),
+			Whens: map[string]func(any) (bool, error){
+				"department": func(any) (bool, error) { return false, nil },
+			},
+		}),
 	}
 
 	// Act
@@ -560,13 +571,14 @@ func TestPlan_HasManyRefAppliesToChildren(t *testing.T) {
 	reg := newMockRegistry()
 	opts := &planner.OptionSet{
 		Uses: make(map[string]any),
-		Refs: map[string]*planner.OptionSet{
-			"employees": {
+		Refs: make(map[string]*planner.OptionSet),
+		Collections: map[string][]planner.ElementOptions{
+			"employees": sameElements(2, &planner.OptionSet{
 				Sets:  []planner.FieldSet{{Field: "Name", Value: "custom-employee"}},
 				Uses:  make(map[string]any),
 				Refs:  make(map[string]*planner.OptionSet),
 				Omits: make(map[string]bool),
-			},
+			}),
 		},
 		Omits: make(map[string]bool),
 	}
@@ -599,11 +611,13 @@ func TestPlan_OptionalHasManyRefExpandsRelation(t *testing.T) {
 	departmentBP.Relations[0].Required = false
 
 	opts := newEmptyOptionSet()
-	opts.Refs["employees"] = &planner.OptionSet{
-		Sets:  []planner.FieldSet{{Field: "Name", Value: "custom-employee"}},
-		Uses:  make(map[string]any),
-		Refs:  make(map[string]*planner.OptionSet),
-		Omits: make(map[string]bool),
+	opts.Collections = map[string][]planner.ElementOptions{
+		"employees": sameElements(2, &planner.OptionSet{
+			Sets:  []planner.FieldSet{{Field: "Name", Value: "custom-employee"}},
+			Uses:  make(map[string]any),
+			Refs:  make(map[string]*planner.OptionSet),
+			Omits: make(map[string]bool),
+		}),
 	}
 
 	// Act
@@ -854,13 +868,14 @@ func TestPlan_ManyToManyRefAppliesToChildren(t *testing.T) {
 	reg := newMockRegistry()
 	opts := &planner.OptionSet{
 		Uses: make(map[string]any),
-		Refs: map[string]*planner.OptionSet{
-			"tags": {
+		Refs: make(map[string]*planner.OptionSet),
+		Collections: map[string][]planner.ElementOptions{
+			"tags": sameElements(2, &planner.OptionSet{
 				Sets:  []planner.FieldSet{{Field: "Name", Value: "custom-tag"}},
 				Uses:  make(map[string]any),
 				Refs:  make(map[string]*planner.OptionSet),
 				Omits: make(map[string]bool),
-			},
+			}),
 		},
 		Omits: make(map[string]bool),
 	}
@@ -1106,11 +1121,13 @@ func TestPlan_OptionalManyToManyRefExpandsRelation(t *testing.T) {
 	articleBP.Relations[0].Required = false
 
 	opts := newEmptyOptionSet()
-	opts.Refs["tags"] = &planner.OptionSet{
-		Sets:  []planner.FieldSet{{Field: "Name", Value: "custom-tag"}},
-		Uses:  make(map[string]any),
-		Refs:  make(map[string]*planner.OptionSet),
-		Omits: make(map[string]bool),
+	opts.Collections = map[string][]planner.ElementOptions{
+		"tags": sameElements(2, &planner.OptionSet{
+			Sets:  []planner.FieldSet{{Field: "Name", Value: "custom-tag"}},
+			Uses:  make(map[string]any),
+			Refs:  make(map[string]*planner.OptionSet),
+			Omits: make(map[string]bool),
+		}),
 	}
 
 	// Act
@@ -1128,5 +1145,53 @@ func TestPlan_OptionalManyToManyRefExpandsRelation(t *testing.T) {
 		if result.Graph.Node(nodeID) == nil {
 			t.Fatalf("expected node %q", nodeID)
 		}
+	}
+}
+
+func TestPlan_CollectionElementsReplaceCount(t *testing.T) {
+	// Arrange
+	reg := newMockRegistry()
+	opts := newEmptyOptionSet()
+	opts.Collections = map[string][]planner.ElementOptions{
+		"employees": sameElements(3, nil),
+	}
+
+	// Act
+	result, err := planner.Plan(reg, reflect.TypeFor[Department](), opts)
+	// Assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, nodeID := range []string{"department.employees[0]", "department.employees[1]", "department.employees[2]"} {
+		if result.Graph.Node(nodeID) == nil {
+			t.Fatalf("expected node %q", nodeID)
+		}
+	}
+	if node := result.Graph.Node("department.employees[3]"); node != nil {
+		t.Fatalf("unexpected node %q", node.ID)
+	}
+}
+
+func TestPlan_ManyToManyUsedElementInsertsOnlyJoin(t *testing.T) {
+	// Arrange
+	reg := newMockRegistry()
+	opts := newEmptyOptionSet()
+	opts.Collections = map[string][]planner.ElementOptions{
+		"tags": {{Use: Tag{ID: 42, Name: "existing"}}},
+	}
+
+	// Act
+	result, err := planner.Plan(reg, reflect.TypeFor[Article](), opts)
+	// Assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	tag := result.Graph.Node("article.tags")
+	if tag == nil || !tag.IsProvided {
+		t.Fatalf("got tag node %+v, want a provided node", tag)
+	}
+	join := result.Graph.Node("article.tags.%join:article_tag")
+	if join == nil || join.IsProvided {
+		t.Fatalf("got join node %+v, want an inserted node", join)
 	}
 }

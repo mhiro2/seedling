@@ -40,6 +40,15 @@ func (s setOption) applyOption(_ *optionResolver, o *optionSet) error {
 // Use provides an existing record for a direct relation, skipping auto-creation.
 //
 //	seedling.Use("company", existingCompany)
+//
+// For a many-to-many relation, Use takes a slice of existing related records
+// and creates only the join records that link them, one per record:
+//
+//	seedling.Use("roles", []Role{admin, viewer})
+//
+// [Through] options inside a [Ref] to the same relation still configure those
+// join records. Has-many relations do not accept Use, since attaching an
+// existing child would require updating its foreign key.
 func Use(name string, value any) Option {
 	return useOption{name: name, value: value}
 }
@@ -49,7 +58,15 @@ type useOption struct {
 	value any
 }
 
-func (u useOption) applyOption(_ *optionResolver, o *optionSet) error {
+func (u useOption) applyOption(r *optionResolver, o *optionSet) error {
+	if rel, ok := collectionRelation(o, u.name); ok && rel.kind == ManyToMany {
+		t, err := r.collectionTarget(o, rel)
+		if err != nil {
+			return err
+		}
+		t.use, t.hasUse = u.value, true
+		return nil
+	}
 	o.uses[u.name] = u.value
 	return nil
 }
@@ -63,6 +80,17 @@ func (u useOption) applyOption(_ *optionResolver, o *optionSet) error {
 // [ErrInvalidOption].
 //
 //	seedling.Ref("project", seedling.Set("Name", "renewal"))
+//
+// For a has-many or many-to-many relation, the options apply to every related
+// record. [Count] replaces the relation's [Relation.Count] for this call, and
+// [At], [Each], and [Through] narrow options to particular records or to their
+// join records:
+//
+//	seedling.Ref("items",
+//	    seedling.Count(3),
+//	    seedling.Set("Status", "open"),
+//	    seedling.At(1, seedling.Set("Status", "cancelled")),
+//	)
 func Ref(name string, opts ...Option) Option {
 	return refOption{name: name, opts: opts}
 }
@@ -73,10 +101,119 @@ type refOption struct {
 }
 
 func (r refOption) applyOption(res *optionResolver, o *optionSet) error {
+	if rel, ok := collectionRelation(o, r.name); ok {
+		t, err := res.collectionTarget(o, rel)
+		if err == nil {
+			err = t.addRef(res, r.opts)
+		}
+		if err != nil {
+			return fmt.Errorf("resolve options for ref %q: %w", r.name, err)
+		}
+		return nil
+	}
 	if err := res.resolve(r.opts, res.refTarget(o, r.name)); err != nil {
 		return fmt.Errorf("resolve options for ref %q: %w", r.name, err)
 	}
 	return nil
+}
+
+// Count sets how many records a has-many or many-to-many relation creates,
+// replacing the relation's [Relation.Count]. It must be passed directly to the
+// [Ref] of that relation; Count(0) creates none.
+//
+//	seedling.Ref("items", seedling.Count(21))
+func Count(n int) Option {
+	return countOption{n: n}
+}
+
+type countOption struct {
+	n int
+}
+
+func (countOption) applyOption(*optionResolver, *optionSet) error {
+	return fmt.Errorf("%w: Count must be passed directly to Ref of a has_many or many_to_many relation", ErrInvalidOption)
+}
+
+// At applies options only to the related record at the 0-based index of a
+// has-many or many-to-many relation. It is valid inside the [Ref] of such a
+// relation, and like every option it applies in written order, so options
+// written after it override it for that record.
+//
+//	seedling.Ref("items", seedling.Count(3), seedling.At(1, seedling.Set("Status", "cancelled")))
+func At(index int, opts ...Option) Option {
+	return atOption{index: index, opts: opts}
+}
+
+type atOption struct {
+	index int
+	opts  []Option
+}
+
+func (a atOption) applyOption(r *optionResolver, o *optionSet) error {
+	if o.elem == nil {
+		return elementOnlyError("At")
+	}
+	if a.index < 0 {
+		return fmt.Errorf("%w: At index must be >= 0, got %d", ErrInvalidOption, a.index)
+	}
+	o.elem.target.atIndices = append(o.elem.target.atIndices, a.index)
+	if a.index != o.elem.index {
+		return nil
+	}
+	return r.resolve(a.opts, o)
+}
+
+// Each applies the options fn returns for each related record of a has-many or
+// many-to-many relation. fn receives the record's 0-based index. It is valid
+// inside the [Ref] of such a relation.
+//
+//	seedling.Ref("items", seedling.Count(3), seedling.Each(func(i int) []seedling.Option {
+//	    return []seedling.Option{seedling.Set("Position", i+1)}
+//	}))
+func Each(fn func(i int) []Option) Option {
+	return eachOption{fn: fn}
+}
+
+type eachOption struct {
+	fn func(int) []Option
+}
+
+func (e eachOption) applyOption(r *optionResolver, o *optionSet) error {
+	if o.elem == nil {
+		return elementOnlyError("Each")
+	}
+	if e.fn == nil {
+		return fmt.Errorf("%w: Each function must not be nil", ErrInvalidOption)
+	}
+	return r.resolve(e.fn(o.elem.index), o)
+}
+
+// Through applies options to the join record that links a many-to-many related
+// record to its owner. It is valid inside the [Ref] of a many-to-many relation,
+// including inside [At] to configure a single join record.
+//
+//	seedling.Ref("roles", seedling.At(0, seedling.Through(seedling.Set("ExpiresAt", deadline))))
+func Through(opts ...Option) Option {
+	return throughOption{opts: opts}
+}
+
+type throughOption struct {
+	opts []Option
+}
+
+func (th throughOption) applyOption(r *optionResolver, o *optionSet) error {
+	if o.elem == nil || o.elem.through == nil {
+		return fmt.Errorf("%w: Through applies only inside Ref of a many_to_many relation", ErrInvalidOption)
+	}
+	o.elem.throughUsed = true
+	if err := r.resolve(th.opts, o.elem.through); err != nil {
+		return fmt.Errorf("resolve through options: %w", err)
+	}
+	return nil
+}
+
+func elementOnlyError(option string) error {
+	return fmt.Errorf("%w: %s applies only inside Ref of a has_many or many_to_many relation", ErrInvalidOption, option)
 }
 
 // Omit prevents auto-creation of an optional relation.

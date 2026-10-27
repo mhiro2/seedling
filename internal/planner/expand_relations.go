@@ -165,13 +165,13 @@ func (e *expander) expandHasMany(
 		return fmt.Errorf("lookup has-many blueprint %q: %w", rel.RefBlueprint, err)
 	}
 
-	childOpts := nestedRelationOpts(opts, rel.Name)
+	elements := relationElements(rel, opts)
 	childBindings := hasManyBindings(childBP, parentNode, rel)
-	count := relationCount(rel)
+	count := len(elements)
 
-	for i := range count {
+	for i, elem := range elements {
 		childPath := appendRelationPath(relationPath, rel.Name)
-		childNode, err := e.expandBlueprint(childBP, relationNodeIdentity(parentNodeID, rel.Name, i, count), childOpts, childBindings, childPath)
+		childNode, err := e.expandBlueprint(childBP, relationNodeIdentity(parentNodeID, rel.Name, i, count), elem.Opts, childBindings, childPath)
 		if err != nil {
 			return err
 		}
@@ -235,19 +235,24 @@ func (e *expander) expandManyToMany(
 		return err
 	}
 
-	childOpts := nestedRelationOpts(opts, rel.Name)
-	count := relationCount(rel)
+	elements := relationElements(rel, opts)
+	count := len(elements)
 
-	for i := range count {
+	for i, elem := range elements {
 		childPath := appendRelationPath(relationPath, rel.Name)
 		childNodeID := relationNodeIdentity(parentNodeID, rel.Name, i, count)
-		childNode, err := e.expandBlueprint(childBP, childNodeID, childOpts, nil, childPath)
-		if err != nil {
-			return err
+		var childNode *graph.Node
+		if elem.Use != nil {
+			childNode = e.addProvidedNode(childBP, childNodeID, elem.Use)
+		} else {
+			childNode, err = e.expandBlueprint(childBP, childNodeID, elem.Opts, nil, childPath)
+			if err != nil {
+				return err
+			}
 		}
 
 		joinBindings, parentBound, childBound := manyToManyBindings(joinBP, parentNode, childNode, rel)
-		joinNode, err := e.expandBlueprint(joinBP, joinNodeIdentity(childNodeID, rel.ThroughBlueprint), nil, joinBindings, appendJoinPath(childPath, rel.ThroughBlueprint))
+		joinNode, err := e.expandBlueprint(joinBP, joinNodeIdentity(childNodeID, rel.ThroughBlueprint), elem.Through, joinBindings, appendJoinPath(childPath, rel.ThroughBlueprint))
 		if err != nil {
 			return err
 		}
@@ -329,7 +334,10 @@ func relationReferenced(opts *OptionSet, relation string) bool {
 	if opts == nil {
 		return false
 	}
-	_, ok := opts.Refs[relation]
+	if _, ok := opts.Refs[relation]; ok {
+		return true
+	}
+	_, ok := opts.Collections[relation]
 	return ok
 }
 
@@ -360,11 +368,18 @@ func relationHasPredicate(rel RelationDef, opts *OptionSet) bool {
 	return ok
 }
 
-// relationCount reports how many HasMany/ManyToMany children to expand. A zero
-// Count (including the unset zero value) expands none; negative counts are
-// rejected when the blueprint is registered, so the value here is non-negative.
-func relationCount(rel RelationDef) int {
-	return rel.Count
+// relationElements returns one entry per HasMany/ManyToMany child to expand.
+// Per-element options given for the relation decide the number of children;
+// otherwise the relation's Count does, each child built from its defaults. A
+// zero Count (including the unset zero value) expands none; negative counts are
+// rejected when the blueprint is registered.
+func relationElements(rel RelationDef, opts *OptionSet) []ElementOptions {
+	if opts != nil {
+		if elements, ok := opts.Collections[rel.Name]; ok {
+			return elements
+		}
+	}
+	return make([]ElementOptions, rel.Count)
 }
 
 func (e *expander) belongsToNodeID(parentNodeID nodeIdentity, path relationPath, rel RelationDef, opts *OptionSet) nodeIdentity {
@@ -432,6 +447,13 @@ func shareableOptionSet(opts *OptionSet) bool {
 	for _, refOpts := range opts.Refs {
 		if !shareableOptionSet(refOpts) {
 			return false
+		}
+	}
+	for _, elements := range opts.Collections {
+		for _, elem := range elements {
+			if elem.Use != nil || !shareableOptionSet(elem.Opts) || !shareableOptionSet(elem.Through) {
+				return false
+			}
 		}
 	}
 	return true
