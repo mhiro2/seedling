@@ -98,6 +98,43 @@ user := seedling.InsertOne[User](t, db,
 _ = user
 ```
 
+### Related records per test
+
+Configure `HasMany` and `ManyToMany` relations from the test instead of adding a blueprint or trait for every shape. Options passed to `Ref` apply to every related record, and four options narrow them:
+
+- `Count(n)`: create `n` related records, replacing the relation's `Count`. It must be passed directly to `Ref`; `Count(0)` creates none
+- `At(i, opts...)`: apply options only to the record at index `i`
+- `Each(func(i int) []seedling.Option)`: derive options from each record's index
+- `Through(opts...)`: configure the join record of a `ManyToMany` relation; inside `At`, only that record's join row
+
+```go
+// Three line items; the second is cancelled.
+order := seedling.InsertOne[Order](t, db,
+    seedling.Ref("items",
+        seedling.Count(3),
+        seedling.At(1, seedling.Set("Status", "cancelled")),
+    ),
+).Root()
+
+// Paging boundaries without a blueprint per size.
+for _, n := range []int{0, 1, 21} {
+    seedling.InsertOne[Order](t, db, seedling.Ref("items", seedling.Count(n)))
+}
+```
+
+Like every option, `At`, `Each`, and plain options apply in written order, so an option written after `At` overrides it for that record. `Ref` options that leave a relation with no records are rejected rather than ignored, as is an `At` index outside `Count`.
+
+For a `ManyToMany` relation, `Use` takes a slice of existing related records and creates only the join rows, one per record. `Through` still configures those rows:
+
+```go
+member := seedling.InsertOne[Member](t, db,
+    seedling.Use("roles", []Role{admin, viewer}),
+    seedling.Ref("roles", seedling.At(1, seedling.Through(seedling.Set("ExpiresAt", deadline)))),
+).Root()
+```
+
+The existing roles are neither inserted nor deleted by cleanup, and only `Through` options can apply to them. `HasMany` relations do not accept `Use`: attaching an existing child to another parent would need an `UPDATE`, which seedling leaves to the test.
+
 ### Selective insertion with Only
 
 Use `Only` when a blueprint has many relations but the test only needs a subset. The planner builds only the necessary subgraph, skipping relations not listed in `Only`. `DebugString` / `DryRunString` reflect this lazily built graph.
@@ -145,7 +182,8 @@ func TestUser(t *testing.T) {
 
 - `Set`: override one field by Go struct field name. Sets apply in the order written, so a later `Set` wins, including one that sets a field promoted from an embedded struct an earlier `Set` replaced
 - `Ref`: customize the auto-created node behind a relation and explicitly enable an optional relation
-- `Use`: reuse an existing record instead of inserting a new relation target
+- `Count`, `At`, `Each`, `Through`: shape the records of a `HasMany` / `ManyToMany` relation inside its `Ref` (see [Related records per test](#related-records-per-test))
+- `Use`: reuse an existing record instead of inserting a new relation target, or link a slice of existing records through a `ManyToMany` relation
 - `Omit`: skip an optional relation
 - `Only`: restrict insertion to specific relation subtrees
 - `When`: expand a relation only when the current record matches a condition, including optional relations when the predicate returns true
@@ -169,12 +207,13 @@ Options resolve in one pass that every insert path shares (`InsertOne`, `InsertM
 - Field values are applied in fixed stages regardless of where the options sit: blueprint `Defaults`, then `Generate`, then `Set`, then `With`
 - `WithContext`, `AfterInsert`, `AfterInsertE`, `WithInsertLog`, and `Only` apply only to the root record. Under `Ref`, including inside a trait resolved for that relation, they return `ErrInvalidOption`
 - `WithContext` may sit inside a trait, and it overrides the `ctx` passed to `InsertOneE`, `InsertManyE`, or `Plan.InsertE`
+- Options under the `Ref` of a `HasMany` / `ManyToMany` relation resolve once per related record, so `At`, `Each`, and `Through` behave the same inside a trait as written directly
 
 ## Relationship Patterns
 
 - `BelongsTo`: insert required parent rows and write the referenced parent field into the child
-- `HasMany`: insert children automatically from a parent blueprint using `Count`
-- `ManyToMany`: create related rows and join-table rows together
+- `HasMany`: insert children automatically from a parent blueprint using `Count`, or per test with `Ref(name, Count(n), At(...))`
+- `ManyToMany`: create related rows and join-table rows together, or link existing rows with `Use(name, []T{...})`
 - Composite keys: use `PKFields`, `LocalFields`, `RefFields`, and `RemoteFields`
 - Non-primary references: set `RefField` or `RefFields` on `BelongsTo` when the foreign key references a unique parent field other than its primary key (for example, `CountryCode` referencing `Country.Code`)
 - Matching field types: a referenced parent field of type `T` can populate a child FK of type `T` or nullable `*T`. No other implicit conversion or pointer unwrapping is performed. Named and underlying types (for example, `type UserID int64` and `int64`) remain distinct
@@ -255,6 +294,7 @@ The generated file starts with `// Code generated by seedling-gen. DO NOT EDIT.`
 - model structs (`sql` and `atlas` only)
 - a `Blueprints` struct with one `seedling.Blueprint[T]` field per model, returned by `NewBlueprints()`
 - `Name`, `Table`, primary keys, `BelongsTo` relations, and starter `Defaults`
+- an `Optional` `HasMany` relation on each parent for every `BelongsTo` that points at it, named after the plural child blueprint (`users`), or qualified by the relation name when it differs from the parent (`assignee_tasks`). These never expand by default; create children from the parent side with `Ref("users", seedling.Count(3))`
 - `Insert` / `Delete` callbacks where the adapter can derive them
 - `Register(reg) error` and `MustRegister(reg)`, which register every blueprint and report all failures together
 

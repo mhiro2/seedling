@@ -76,6 +76,24 @@ seedling.InsertOne[User](t, db,
 
 `Ref` also activates optional relations that are skipped by default. Several `Ref`s to the same relation merge in written order. Root-only options (`WithContext`, `AfterInsert`, `AfterInsertE`, `WithInsertLog`, `Only`) are rejected under `Ref`.
 
+### Count / At / Each / Through — shape has-many and many-to-many records
+
+```go
+seedling.InsertOne[Order](t, db,
+    seedling.Ref("items",
+        seedling.Count(3),                                    // replaces Relation.Count
+        seedling.At(1, seedling.Set("Status", "cancelled")), // only the second item
+    ),
+)
+
+seedling.InsertOne[Member](t, db,
+    seedling.Use("roles", []Role{admin, viewer}), // existing roles: only join rows are inserted
+    seedling.Ref("roles", seedling.At(1, seedling.Through(seedling.Set("ExpiresAt", deadline)))),
+)
+```
+
+`Count` must sit directly under `Ref`. `At` / `Each` / `Through` are valid only inside the `Ref` of a has-many or many-to-many relation (`Through` only for many-to-many). `Ref` options that leave the relation with zero records, or an `At` index outside `Count`, are rejected. Has-many relations do not accept `Use`.
+
 ### Omit — skip an optional relation
 
 ```go
