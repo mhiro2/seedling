@@ -54,6 +54,31 @@ func validateOptions(reg Registry, bp *BlueprintDef, opts *OptionSet) error {
 		}
 	}
 
+	// Validate Link targets.
+	for name := range opts.Links {
+		rel, ok := rels.byName[name]
+		if !ok {
+			return fmt.Errorf("validate link %q: %w", name, errx.RelationNotFoundWithHint(bp.Name, name, rels.available))
+		}
+		if rel.Kind != BelongsTo {
+			return fmt.Errorf("%w: relation %q on blueprint %q is %s; Link is only supported for belongs_to relations", errx.ErrInvalidOption, name, bp.Name, rel.Kind)
+		}
+		var conflict string
+		switch _, hasWhen := opts.Whens[name]; {
+		case relationUsed(opts, name):
+			conflict = "Use"
+		case relationReferenced(opts, name):
+			conflict = "Ref"
+		case opts.Omits[name]:
+			conflict = "Omit"
+		case hasWhen || rel.When != nil:
+			conflict = "When"
+		}
+		if conflict != "" {
+			return fmt.Errorf("%w: relation %q on blueprint %q has both Link and %s; remove one to resolve the conflict", errx.ErrInvalidOption, name, bp.Name, conflict)
+		}
+	}
+
 	// Validate Ref targets. Collection relations carry their options per
 	// element in Collections instead.
 	for name := range opts.Refs {
@@ -150,6 +175,11 @@ func validateOptions(reg Registry, bp *BlueprintDef, opts *OptionSet) error {
 				return fmt.Errorf("validate relation %q options: %w", name, errx.OnlyExcludesConfigured(bp.Name, name, "Ref"))
 			}
 		}
+		for name := range opts.Links {
+			if !opts.Only[name] {
+				return fmt.Errorf("validate relation %q options: %w", name, errx.OnlyExcludesConfigured(bp.Name, name, "Link"))
+			}
+		}
 		for name := range opts.Collections {
 			if !opts.Only[name] {
 				return fmt.Errorf("validate relation %q options: %w", name, errx.OnlyExcludesConfigured(bp.Name, name, "Ref"))
@@ -230,7 +260,7 @@ func validateCollection(reg Registry, blueprint string, rel RelationDef, element
 // optionSetEmpty reports whether opts configures nothing.
 func optionSetEmpty(opts *OptionSet) bool {
 	return opts == nil ||
-		len(opts.Sets) == 0 && len(opts.Uses) == 0 && len(opts.Refs) == 0 && len(opts.Collections) == 0 &&
+		len(opts.Sets) == 0 && len(opts.Uses) == 0 && len(opts.Links) == 0 && len(opts.Refs) == 0 && len(opts.Collections) == 0 &&
 			len(opts.Omits) == 0 && len(opts.Whens) == 0 && len(opts.WithFns) == 0 && len(opts.GenFns) == 0 &&
 			opts.Rand == nil && opts.Only == nil
 }

@@ -212,6 +212,10 @@ func (th throughOption) applyOption(r *optionResolver, o *optionSet) error {
 	return nil
 }
 
+func scenarioOptionError(option string) error {
+	return fmt.Errorf("%w: %s does not apply to a record added to a Scenario; pass the context to Scenario.InsertE instead", ErrInvalidOption, option)
+}
+
 func elementOnlyError(option string) error {
 	return fmt.Errorf("%w: %s applies only inside Ref of a has_many or many_to_many relation", ErrInvalidOption, option)
 }
@@ -308,9 +312,12 @@ type contextOption struct {
 	ctx context.Context
 }
 
-func (c contextOption) applyOption(_ *optionResolver, o *optionSet) error {
+func (c contextOption) applyOption(r *optionResolver, o *optionSet) error {
 	if !o.root {
 		return rootOnlyError("with-context")
+	}
+	if r.scenario != nil {
+		return scenarioOptionError("WithContext")
 	}
 	// A nil context still counts as given, so it overrides the caller's ctx
 	// the same way any other WithContext does.
@@ -409,7 +416,10 @@ type afterInsertOption[T any] struct {
 }
 
 func (a afterInsertOption[T]) applyOption(r *optionResolver, o *optionSet) error {
-	return o.addAfterInsert(r, a.fn)
+	return o.addAfterInsert(r, a.fn, func(root any, db DBTX) error {
+		a.fn(root.(T), db)
+		return nil
+	})
 }
 
 // AfterInsertE registers a callback that runs after the root record is inserted.
@@ -428,7 +438,9 @@ type afterInsertEOption[T any] struct {
 }
 
 func (a afterInsertEOption[T]) applyOption(r *optionResolver, o *optionSet) error {
-	return o.addAfterInsert(r, a.fn)
+	return o.addAfterInsert(r, a.fn, func(root any, db DBTX) error {
+		return a.fn(root.(T), db)
+	})
 }
 
 // BlueprintTrait applies a named trait defined on the target blueprint.
@@ -569,9 +581,12 @@ type insertLogOption struct {
 	fn func(InsertLog)
 }
 
-func (l insertLogOption) applyOption(_ *optionResolver, o *optionSet) error {
+func (l insertLogOption) applyOption(r *optionResolver, o *optionSet) error {
 	if !o.root {
 		return rootOnlyError("insert log")
+	}
+	if r.scenario != nil {
+		return scenarioOptionError("WithInsertLog")
 	}
 	o.logFn = l.fn
 	return nil

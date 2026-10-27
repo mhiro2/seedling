@@ -28,6 +28,8 @@ At a high level:
 
 Root options go through one resolution pass shared by `BuildE`, `InsertOneE`, and `InsertManyE`. Each option resolves itself into the option set of its node in written order: traits expand in place, `Ref` options resolve into the child option set of their relation against that relation's blueprint, and for `InsertMany` each record's `Seq`, `SeqRef`, and `SeqUse` become the `Set`, `Ref`, and `Use` they produce. Placement rules are checked as each option resolves — root-only options (`WithContext`, `AfterInsert`, `WithInsertLog`, `Only`) are rejected under `Ref`, sequence options outside `InsertMany`, and after-insert callbacks for another type — so an option behaves the same whether it is written directly or inside a trait. Options under the `Ref` of a `has_many` or `many_to_many` relation are collected first and resolved once per related record after the whole tree is known, because `Count`, `Use`, and the options of each element can come from any `Ref` or trait in the tree. Each element resolves with its index, so `At` and `Each` select their records and `Through` resolves into that element's join-record options. The resolved tree is then converted to the planner's option sets, which carry only plain node options plus one entry per collection element.
 
+`Scenario` resolves the options of each added record the same way and hands the planner one root per record through `planner.PlanRoots`. Roots are planned in the order they were added, each with its own node namespace and no implicit sharing. A `Link` resolves to the index of an earlier root, and the expander binds that relation to the earlier root's node instead of expanding a parent; because a link can only point backwards, the combined graph stays acyclic. The graph has no single root, so results map each `Node[T]` handle to its root node ID.
+
 `Plan[T]` is intentionally reusable:
 
 - `BuildE` creates the graph once.
@@ -61,6 +63,7 @@ Core responsibilities:
 - reuse already-expanded nodes by node ID
 - detect cycles during expansion: a required relation that returns to a blueprint already on the expansion stack with the same options and the same back-reference-bound relations has no finite expansion and is rejected with `ErrCycleDetected` (model self/mutual references as `Optional`). A `has_many` child whose `belongs_to` is bound to the parent that created it does not count as a revisit, so `employee -> department -> employees` expands finitely. A `Use` or `Ref` on such a bound relation is rejected, since honoring it would replace or rebuild the parent that already exists
 - mark `Use(...)` relations as provided nodes so the executor skips insertion
+- bind `Link(...)` relations to the node of an earlier `Scenario` root, which is inserted once and shared
 
 Relation expansion rules:
 

@@ -1195,3 +1195,44 @@ func TestPlan_ManyToManyUsedElementInsertsOnlyJoin(t *testing.T) {
 		t.Fatalf("got join node %+v, want an inserted node", join)
 	}
 }
+
+func TestPlanRoots_LinksBindEarlierRoots(t *testing.T) {
+	// Arrange
+	reg := newMockRegistry()
+	roots := []planner.Root{
+		{Type: reflect.TypeFor[Company]()},
+		{Type: reflect.TypeFor[User](), Opts: &planner.OptionSet{Links: map[string]int{"company": 0}}},
+	}
+
+	// Act
+	result, err := planner.PlanRoots(reg, roots)
+	// Assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"root[0]", "root[1]"}; !slices.Equal(graphNodeIDs(result.Graph), want) {
+		t.Fatalf("got nodes %v, want %v", graphNodeIDs(result.Graph), want)
+	}
+	deps := result.Graph.Node("root[1]").Dependencies()
+	if len(deps) != 1 || deps[0].Parent.ID != "root[0]" {
+		t.Fatalf("got dependencies %+v, want root[0]", deps)
+	}
+	if result.Graph.Root() != nil {
+		t.Fatal("expected a graph without a single root")
+	}
+}
+
+func TestPlanRoots_LinkMustReferToEarlierRoot(t *testing.T) {
+	// Arrange
+	reg := newMockRegistry()
+	roots := []planner.Root{
+		{Type: reflect.TypeFor[User](), Opts: &planner.OptionSet{Links: map[string]int{"company": 0}}},
+	}
+
+	// Act
+	_, err := planner.PlanRoots(reg, roots)
+	// Assert
+	if !errors.Is(err, errx.ErrInvalidOption) {
+		t.Fatalf("got %v, want %v", err, errx.ErrInvalidOption)
+	}
+}

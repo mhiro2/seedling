@@ -66,6 +66,7 @@ type OptionSet struct {
 	Uses        map[string]any                     // belongs-to relation name → existing value
 	Refs        map[string]*OptionSet              // belongs-to relation name → nested options
 	Collections map[string][]ElementOptions        // has-many/many-to-many relation name → per-element options
+	Links       map[string]int                     // belongs-to relation name → index of an earlier root in PlanRoots
 	Omits       map[string]bool                    // relation name → true
 	Whens       map[string]func(any) (bool, error) // relation name → dynamic expansion predicate
 	WithFns     []WithFn                           // typed root mutators
@@ -86,6 +87,12 @@ type ElementOptions struct {
 // PlanResult is the output of the planner.
 type PlanResult struct {
 	Graph *graph.Graph
+}
+
+// Root is one root record planned by PlanRoots.
+type Root struct {
+	Type reflect.Type
+	Opts *OptionSet
 }
 
 // PlanManyResult is the output of the batch planner.

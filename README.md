@@ -71,7 +71,7 @@ seedling handles FK ordering, graph expansion, and cleanup so your tests stay fo
 - 🔌 Works with sqlc, `database/sql`, pgx, GORM, ent, or any other DB handle you own
 - 🎲 Deterministic fake data via [`seedling/faker`](https://pkg.go.dev/github.com/mhiro2/seedling/faker) with multi-locale support (en, ja, zh, ko, de, fr)
 
-For advanced features such as `InsertMany`, batch sharing, `Only`, `When`, and dry runs, see the [Guide](./docs/guide.md).
+For advanced features such as `InsertMany`, batch sharing, explicit sharing across relation paths with `Scenario`, `Only`, `When`, and dry runs, see the [Guide](./docs/guide.md).
 
 ## 📦 Installation
 

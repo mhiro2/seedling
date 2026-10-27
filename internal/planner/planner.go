@@ -72,3 +72,49 @@ func PlanMany(reg Registry, rootType reflect.Type, opts []*OptionSet) (*PlanMany
 		RootIDs: rootIDs,
 	}, nil
 }
+
+// PlanRoots builds one dependency graph for roots of any blueprint. Roots are
+// planned in order and never share nodes implicitly; a root's Links bind its
+// belongs-to relations to roots planned before it. The graph has no single
+// root, so RootIDs identifies each root's node in order.
+func PlanRoots(reg Registry, roots []Root) (*PlanManyResult, error) {
+	g := graph.New()
+	visited := make(map[nodeIdentity]*graph.Node)
+	rootIDs := make([]string, 0, len(roots))
+	rootNodes := make([]*graph.Node, 0, len(roots))
+
+	for i, root := range roots {
+		bp, err := reg.LookupByType(root.Type)
+		if err != nil {
+			return nil, fmt.Errorf("lookup root[%d] blueprint %s: %w", i, root.Type, err)
+		}
+		if err := validatePlan(reg, bp, root.Opts); err != nil {
+			return nil, fmt.Errorf("validate root[%d]: %w", i, err)
+		}
+
+		var only map[string]bool
+		if root.Opts != nil {
+			only = root.Opts.Only
+		}
+		rootID := batchRootNodeIdentity(i)
+		exp := &expander{
+			reg:     reg,
+			graph:   g,
+			visited: visited,
+			roots:   rootNodes,
+			only:    only,
+		}
+		node, err := exp.expandBlueprint(bp, rootID, root.Opts, nil, "")
+		if err != nil {
+			return nil, fmt.Errorf("expand root[%d]: %w", i, err)
+		}
+		rootIDs = append(rootIDs, rootID.String())
+		rootNodes = append(rootNodes, node)
+	}
+	g.SetRoot(nil)
+
+	return &PlanManyResult{
+		Graph:   g,
+		RootIDs: rootIDs,
+	}, nil
+}
