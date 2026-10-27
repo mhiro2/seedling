@@ -3,7 +3,9 @@
 package quickstart
 
 import (
+	"context"
 	"errors"
+	"testing"
 
 	"github.com/mhiro2/seedling"
 )
@@ -74,4 +76,217 @@ func (b Blueprints) MustRegister(reg *seedling.Registry) {
 	if err := b.Register(reg); err != nil {
 		panic(err)
 	}
+}
+
+// Fixtures builds records through the blueprints registered in a registry,
+// with a typed builder per model. Setters exist for fields whose type the
+// generator can name; use With for the others.
+type Fixtures struct {
+	reg *seedling.Registry
+}
+
+// NewFixtures returns typed builders backed by reg, which must hold the
+// registered Blueprints.
+func NewFixtures(reg *seedling.Registry) Fixtures {
+	return Fixtures{reg: reg}
+}
+
+// CompanyBuilder configures a Company record. Builders are values: every
+// method returns a new builder, so a shared base can be extended safely.
+type CompanyBuilder struct {
+	reg  *seedling.Registry
+	opts []seedling.Option
+}
+
+// Company starts a Company record.
+func (f Fixtures) Company() CompanyBuilder {
+	return CompanyBuilder{reg: f.reg}
+}
+
+func (b CompanyBuilder) with(opts ...seedling.Option) CompanyBuilder {
+	b.opts = append(b.opts[:len(b.opts):len(b.opts)], opts...)
+	return b
+}
+
+// ID sets ID.
+func (b CompanyBuilder) ID(v int) CompanyBuilder {
+	return b.with(seedling.Set("ID", v))
+}
+
+// Name sets Name.
+func (b CompanyBuilder) Name(v string) CompanyBuilder {
+	return b.with(seedling.Set("Name", v))
+}
+
+// Users creates one "users" record per builder; with none, it creates none.
+func (b CompanyBuilder) Users(children ...UserBuilder) CompanyBuilder {
+	opts := make([]seedling.Option, 0, len(children)+1)
+	opts = append(opts, seedling.Count(len(children)))
+	for i, child := range children {
+		opts = append(opts, seedling.At(i, child.opts...))
+	}
+	return b.with(seedling.Ref("users", opts...))
+}
+
+// With mutates the record with a typed function after Set options apply.
+func (b CompanyBuilder) With(fn func(*Company)) CompanyBuilder {
+	return b.with(seedling.With(fn))
+}
+
+// WithOptions appends untyped options, such as Seq or Omit.
+func (b CompanyBuilder) WithOptions(opts ...seedling.Option) CompanyBuilder {
+	return b.with(opts...)
+}
+
+// Trait applies a trait registered on the blueprint.
+func (b CompanyBuilder) Trait(name string) CompanyBuilder {
+	return b.with(seedling.BlueprintTrait(name))
+}
+
+// Apply applies typed presets in order.
+func (b CompanyBuilder) Apply(presets ...func(CompanyBuilder) CompanyBuilder) CompanyBuilder {
+	for _, preset := range presets {
+		b = preset(b)
+	}
+	return b
+}
+
+// AfterInsert registers a callback that runs after the record is inserted.
+// It applies only to the record a terminal method inserts, so a builder that
+// carries it cannot be passed to another builder's relation method.
+func (b CompanyBuilder) AfterInsert(fn func(Company, seedling.DBTX) error) CompanyBuilder {
+	return b.with(seedling.AfterInsertE(fn))
+}
+
+// Insert inserts the record with its dependencies. Fails the test on error.
+func (b CompanyBuilder) Insert(tb testing.TB, db seedling.DBTX) seedling.Result[Company] {
+	tb.Helper()
+	return seedling.NewSession[Company](b.reg).InsertOne(tb, db, b.opts...)
+}
+
+// InsertE inserts the record with its dependencies, returning an error on failure.
+func (b CompanyBuilder) InsertE(ctx context.Context, db seedling.DBTX) (seedling.Result[Company], error) {
+	return seedling.NewSession[Company](b.reg).InsertOneE(ctx, db, b.opts...)
+}
+
+// InsertMany inserts n records configured alike. Fails the test on error.
+func (b CompanyBuilder) InsertMany(tb testing.TB, db seedling.DBTX, n int) []Company {
+	tb.Helper()
+	return seedling.NewSession[Company](b.reg).InsertMany(tb, db, n, b.opts...)
+}
+
+// Build plans the record without inserting it. Fails the test on error.
+func (b CompanyBuilder) Build(tb testing.TB) *seedling.Plan[Company] {
+	tb.Helper()
+	return seedling.NewSession[Company](b.reg).Build(tb, b.opts...)
+}
+
+// Add adds the record to a scenario and returns its handle.
+func (b CompanyBuilder) Add(s *seedling.Scenario) seedling.Node[Company] {
+	return seedling.Add[Company](s, b.opts...)
+}
+
+// UserBuilder configures a User record. Builders are values: every
+// method returns a new builder, so a shared base can be extended safely.
+type UserBuilder struct {
+	reg  *seedling.Registry
+	opts []seedling.Option
+}
+
+// User starts a User record.
+func (f Fixtures) User() UserBuilder {
+	return UserBuilder{reg: f.reg}
+}
+
+func (b UserBuilder) with(opts ...seedling.Option) UserBuilder {
+	b.opts = append(b.opts[:len(b.opts):len(b.opts)], opts...)
+	return b
+}
+
+// ID sets ID.
+func (b UserBuilder) ID(v int) UserBuilder {
+	return b.with(seedling.Set("ID", v))
+}
+
+// Name sets Name.
+func (b UserBuilder) Name(v string) UserBuilder {
+	return b.with(seedling.Set("Name", v))
+}
+
+// Email sets Email.
+func (b UserBuilder) Email(v string) UserBuilder {
+	return b.with(seedling.Set("Email", v))
+}
+
+// Company configures the "company" record created for this record.
+func (b UserBuilder) Company(parent CompanyBuilder) UserBuilder {
+	return b.with(seedling.Ref("company", parent.opts...))
+}
+
+// UseCompany binds "company" to an existing record instead of creating one.
+func (b UserBuilder) UseCompany(parent Company) UserBuilder {
+	return b.with(seedling.Use("company", parent))
+}
+
+// LinkCompany binds "company" to a record added earlier to the same scenario.
+func (b UserBuilder) LinkCompany(parent seedling.Node[Company]) UserBuilder {
+	return b.with(seedling.Link("company", parent))
+}
+
+// With mutates the record with a typed function after Set options apply.
+func (b UserBuilder) With(fn func(*User)) UserBuilder {
+	return b.with(seedling.With(fn))
+}
+
+// WithOptions appends untyped options, such as Seq or Omit.
+func (b UserBuilder) WithOptions(opts ...seedling.Option) UserBuilder {
+	return b.with(opts...)
+}
+
+// Trait applies a trait registered on the blueprint.
+func (b UserBuilder) Trait(name string) UserBuilder {
+	return b.with(seedling.BlueprintTrait(name))
+}
+
+// Apply applies typed presets in order.
+func (b UserBuilder) Apply(presets ...func(UserBuilder) UserBuilder) UserBuilder {
+	for _, preset := range presets {
+		b = preset(b)
+	}
+	return b
+}
+
+// AfterInsert registers a callback that runs after the record is inserted.
+// It applies only to the record a terminal method inserts, so a builder that
+// carries it cannot be passed to another builder's relation method.
+func (b UserBuilder) AfterInsert(fn func(User, seedling.DBTX) error) UserBuilder {
+	return b.with(seedling.AfterInsertE(fn))
+}
+
+// Insert inserts the record with its dependencies. Fails the test on error.
+func (b UserBuilder) Insert(tb testing.TB, db seedling.DBTX) seedling.Result[User] {
+	tb.Helper()
+	return seedling.NewSession[User](b.reg).InsertOne(tb, db, b.opts...)
+}
+
+// InsertE inserts the record with its dependencies, returning an error on failure.
+func (b UserBuilder) InsertE(ctx context.Context, db seedling.DBTX) (seedling.Result[User], error) {
+	return seedling.NewSession[User](b.reg).InsertOneE(ctx, db, b.opts...)
+}
+
+// InsertMany inserts n records configured alike. Fails the test on error.
+func (b UserBuilder) InsertMany(tb testing.TB, db seedling.DBTX, n int) []User {
+	tb.Helper()
+	return seedling.NewSession[User](b.reg).InsertMany(tb, db, n, b.opts...)
+}
+
+// Build plans the record without inserting it. Fails the test on error.
+func (b UserBuilder) Build(tb testing.TB) *seedling.Plan[User] {
+	tb.Helper()
+	return seedling.NewSession[User](b.reg).Build(tb, b.opts...)
+}
+
+// Add adds the record to a scenario and returns its handle.
+func (b UserBuilder) Add(s *seedling.Scenario) seedling.Node[User] {
+	return seedling.Add[User](s, b.opts...)
 }

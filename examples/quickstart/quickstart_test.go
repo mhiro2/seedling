@@ -87,3 +87,91 @@ func TestQuickStart_CreateUsersFromCompany(t *testing.T) {
 		t.Fatalf("expected exactly one admin, got %d", admins)
 	}
 }
+
+func TestQuickStart_TypedFixtures(t *testing.T) {
+	// Arrange
+	f := quickstart.NewFixtures(setup(t))
+
+	// Act
+	user := f.User().
+		Name("alice").
+		Company(f.Company().Name("acme")).
+		Insert(t, nil)
+
+	// Assert
+	company, ok, err := seedling.NodeAs[quickstart.Company](user, "company")
+	if err != nil || !ok {
+		t.Fatalf("expected the company node, ok=%v err=%v", ok, err)
+	}
+	if company.Name != "acme" || user.Root().Name != "alice" || user.Root().CompanyID != company.ID {
+		t.Fatalf("got user %+v and company %+v", user.Root(), company)
+	}
+}
+
+func TestQuickStart_TypedFixturesChildrenAndPresets(t *testing.T) {
+	// Arrange
+	f := quickstart.NewFixtures(setup(t))
+	admin := func(b quickstart.UserBuilder) quickstart.UserBuilder {
+		return b.Name("admin").Email("admin@example.com")
+	}
+	base := f.User()
+
+	// Act
+	result := f.Company().Users(base, base.Apply(admin), base).Insert(t, nil)
+
+	// Assert
+	users, err := seedling.NodesAs[quickstart.User](result, "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(users) != 3 {
+		t.Fatalf("expected 3 users, got %d", len(users))
+	}
+	admins := 0
+	for _, user := range users {
+		if user.Name == "admin" && user.Email == "admin@example.com" {
+			admins++
+		}
+	}
+	if admins != 1 {
+		t.Fatalf("expected one admin, got %d", admins)
+	}
+}
+
+func TestQuickStart_TypedFixturesInScenario(t *testing.T) {
+	// Arrange
+	reg := setup(t)
+	f := quickstart.NewFixtures(reg)
+	s := seedling.NewScenario(reg)
+	company := f.Company().Name("acme").Add(s)
+	alice := f.User().Name("alice").LinkCompany(company).Add(s)
+	bob := f.User().Name("bob").LinkCompany(company).Add(s)
+
+	// Act
+	result := s.Insert(t, nil)
+
+	// Assert
+	companyID := company.Get(result).ID
+	if alice.Get(result).CompanyID != companyID || bob.Get(result).CompanyID != companyID {
+		t.Fatalf("expected both users in company %d", companyID)
+	}
+	if alice.Get(result).Name != "alice" || bob.Get(result).Name != "bob" {
+		t.Fatal("expected users to be read back by role")
+	}
+}
+
+func TestQuickStart_TypedFixturesUseExisting(t *testing.T) {
+	// Arrange
+	f := quickstart.NewFixtures(setup(t))
+	company := f.Company().Name("existing").Insert(t, nil).Root()
+
+	// Act
+	user := f.User().UseCompany(company).With(func(u *quickstart.User) {
+		u.Email = "custom@example.com"
+	}).Insert(t, nil).Root()
+
+	// Assert
+	if user.CompanyID != company.ID || user.Email != "custom@example.com" {
+		t.Fatalf("got user %+v", user)
+	}
+}

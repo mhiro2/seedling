@@ -456,7 +456,8 @@ type Item struct {
 
 func TestGenerateGorm_OmitsTimeImportForTimeKeysOnly(t *testing.T) {
 	// Arrange: the only time.Time field is a primary key, which never receives
-	// a generated default.
+	// a generated default, and GORM builders get no setter for package-qualified
+	// types.
 	models := []GormModel{
 		{
 			Name:  "Snapshot",

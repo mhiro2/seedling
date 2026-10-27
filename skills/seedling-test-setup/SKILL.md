@@ -141,6 +141,22 @@ seedling.InsertMany[User](t, db, 3,
 )
 ```
 
+## Generated typed builders (preferred with seedling-gen)
+
+```go
+f := testutil.NewFixtures(reg)
+
+task := f.Task().
+    Title("review").
+    Assignee(f.User().Name("alice")). // only a UserBuilder compiles here
+    Insert(t, db).
+    Root()
+
+order := f.Order().Items(f.Item(), f.Item().Status("cancelled")).Insert(t, db) // exactly two items
+```
+
+Builders are immutable values, so `base := f.User()` can be reused. Use `With(func(*Model))` for fields without a generated setter, `Apply(preset)` for typed reusable presets, `UseX` / `LinkX` for existing rows or scenario records, and `WithOptions(...)` only for options with no typed method.
+
 ## Fluent builder
 
 Chain options for readability:
