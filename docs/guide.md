@@ -98,6 +98,34 @@ user := seedling.InsertOne[User](t, db,
 _ = user
 ```
 
+### Sharing records across paths with Scenario
+
+`InsertMany` shares parents only along the same relation path. When one record must sit behind several paths — the same company behind a task's project and its assignee — add each record to a `Scenario` and share it explicitly with `Link`:
+
+```go
+s := seedling.NewScenario(reg)
+
+company := seedling.Add[Company](s)
+project := seedling.Add[Project](s, seedling.Link("company", company))
+assignee := seedling.Add[User](s, seedling.Link("company", company))
+reviewer := seedling.Add[User](s, seedling.Link("company", company))
+task := seedling.Add[Task](s,
+    seedling.Link("project", project),
+    seedling.Link("assignee", assignee),
+)
+
+result := s.Insert(t, db)
+got := task.Get(result)
+_ = reviewer.Get(result) // a second User, read back by role
+```
+
+- `Add[T]` accepts the same options as `InsertOne` and returns a typed `Node[T]` handle. Records of any blueprint can be mixed in one scenario, and seedling orders every insert
+- `Link(name, node)` binds a `BelongsTo` relation to a record added earlier, instead of creating a parent. It also works under `Ref`, for example `Add[Task](s, Ref("project", Link("company", company)))`
+- Nothing is shared implicitly: two `Add[User]` without `Link` get two companies. Sharing is always written down
+- `node.Get(result)` returns the inserted record for that handle, so two records of the same blueprint are read back by role rather than by node ID order. `Lookup` reports whether the record is present, for example in a partial result
+- `Link` conflicts with `Use`, `Ref`, `Omit`, and `When` on the same relation, and is rejected outside `Add`. `WithContext` and `WithInsertLog` are rejected in `Add`; pass the context to `Scenario.InsertE`
+- `Build` / `BuildE` return a `ScenarioPlan` with `DebugString`, `DryRunString`, and `Validate`, and `InsertE` returns a partial `ScenarioResult` with `CleanupE` on failure. `AfterInsert` callbacks run after every record is inserted, in the order the records were added
+
 ### Related records per test
 
 Configure `HasMany` and `ManyToMany` relations from the test instead of adding a blueprint or trait for every shape. Options passed to `Ref` apply to every related record, and four options narrow them:
@@ -184,6 +212,7 @@ func TestUser(t *testing.T) {
 - `Ref`: customize the auto-created node behind a relation and explicitly enable an optional relation
 - `Count`, `At`, `Each`, `Through`: shape the records of a `HasMany` / `ManyToMany` relation inside its `Ref` (see [Related records per test](#related-records-per-test))
 - `Use`: reuse an existing record instead of inserting a new relation target, or link a slice of existing records through a `ManyToMany` relation
+- `Link`: share a record added to the same `Scenario` (see [Sharing records across paths with Scenario](#sharing-records-across-paths-with-scenario))
 - `Omit`: skip an optional relation
 - `Only`: restrict insertion to specific relation subtrees
 - `When`: expand a relation only when the current record matches a condition, including optional relations when the predicate returns true

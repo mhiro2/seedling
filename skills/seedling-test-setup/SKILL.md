@@ -94,6 +94,21 @@ seedling.InsertOne[Member](t, db,
 
 `Count` must sit directly under `Ref`. `At` / `Each` / `Through` are valid only inside the `Ref` of a has-many or many-to-many relation (`Through` only for many-to-many). `Ref` options that leave the relation with zero records, or an `At` index outside `Count`, are rejected. Has-many relations do not accept `Use`.
 
+### Scenario / Link — share one record across several paths
+
+```go
+s := seedling.NewScenario(reg)
+company := seedling.Add[Company](s)
+project := seedling.Add[Project](s, seedling.Link("company", company))
+assignee := seedling.Add[User](s, seedling.Link("company", company))
+task := seedling.Add[Task](s, seedling.Link("project", project), seedling.Link("assignee", assignee))
+
+result := s.Insert(t, db)
+got := task.Get(result) // read back by handle, not by blueprint name
+```
+
+Records of any blueprint can be mixed in one scenario. Nothing is shared unless `Link` says so, `Link` may only point at a record added earlier (also under `Ref`), and it is rejected outside `Add`. Prefer this over inserting the shared parent first and passing it to several `Use` calls.
+
 ### Omit — skip an optional relation
 
 ```go
