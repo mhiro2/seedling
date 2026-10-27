@@ -67,6 +67,7 @@ seedling handles FK ordering, graph expansion, and cleanup so your tests stay fo
 - 🔗 Automatic FK resolution with topological insert ordering and minimal graph expansion
 - 🌿 First-class relation kinds: `BelongsTo`, `HasMany`, `ManyToMany`, plus composite keys
 - 🔧 Per-test overrides via `Set`, `Use`, and `Ref`, including the count and per-record options of `HasMany` / `ManyToMany` children
+- 🧱 Generated typed builders (`f.Task().Title("review").Assignee(f.User().Name("alice"))`) that turn field and relation mistakes into compile errors
 - ♻️ `WithTx` for auto-rollback transactions -- no manual cleanup
 - 🔌 Works with sqlc, `database/sql`, pgx, GORM, ent, or any other DB handle you own
 - 🎲 Deterministic fake data via [`seedling/faker`](https://pkg.go.dev/github.com/mhiro2/seedling/faker) with multi-locale support (en, ja, zh, ko, de, fr)
@@ -118,7 +119,7 @@ The shortest path is two steps: generate blueprints from your schema, then call 
 
    Other input sources are supported (sqlc, GORM, ent, Atlas) -- see the [Guide](./docs/guide.md#cli) for the full list.
 
-   This generates struct types and a `Blueprints` struct (built by `NewBlueprints()`) holding one blueprint per table, with deterministic `Defaults` for common scalar fields, relations, and `Register` / `MustRegister` methods. The file is rewritten on every run, so keep your DB logic in a separate hand-written file of the same package:
+   This generates struct types and a `Blueprints` struct (built by `NewBlueprints()`) holding one blueprint per table, with deterministic `Defaults` for common scalar fields, relations, `Register` / `MustRegister` methods, and typed builders returned by `NewFixtures(reg)`. The file is rewritten on every run, so keep your DB logic in a separate hand-written file of the same package:
 
    ```go
    // blueprints.go (hand-written)
@@ -160,6 +161,13 @@ The shortest path is two steps: generate blueprints from your schema, then call 
            t.Fatal("expected company to be inserted automatically")
        }
    }
+   ```
+
+   The generated typed builders do the same with compile-time checks on fields and relations:
+
+   ```go
+   f := testutil.NewFixtures(reg)
+   user := f.User().Name("alice").Company(f.Company().Name("acme")).Insert(t, db).Root()
    ```
 
 That is the entire happy path. The next section shows the handful of patterns you reach for once tests grow.
