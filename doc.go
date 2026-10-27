@@ -219,6 +219,11 @@
 //   - ent schemas: seedling-gen ent --dir ./ent/schema --import-path example/ent
 //   - Atlas HCL: seedling-gen atlas schema.hcl
 //
+// The generated file exposes NewBlueprints and is rewritten on every run, so
+// keep Insert callbacks, Traits, and other customizations in a hand-written
+// file that edits the returned blueprints before calling Register. Add
+// `--check` in CI to fail when the generated file is stale.
+//
 // Use `seedling-gen --explain` to inspect parsed tables, foreign keys, and
 // inferred blueprint relations before generating code. Use `--json` for the
 // same report in machine-readable form.

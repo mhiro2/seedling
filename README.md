@@ -113,18 +113,31 @@ The shortest path is two steps: generate blueprints from your schema, then call 
 
    ```bash
    # From SQL DDL
-   seedling-gen sql --pkg testutil --out blueprints.go schema.sql
+   seedling-gen sql --pkg testutil --out blueprints_gen.go schema.sql
    ```
 
    Other input sources are supported (sqlc, GORM, ent, Atlas) -- see the [Guide](./docs/guide.md#cli) for the full list.
 
-   This generates struct types, `NewRegistry()`, `RegisterBlueprints(reg)`, deterministic `Defaults` for common scalar fields, relations, and Insert stubs. Fill in the `// TODO` callbacks with your DB logic:
+   This generates struct types and a `Blueprints` struct (built by `NewBlueprints()`) holding one blueprint per table, with deterministic `Defaults` for common scalar fields, relations, and `Register` / `MustRegister` methods. The file is rewritten on every run, so keep your DB logic in a separate hand-written file of the same package:
 
    ```go
-   Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
-       return insertCompany(ctx, db, v) // your DB call
-   },
+   // blueprints.go (hand-written)
+   func NewRegistry() *seedling.Registry {
+       blueprints := NewBlueprints()
+       blueprints.Company.Insert = func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
+           return insertCompany(ctx, db, v) // your DB call
+       }
+       blueprints.User.Insert = func(ctx context.Context, db seedling.DBTX, v User) (User, error) {
+           return insertUser(ctx, db, v) // your DB call
+       }
+
+       reg := seedling.NewRegistry()
+       blueprints.MustRegister(reg)
+       return reg
+   }
    ```
+
+   Plain DDL does not say how rows are written, so `sql` and `atlas` leave `Insert` unset and registration fails until you set it. The sqlc, GORM, and ent adapters generate `Insert` where they can. Re-run the same command after a schema change; your hand-written file needs no repair, and adding `--check` in CI fails when the generated file is stale.
 
    Generated relations retain the referenced columns, so foreign keys targeting unique non-primary columns use `RefField`/`RefFields` instead of being treated as primary-key references. Relations are still named after the referenced table, so recording those columns does not rename an existing relation; a name derived from the FK columns is used only to separate two foreign keys that would otherwise collide. Generated `Defaults` intentionally skip primary keys, relation FK fields, and unsupported custom types. They are meant to make the first insert usable with zero setup, not to satisfy every unique or business constraint automatically.
 
@@ -156,7 +169,7 @@ That is the entire happy path. The next section shows the handful of patterns yo
 These three patterns cover the majority of real test code. Anything beyond them lives in the [Guide](./docs/guide.md).
 
 > [!NOTE]
-> All snippets below assume the generated package (e.g. from `seedling-gen sql --pkg testutil schema.sql`) is imported as `testutil`, and `reg := testutil.NewRegistry()` has been called. The package name is set by `--pkg`; rename to whatever fits your project.
+> All snippets below assume the generated package (e.g. from `seedling-gen sql --pkg testutil schema.sql`) is imported as `testutil`, and `reg := testutil.NewRegistry()` (the hand-written function above) has been called. The package name is set by `--pkg`; rename to whatever fits your project.
 
 ### Override a field
 
@@ -259,7 +272,7 @@ The [Guide](./docs/guide.md#debugging-and-cleanup) lists the full set of debuggi
 ## 📂 Examples
 
 - [basic](./examples/basic): register blueprints and insert rows with automatic parent creation
-- [quickstart](./examples/quickstart): generated-style `NewRegistry()` / `RegisterBlueprints(reg)` flow that matches the README Quick Start
+- [quickstart](./examples/quickstart): seedling-gen output kept apart from a hand-written `NewRegistry()`, matching the README Quick Start
 - [custom-defaults](./examples/custom-defaults): customize values with `Set`, `With`, and `Generate`
 - [reuse-parent](./examples/reuse-parent): reuse existing rows with `Use`
 - [batch-insert](./examples/batch-insert): batch inserts with shared `Ref` dependencies and per-row `SeqRef` overrides

@@ -7,7 +7,7 @@ description: Write Go tests using seedling to insert, customize, and clean up te
 
 Use this skill when a Go test needs to insert fixture data via seedling blueprints that are already registered.
 
-The snippets below use the package-level helpers (`seedling.InsertOne`, `seedling.InsertMany`, `seedling.Build`, ...), which read the global registry. In real tests prefer a test-local registry: call the generated `testutil.NewRegistry()` (or `seedling.NewRegistry()` + `seedling.MustRegisterTo`) and invoke the same methods on `seedling.NewSession[T](reg)`; see "Session API" below. This matches the README Quick Start and the Guide.
+The snippets below use the package-level helpers (`seedling.InsertOne`, `seedling.InsertMany`, `seedling.Build`, ...), which read the global registry. In real tests prefer a test-local registry: call the project's `testutil.NewRegistry()`, which registers the seedling-gen `NewBlueprints()` after hand-written customization (or `seedling.NewRegistry()` + `seedling.MustRegisterTo`), and invoke the same methods on `seedling.NewSession[T](reg)`; see "Session API" below. This matches the README Quick Start and the Guide.
 
 ## Core API
 
@@ -208,6 +208,6 @@ result := plan.Insert(t, db) // execute the plan
 
 ## Notes
 
-- Prefer a test-local registry (generated `NewRegistry()` or `seedling.NewRegistry()` + `MustRegisterTo`) with `seedling.NewSession[T](reg)` over the global registry and package-level helpers; a per-test registry keeps blueprint state isolated between tests and packages.
+- Prefer a test-local registry (a `NewRegistry()` built from the generated `NewBlueprints().MustRegister(reg)`, or `seedling.NewRegistry()` + `MustRegisterTo`) with `seedling.NewSession[T](reg)` over the global registry and package-level helpers; a per-test registry keeps blueprint state isolated between tests and packages.
 - `InsertOne` / `InsertMany` accept a `testing.TB` and fail the test on error. Use the `E` variants (`InsertOneE`, `InsertManyE`) in non-test contexts or when you need explicit error handling.
 - Prefer transaction rollback over `Cleanup` for test isolation — it is faster and guarantees no leftover data.
