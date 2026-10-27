@@ -58,6 +58,8 @@ func boundRelationOverride(blueprint, relation, parent string, opts *OptionSet) 
 	switch {
 	case relationUsed(opts, relation):
 		option = "Use"
+	case relationLinked(opts, relation):
+		option = "Link"
 	case relationReferenced(opts, relation):
 		option = "Ref"
 	default:
@@ -116,7 +118,10 @@ func (e *expander) expandBelongsTo(
 	rel RelationDef,
 	opts *OptionSet,
 ) error {
-	usedNode, ok, err := e.providedBelongsToNode(rel, nodeID, opts)
+	usedNode, ok, err := e.linkedBelongsToNode(rel, opts)
+	if err == nil && !ok {
+		usedNode, ok, err = e.providedBelongsToNode(rel, nodeID, opts)
+	}
 	if err != nil {
 		return err
 	}
@@ -304,7 +309,15 @@ func relationEnabled(rel RelationDef, opts *OptionSet) bool {
 	if rel.Required {
 		return true
 	}
-	return relationUsed(opts, rel.Name) || relationReferenced(opts, rel.Name) || relationHasPredicate(rel, opts)
+	return relationUsed(opts, rel.Name) || relationLinked(opts, rel.Name) || relationReferenced(opts, rel.Name) || relationHasPredicate(rel, opts)
+}
+
+func relationLinked(opts *OptionSet, relation string) bool {
+	if opts == nil {
+		return false
+	}
+	_, ok := opts.Links[relation]
+	return ok
 }
 
 // relationWhen evaluates the When predicate for a relation. An option-level When
@@ -436,7 +449,7 @@ func shareableOptionSet(opts *OptionSet) bool {
 	if opts == nil {
 		return true
 	}
-	if len(opts.Uses) > 0 || len(opts.WithFns) > 0 || len(opts.GenFns) > 0 || len(opts.Whens) > 0 || opts.Rand != nil {
+	if len(opts.Uses) > 0 || len(opts.Links) > 0 || len(opts.WithFns) > 0 || len(opts.GenFns) > 0 || len(opts.Whens) > 0 || opts.Rand != nil {
 		return false
 	}
 	for _, set := range opts.Sets {

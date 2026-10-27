@@ -23,6 +23,7 @@ type optionSet struct {
 
 	sets         []planner.FieldSet                 // Set options in the order they were written
 	uses         map[string]any                     // belongs-to relation name → existing value
+	links        map[string]int                     // belongs-to relation name → index of an earlier Scenario record
 	refs         map[string]*optionSet              // belongs-to relation name → nested options
 	collections  map[string]*collectionTarget       // has-many/many-to-many relation name → element options
 	elem         *elementScope                      // set when the options target one element of a collection
@@ -30,7 +31,7 @@ type optionSet struct {
 	whens        map[string]func(any) (bool, error) // relation name → dynamic expansion predicate
 	withFns      []withFn                           // typed root mutators
 	ctx          context.Context                    // optional context for insert operations
-	afterInserts []any                              // func(T, DBTX) closures run after insert
+	afterInserts []afterInsertFn                    // callbacks run after the root record is inserted
 	genFns       []generateFn                       // typed rand-driven mutators
 	rand         *rand.Rand                         // optional RNG for Generate options
 	logFn        func(InsertLog)                    // optional insert log callback
@@ -39,6 +40,10 @@ type optionSet struct {
 
 type withFn func(value any) (any, error)
 
+// afterInsertFn runs an AfterInsert or AfterInsertE callback with the inserted
+// root record, whose type was checked when the option resolved.
+type afterInsertFn func(root any, db DBTX) error
+
 type generateFn func(r *rand.Rand, value any) (any, error)
 
 func newOptionSet(bp *blueprintDef, root bool) *optionSet {
@@ -46,6 +51,7 @@ func newOptionSet(bp *blueprintDef, root bool) *optionSet {
 		bp:          bp,
 		root:        root,
 		uses:        make(map[string]any),
+		links:       make(map[string]int),
 		refs:        make(map[string]*optionSet),
 		collections: make(map[string]*collectionTarget),
 		omits:       make(map[string]bool),
@@ -101,10 +107,12 @@ const noSequenceIndex = -1
 // an option behaves the same whether it is written directly, inside a trait,
 // or returned by SeqRef.
 type optionResolver struct {
-	registry *registry
-	rootType reflect.Type
-	seqIndex int        // 0-based record index of an InsertMany batch, or noSequenceIndex
-	active   []traitKey // traits being expanded, across Ref boundaries
+	registry      *registry
+	rootType      reflect.Type
+	seqIndex      int        // 0-based record index of an InsertMany batch, or noSequenceIndex
+	scenario      *Scenario  // scenario the root record is added to; nil outside Add
+	scenarioIndex int        // index of the root record in scenario
+	active        []traitKey // traits being expanded, across Ref boundaries
 }
 
 // traitKey identifies a trait on a specific blueprint while it is being expanded.
@@ -118,17 +126,20 @@ func (k traitKey) String() string { return k.blueprint + ":" + k.trait }
 // resolveRootOptions resolves the root options of an insert. seqIndex is the
 // 0-based record index of an InsertMany batch, or noSequenceIndex.
 func resolveRootOptions(reg *Registry, rootType reflect.Type, opts []Option, seqIndex int) (*optionSet, error) {
-	r := resolveRegistry(reg).reg
-	def, err := r.lookupByType(rootType)
+	return resolveOptions(&optionResolver{registry: resolveRegistry(reg).reg, rootType: rootType, seqIndex: seqIndex}, opts)
+}
+
+// resolveOptions resolves the root options of r.rootType with r.
+func resolveOptions(r *optionResolver, opts []Option) (*optionSet, error) {
+	def, err := r.registry.lookupByType(r.rootType)
 	if err != nil {
 		return nil, fmt.Errorf("build plan: %w", err)
 	}
 	root := newOptionSet(def, true)
-	res := &optionResolver{registry: r, rootType: rootType, seqIndex: seqIndex}
-	if err := res.resolve(opts, root); err != nil {
+	if err := r.resolve(opts, root); err != nil {
 		return nil, fmt.Errorf("build plan: %w", err)
 	}
-	if err := res.resolveCollections(root); err != nil {
+	if err := r.resolveCollections(root); err != nil {
 		return nil, fmt.Errorf("build plan: %w", err)
 	}
 	return root, nil
@@ -342,7 +353,7 @@ func (r *optionResolver) sequenceIndex() (int, error) {
 // root options, a nil callback that would panic when invoked, and one whose
 // record type does not match the root blueprint type, e.g. AfterInsert[Post]
 // passed to InsertOne[User].
-func (o *optionSet) addAfterInsert(r *optionResolver, fn any) error {
+func (o *optionSet) addAfterInsert(r *optionResolver, fn any, call afterInsertFn) error {
 	if !o.root {
 		return rootOnlyError("after-insert")
 	}
@@ -354,7 +365,7 @@ func (o *optionSet) addAfterInsert(r *optionResolver, fn any) error {
 	if ft.NumIn() != 2 || ft.In(0) != r.rootType || ft.In(1) != reflect.TypeFor[DBTX]() {
 		return afterInsertTypeMismatch(r.rootType, fn)
 	}
-	o.afterInserts = append(o.afterInserts, fn)
+	o.afterInserts = append(o.afterInserts, call)
 	return nil
 }
 
@@ -415,6 +426,7 @@ func toOptionSet(os *optionSet) *planner.OptionSet {
 	return &planner.OptionSet{
 		Sets:        os.sets,
 		Uses:        os.uses,
+		Links:       os.links,
 		Refs:        refs,
 		Collections: collections,
 		Omits:       os.omits,

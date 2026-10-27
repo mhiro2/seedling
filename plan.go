@@ -22,7 +22,7 @@ import (
 // stateless callbacks, or rebuild the plan when callback state must be isolated.
 type Plan[T any] struct {
 	graph        *graph.Graph
-	afterInserts []any // func(T, DBTX) closures
+	afterInserts []afterInsertFn
 	ctx          context.Context
 	registry     *Registry
 	db           DBTX
@@ -122,17 +122,8 @@ func (p *Plan[T]) InsertE(ctx context.Context, db DBTX) (Result[T], error) {
 	// On failure the result is still returned so callers can clean up
 	// already-inserted records via Result.Cleanup.
 	for _, fn := range p.afterInserts {
-		switch cb := fn.(type) {
-		case func(T, DBTX):
-			cb(root, effectiveDB)
-		case func(T, DBTX) error:
-			if err := cb(root, effectiveDB); err != nil {
-				return result, fmt.Errorf("run after-insert callback: %w", err)
-			}
-		default:
-			// BuildE rejects mismatched callbacks up front; this guards against a
-			// plan assembled through any other path.
-			return result, afterInsertTypeError[T](fn)
+		if err := fn(root, effectiveDB); err != nil {
+			return result, fmt.Errorf("run after-insert callback: %w", err)
 		}
 	}
 
@@ -191,10 +182,6 @@ func (p *Plan[T]) DryRunString() string {
 
 func (p *Plan[T]) toExecutorLogFn() func(executor.LogEntry) {
 	return toExecutorLogFn(p.logFn)
-}
-
-func afterInsertTypeError[T any](fn any) error {
-	return afterInsertTypeMismatch(reflect.TypeFor[T](), fn)
 }
 
 func afterInsertTypeMismatch(rootType reflect.Type, fn any) error {
