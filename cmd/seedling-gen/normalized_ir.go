@@ -151,6 +151,12 @@ func generateNormalizedCode(w io.Writer, kind, pkg string, imports []string, mod
 	if err := validateNormalizedModels(models, emitStructs); err != nil {
 		return fmt.Errorf("validate %s generated code: %w", kind, err)
 	}
+	if err := validateBuilderNames(models, emitStructs); err != nil {
+		return fmt.Errorf("validate %s generated code: %w", kind, err)
+	}
+	// GORM models are hand-written, so their package qualifiers may not name
+	// the standard packages; the other adapters read generated code.
+	builders, builderImports := buildBuilderModels(models, kind != "gorm")
 
 	var buf strings.Builder
 
@@ -160,7 +166,11 @@ func generateNormalizedCode(w io.Writer, kind, pkg string, imports []string, mod
 	buf.WriteString("\n\n")
 
 	imports = append(imports, `"errors"`)
-	if normalizedModelsNeedContextImport(models) {
+	imports = append(imports, builderImports...)
+	if len(builders) > 0 {
+		imports = append(imports, `"testing"`)
+	}
+	if len(builders) > 0 || normalizedModelsNeedContextImport(models) {
 		imports = append(imports, `"context"`)
 	}
 	if normalizedModelsNeedTimeImport(models, emitStructs) {
@@ -198,6 +208,14 @@ func generateNormalizedCode(w io.Writer, kind, pkg string, imports []string, mod
 		return fmt.Errorf("render %s blueprints: %w", kind, err)
 	}
 	buf.WriteString(blueprints)
+
+	fixtures, err := renderNormalizedTemplate("builders", builderTemplate, builders, template.FuncMap{
+		"quote": strconv.Quote,
+	})
+	if err != nil {
+		return fmt.Errorf("render %s builders: %w", kind, err)
+	}
+	buf.WriteString(fixtures)
 
 	formatted, err := format.Source([]byte(buf.String()))
 	if err != nil {
@@ -349,6 +367,8 @@ func validateNormalizedModels(models []normalizedModel, emitStructs bool) error 
 var reservedGeneratedNames = map[string]struct{}{
 	"Blueprints":    {},
 	"NewBlueprints": {},
+	"Fixtures":      {},
+	"NewFixtures":   {},
 }
 
 // reservedBlueprintsFieldNames are the methods declared on the generated
