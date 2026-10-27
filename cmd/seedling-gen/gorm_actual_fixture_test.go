@@ -127,7 +127,8 @@ func TestGeneratedActualGormBlueprintLifecycle(t *testing.T) {
 		}
 	}
 
-	reg := NewRegistry()
+	reg := seedling.NewRegistry()
+	NewBlueprints().MustRegister(reg)
 	result, err := seedling.NewSession[actualgorm.User](reg).InsertOneE(t.Context(), db)
 	if err != nil {
 		t.Fatalf("insert generated GORM blueprint: %v", err)
@@ -211,7 +212,9 @@ func TestGeneratedHandwrittenGormBlueprintLifecycle(t *testing.T) {
 		t.Fatalf("migrate fixture models: %v", err)
 	}
 
-	session := seedling.NewSession[handwritten.Player](NewRegistry())
+	reg := seedling.NewRegistry()
+	NewBlueprints().MustRegister(reg)
+	session := seedling.NewSession[handwritten.Player](reg)
 	first, err := session.InsertOneE(t.Context(), db)
 	if err != nil {
 		t.Fatalf("insert first player: %v", err)

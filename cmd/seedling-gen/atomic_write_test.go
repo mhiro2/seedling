@@ -45,7 +45,7 @@ func TestWriteOutput_FailedGenerationKeepsExistingFile(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
 	// Act
-	exitCode := writeOutput(&stdout, &stderr, dest, func(w io.Writer) error {
+	exitCode := writeOutput(&stdout, &stderr, dest, false, func(w io.Writer) error {
 		_, _ = io.WriteString(w, "package broken\n")
 		return errGenerate
 	})

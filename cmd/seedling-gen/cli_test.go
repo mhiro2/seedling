@@ -155,6 +155,121 @@ CREATE TABLE companies (
 	}
 }
 
+func TestRun_CheckComparesGeneratedFile(t *testing.T) {
+	const schema = `
+CREATE TABLE companies (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL
+);
+`
+	const changedSchema = `
+CREATE TABLE companies (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL
+);
+`
+
+	tests := []struct {
+		name        string
+		existing    bool
+		checkSchema string
+		wantExit    int
+		wantStderr  string
+	}{
+		{name: "up to date", existing: true, checkSchema: schema, wantExit: 0},
+		{name: "out of date", existing: true, checkSchema: changedSchema, wantExit: 1, wantStderr: "is out of date"},
+		{name: "missing", checkSchema: schema, wantExit: 1, wantStderr: "does not exist"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			outputPath := filepath.Join(t.TempDir(), "blueprints_gen.go")
+			if tt.existing {
+				var stdout, stderr bytes.Buffer
+				if code := run([]string{"sql", "-pkg", "fixtures", "-out", outputPath, writeSchemaFile(t, schema)}, &stdout, &stderr); code != 0 {
+					t.Fatalf("initial generation exit code = %d, stderr = %s", code, stderr.String())
+				}
+			}
+			before, beforeErr := os.ReadFile(outputPath)
+
+			// Act
+			var stdout, stderr bytes.Buffer
+			exitCode := run([]string{"sql", "-pkg", "fixtures", "-out", outputPath, "-check", writeSchemaFile(t, tt.checkSchema)}, &stdout, &stderr)
+
+			// Assert
+			if exitCode != tt.wantExit {
+				t.Fatalf("exit code = %d, want %d (stderr: %s)", exitCode, tt.wantExit, stderr.String())
+			}
+			if tt.wantStderr == "" && stderr.Len() != 0 {
+				t.Fatalf("stderr = %q, want empty", stderr.String())
+			}
+			if !strings.Contains(stderr.String(), tt.wantStderr) {
+				t.Fatalf("stderr = %q, want it to contain %q", stderr.String(), tt.wantStderr)
+			}
+			if stdout.Len() != 0 {
+				t.Fatalf("stdout = %q, want empty", stdout.String())
+			}
+			after, afterErr := os.ReadFile(outputPath)
+			if !bytes.Equal(before, after) || (beforeErr == nil) != (afterErr == nil) {
+				t.Fatal("--check modified the output file")
+			}
+		})
+	}
+}
+
+func TestRun_CheckQuickstartExampleIsUpToDate(t *testing.T) {
+	// Arrange
+	exampleDir := filepath.Join("..", "..", "examples", "quickstart")
+	args := []string{
+		"sql", "-pkg", "quickstart",
+		"-out", filepath.Join(exampleDir, "blueprints_gen.go"),
+		"-check", filepath.Join(exampleDir, "schema.sql"),
+	}
+
+	// Act
+	var stdout, stderr bytes.Buffer
+	exitCode := run(args, &stdout, &stderr)
+
+	// Assert
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d; run go generate ./examples/quickstart\n%s", exitCode, stderr.String())
+	}
+}
+
+func TestRun_CheckRejectsUnusableFlagCombinations(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		wantStderr string
+	}{
+		{name: "without out", args: []string{"-check"}, wantStderr: "--check requires --out"},
+		{name: "with explain", args: []string{"-check", "-out", "blueprints_gen.go", "-explain"}, wantStderr: "--check cannot be combined with --explain or --json"},
+		{name: "with json", args: []string{"-check", "-out", "blueprints_gen.go", "-json"}, wantStderr: "--check cannot be combined with --explain or --json"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			args := append([]string{"sql"}, tt.args...)
+			args = append(args, writeSchemaFile(t, "CREATE TABLE users (id SERIAL PRIMARY KEY);"))
+
+			// Act
+			var stdout, stderr bytes.Buffer
+			exitCode := run(args, &stdout, &stderr)
+
+			// Assert
+			if exitCode != 1 {
+				t.Fatalf("exit code = %d, want 1", exitCode)
+			}
+			if !strings.Contains(stderr.String(), tt.wantStderr) {
+				t.Fatalf("stderr = %q, want it to contain %q", stderr.String(), tt.wantStderr)
+			}
+		})
+	}
+}
+
 func TestRun_RequiresCommand(t *testing.T) {
 	// Arrange
 	var stdout bytes.Buffer

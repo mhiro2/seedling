@@ -934,18 +934,18 @@ CREATE TABLE tags (
 		t.Fatalf("GenerateSqlc error: %v", err)
 	}
 
-	// The stub must return the value unchanged without touching the database,
-	// rather than calling some other query.
+	// Without a matching query there is no Insert to generate. Leaving it unset
+	// makes registration fail until hand-written code supplies one, instead of
+	// a stub that reports success without touching the database.
 	output := buf.String()
-	if !strings.Contains(output, "// TODO: implement") {
-		t.Fatal("expected TODO comment when no matching query found")
+	if strings.Contains(output, "Insert: func") || strings.Contains(output, "Delete:") {
+		t.Fatalf("expected no Insert or Delete hook without matching queries, got:\n%s", output)
 	}
-	fset, insert := generatedHook(t, output, "tag", "Insert")
-	if len(insert.Body.List) != 1 || renderNode(t, fset, insert.Body.List[0]) != "return v, nil" {
-		t.Fatalf("Insert stub body = %s, want only return v, nil", renderNode(t, fset, insert.Body))
+	if !strings.Contains(output, "// Insert is not generated: set it in hand-written code before Register.") {
+		t.Fatalf("expected a note about the missing Insert, got:\n%s", output)
 	}
-	if strings.Contains(output, "Delete:") {
-		t.Fatalf("expected no Delete hook without a delete query, got:\n%s", output)
+	if strings.Contains(output, `"context"`) {
+		t.Fatalf("expected no context import without hooks, got:\n%s", output)
 	}
 }
 

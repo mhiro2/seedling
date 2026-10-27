@@ -306,7 +306,6 @@ func GenerateGorm(w io.Writer, pkg, modelImportPath string, models []GormModel) 
 		return fmt.Errorf("gorm model import: %w", err)
 	}
 	imports := []string{
-		`"context"`,
 		`"github.com/mhiro2/seedling"`,
 		`"gorm.io/gorm"`,
 		spec,
