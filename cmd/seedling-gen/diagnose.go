@@ -568,7 +568,7 @@ func buildSQLDiagnosticReport(dialect string, tables []Table) diagnosticReport {
 		Adapter:    "sql",
 		Dialect:    normalizeDialectName(dialect),
 		Tables:     buildTableDiagnostics(tables),
-		Blueprints: buildBlueprintDiagnostics(normalizeTableModels(tables), tableInsertSources(tables, "stub"), nil),
+		Blueprints: buildBlueprintDiagnostics(normalizeTableModels(tables), tableInsertSources(tables, "hand-written"), nil),
 	}
 }
 
@@ -585,7 +585,7 @@ func buildSQLCDiagnosticReport(dialect, importPath string, tables []Table, sqlcI
 		warnings = append(warnings, fmt.Sprintf("resolve sqlc bindings: %v", err))
 	}
 	for _, table := range tables {
-		insertSources[table.Name] = "stub"
+		insertSources[table.Name] = "hand-written"
 		if query := bindings[table.Name].insert; query != nil {
 			insertSources[table.Name] = query.Name
 		}
@@ -645,7 +645,7 @@ func buildAtlasDiagnosticReport(tables []Table) diagnosticReport {
 	return diagnosticReport{
 		Adapter:    "atlas",
 		Tables:     buildTableDiagnostics(tables),
-		Blueprints: buildBlueprintDiagnostics(normalizeTableModels(tables), tableInsertSources(tables, "stub"), nil),
+		Blueprints: buildBlueprintDiagnostics(normalizeTableModels(tables), tableInsertSources(tables, "hand-written"), nil),
 	}
 }
 

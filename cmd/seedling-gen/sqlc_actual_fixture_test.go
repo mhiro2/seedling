@@ -168,7 +168,8 @@ func TestGeneratedActualSQLCBlueprintLifecycle(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	reg := NewRegistry()
+	reg := seedling.NewRegistry()
+	NewBlueprints().MustRegister(reg)
 	result, err := seedling.NewSession[actualsqlc.AccountRecord](reg).InsertOneE(t.Context(), db)
 	if err != nil {
 		t.Fatalf("insert generated sqlc blueprint: %v", err)

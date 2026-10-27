@@ -18,6 +18,7 @@ func TestGenerateNormalizedCode_QuotesStringPositions(t *testing.T) {
 	const injected = `x",Optional:true,RefBlueprint:"y`
 	models := []normalizedModel{
 		{
+			FieldName:     "User",
 			StructName:    "User",
 			TypeExpr:      "User",
 			ZeroValueExpr: "User{}",
@@ -64,39 +65,50 @@ func TestValidateNormalizedModels_RejectsInvalidPositions(t *testing.T) {
 		name        string
 		emitStructs bool
 		model       normalizedModel
+		want        string
 	}{
 		{
 			name: "invalid field name",
+			want: "invalid field name",
 			model: normalizedModel{
-				TypeExpr: "User",
-				Fields:   []normalizedField{{GoName: "ID; var x = 1", GoType: "int64"}},
+				FieldName: "User",
+				TypeExpr:  "User",
+				Fields:    []normalizedField{{GoName: "ID; var x = 1", GoType: "int64"}},
 			},
 		},
 		{
 			name: "type expression breakout",
+			want: "invalid type expression",
 			model: normalizedModel{
-				TypeExpr: "User; func init() {}",
+				FieldName: "User",
+				TypeExpr:  "User; func init() {}",
 			},
 		},
 		{
 			name: "zero-value expression breakout",
+			want: "invalid zero-value expression",
 			model: normalizedModel{
+				FieldName:     "User",
 				TypeExpr:      "User",
 				ZeroValueExpr: "User{}; evil()",
 			},
 		},
 		{
 			name:        "invalid struct name when emitting structs",
+			want:        "invalid struct name",
 			emitStructs: true,
 			model: normalizedModel{
+				FieldName:  "User",
 				StructName: "1Bad",
 				TypeExpr:   "User",
 			},
 		},
 		{
 			name:        "invalid field type when emitting structs",
+			want:        "invalid field type",
 			emitStructs: true,
 			model: normalizedModel{
+				FieldName:  "User",
 				StructName: "User",
 				TypeExpr:   "User",
 				Fields:     []normalizedField{{GoName: "ID", GoType: "int64) struct{}; var _ = func("}},
@@ -104,8 +116,10 @@ func TestValidateNormalizedModels_RejectsInvalidPositions(t *testing.T) {
 		},
 		{
 			name: "invalid embedded field name",
+			want: "invalid embedded field name",
 			model: normalizedModel{
-				TypeExpr: "User",
+				FieldName: "User",
+				TypeExpr:  "User",
 				Fields: []normalizedField{{GoName: "CreatedAt", GoType: "time.Time", Embedded: &embeddedStruct{
 					FieldName: "Model: evil()", TypeExpr: "gorm.Model",
 				}}},
@@ -113,8 +127,10 @@ func TestValidateNormalizedModels_RejectsInvalidPositions(t *testing.T) {
 		},
 		{
 			name: "embedded type breakout",
+			want: "invalid embedded type",
 			model: normalizedModel{
-				TypeExpr: "User",
+				FieldName: "User",
+				TypeExpr:  "User",
 				Fields: []normalizedField{{GoName: "CreatedAt", GoType: "time.Time", Embedded: &embeddedStruct{
 					FieldName: "Model", TypeExpr: "gorm.Model{}; evil()",
 				}}},
@@ -122,8 +138,10 @@ func TestValidateNormalizedModels_RejectsInvalidPositions(t *testing.T) {
 		},
 		{
 			name: "duplicate relation names",
+			want: "duplicate relation name",
 			model: normalizedModel{
-				TypeExpr: "User",
+				FieldName: "User",
+				TypeExpr:  "User",
 				Relations: []normalizedRelation{
 					{Name: "company", LocalFields: []string{"CompanyID"}},
 					{Name: "company", LocalFields: []string{"BillingCompanyID"}},
@@ -132,12 +150,30 @@ func TestValidateNormalizedModels_RejectsInvalidPositions(t *testing.T) {
 		},
 		{
 			name: "empty relation name",
+			want: "relation name must not be empty",
 			model: normalizedModel{
-				TypeExpr: "User",
+				FieldName: "User",
+				TypeExpr:  "User",
 				Relations: []normalizedRelation{
 					{LocalFields: []string{"CompanyID"}},
 				},
 			},
+		},
+		{
+			name:  "invalid Blueprints field name",
+			model: normalizedModel{FieldName: "user-model", TypeExpr: "User"},
+			want:  "invalid Blueprints field name",
+		},
+		{
+			name:  "Blueprints field named after a generated method",
+			model: normalizedModel{FieldName: "Register", TypeExpr: "Register"},
+			want:  "collides with a generated method",
+		},
+		{
+			name:        "struct named after a generated declaration",
+			emitStructs: true,
+			model:       normalizedModel{FieldName: "Blueprints", StructName: "Blueprints", TypeExpr: "Blueprints"},
+			want:        "collides with a generated declaration",
 		},
 	}
 
@@ -147,10 +183,26 @@ func TestValidateNormalizedModels_RejectsInvalidPositions(t *testing.T) {
 			err := validateNormalizedModels([]normalizedModel{tt.model}, tt.emitStructs)
 
 			// Assert
-			if err == nil {
-				t.Fatal("expected validation error, got nil")
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("validation error = %v, want it to mention %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestValidateNormalizedModels_RejectsDuplicateBlueprintsFieldNames(t *testing.T) {
+	// Arrange
+	models := []normalizedModel{
+		{FieldName: "User", TypeExpr: "models.User"},
+		{FieldName: "User", TypeExpr: "legacy.User"},
+	}
+
+	// Act
+	err := validateNormalizedModels(models, false)
+
+	// Assert
+	if err == nil || !strings.Contains(err.Error(), `duplicate Blueprints field name "User"`) {
+		t.Fatalf("validation error = %v, want duplicate Blueprints field name", err)
 	}
 }
 
@@ -187,9 +239,43 @@ func TestImportSpec_QuotesPathAndValidatesAlias(t *testing.T) {
 	}
 }
 
+func TestRenderImports_SeparatesStandardLibrary(t *testing.T) {
+	// Arrange
+	imports := []string{`"github.com/mhiro2/seedling"`, `"errors"`, `db "example.com/app/db"`, `"context"`}
+
+	// Act
+	var buf strings.Builder
+	renderImports(&buf, imports)
+
+	// Assert
+	want := "import (\n\t\"errors\"\n\t\"context\"\n\n\t\"github.com/mhiro2/seedling\"\n\tdb \"example.com/app/db\"\n)\n\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("renderImports =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestGenerateSqlc_RejectsPackageNamedLikeStandardImport(t *testing.T) {
+	// Arrange: the generated Register uses the standard library errors package.
+	tables := mustParseSchema(t, `CREATE TABLE tags (id SERIAL PRIMARY KEY);`)
+	sqlcInfo := &SqlcInfo{
+		Package: "errors",
+		Models:  []SqlcModel{{Name: "Tag", Fields: []SqlcField{{Name: "ID", Type: "int32"}}}},
+	}
+
+	// Act
+	var buf bytes.Buffer
+	err := GenerateSqlc(&buf, "testutil", "example.com/app/errors", tables, sqlcInfo)
+
+	// Assert
+	if err == nil || !strings.Contains(err.Error(), `both import as "errors"`) {
+		t.Fatalf("GenerateSqlc error = %v, want an import name collision", err)
+	}
+}
+
 func TestValidateNormalizedModels_AcceptsValidModels(t *testing.T) {
 	models := []normalizedModel{
 		{
+			FieldName:     "User",
 			StructName:    "User",
 			TypeExpr:      "User",
 			ZeroValueExpr: "User{}",

@@ -101,7 +101,8 @@ func TestGeneratedActualEntBlueprintLifecycle(t *testing.T) {
 		t.Fatalf("create Ent schema: %v", err)
 	}
 
-	reg := NewRegistry()
+	reg := seedling.NewRegistry()
+	NewBlueprints().MustRegister(reg)
 	result, err := seedling.NewSession[*actualent.User](reg).InsertOneE(t.Context(), client)
 	if err != nil {
 		t.Fatalf("insert generated Ent blueprint: %v", err)

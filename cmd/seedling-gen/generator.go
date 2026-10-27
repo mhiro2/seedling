@@ -10,7 +10,6 @@ func Generate(w io.Writer, pkg string, tables []Table) error {
 	models := normalizeTableModels(tables)
 
 	imports := []string{
-		`"context"`,
 		`"github.com/mhiro2/seedling"`,
 	}
 
@@ -28,7 +27,6 @@ func GenerateSqlc(w io.Writer, pkg, sqlcImportPath string, tables []Table, sqlcI
 		return fmt.Errorf("sqlc import: %w", err)
 	}
 	imports := []string{
-		`"context"`,
 		`"github.com/mhiro2/seedling"`,
 		spec,
 	}

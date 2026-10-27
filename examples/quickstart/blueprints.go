@@ -1,5 +1,7 @@
 package quickstart
 
+//go:generate go run github.com/mhiro2/seedling/cmd/seedling-gen sql --pkg quickstart --out blueprints_gen.go schema.sql
+
 import (
 	"context"
 	"sync/atomic"
@@ -14,42 +16,33 @@ func nextID() int {
 }
 
 // NewRegistry returns a local registry populated with this example's blueprints.
+//
+// blueprints_gen.go is owned by seedling-gen and rewritten on every run. This
+// hand-written file adjusts the generated blueprints before registering them,
+// so regenerating after a schema change never overwrites these callbacks.
 func NewRegistry() *seedling.Registry {
+	blueprints := NewBlueprints()
+
+	blueprints.Company.Insert = func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
+		v.ID = nextID() // your DB call
+		return v, nil
+	}
+
+	blueprints.User.Insert = func(ctx context.Context, db seedling.DBTX, v User) (User, error) {
+		v.ID = nextID() // your DB call
+		return v, nil
+	}
+	generatedUserDefaults := blueprints.User.Defaults
+	blueprints.User.Defaults = func() User {
+		user := generatedUserDefaults()
+		user.Name = "test-user"
+		user.Email = "test@example.com"
+		return user
+	}
+
 	reg := seedling.NewRegistry()
-	RegisterBlueprints(reg)
+	blueprints.MustRegister(reg)
 	return reg
-}
-
-// RegisterBlueprints registers the generated-style Company and User blueprints in reg.
-func RegisterBlueprints(reg *seedling.Registry) {
-	seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
-		Name:    "company",
-		Table:   "companies",
-		PKField: "ID",
-		Defaults: func() Company {
-			return Company{Name: "test-company"}
-		},
-		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
-			v.ID = nextID()
-			return v, nil
-		},
-	})
-
-	seedling.MustRegisterTo(reg, seedling.Blueprint[User]{
-		Name:    "user",
-		Table:   "users",
-		PKField: "ID",
-		Defaults: func() User {
-			return User{Name: "test-user", Email: "test@example.com"}
-		},
-		Relations: []seedling.Relation{
-			{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
-		},
-		Insert: func(ctx context.Context, db seedling.DBTX, v User) (User, error) {
-			v.ID = nextID()
-			return v, nil
-		},
-	})
 }
 
 // ResetIDs resets the in-memory ID sequence used by this example package.

@@ -482,7 +482,6 @@ func GenerateEnt(w io.Writer, pkg, entImportPath string, schemas []EntSchema) er
 		return fmt.Errorf("ent import: %w", err)
 	}
 	imports := []string{
-		`"context"`,
 		`"github.com/mhiro2/seedling"`,
 		spec,
 	}

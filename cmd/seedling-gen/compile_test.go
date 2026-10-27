@@ -96,6 +96,32 @@ CREATE TABLE configs ();
 		ensureCompilesAndRuns(t, "sql_without_pk", buf.String(), sqlWithoutPKLifecycleTest)
 	})
 
+	t.Run("sql regenerated after a schema change keeps hand-written code", func(t *testing.T) {
+		// The hand-written file customizes Insert, Defaults, and Traits once.
+		// Adding a column and a relation and regenerating must leave it
+		// compiling and behaving the same, with no repair.
+		for _, schema := range []string{regenerationSchemaBefore, regenerationSchemaAfter} {
+			// Arrange
+			tables, err := ParseSchema(schema)
+			if err != nil {
+				t.Fatalf("ParseSchema: %v", err)
+			}
+
+			// Act
+			var buf strings.Builder
+			if err := Generate(&buf, "compile", tables); err != nil {
+				t.Fatalf("Generate: %v", err)
+			}
+
+			// Assert
+			ensurePackageRuns(t, "sql_regeneration", map[string]string{
+				"blueprints_gen.go":  buf.String(),
+				"blueprints.go":      regenerationHandWritten,
+				"blueprints_test.go": regenerationLifecycleTest,
+			})
+		}
+	})
+
 	t.Run("sqlc", func(t *testing.T) {
 		tables := []Table{
 			{
@@ -233,14 +259,22 @@ func ensureCompiles(t *testing.T, name, src string) {
 
 func ensureCompilesAndRuns(t *testing.T, name, src, testSrc string) {
 	t.Helper()
+	files := map[string]string{"blueprint.go": src}
+	if testSrc != "" {
+		files["blueprint_test.go"] = testSrc
+	}
+	ensurePackageRuns(t, name, files)
+}
+
+// ensurePackageRuns writes files into a temporary module that resolves
+// seedling to this checkout, then builds and tests it.
+func ensurePackageRuns(t *testing.T, name string, files map[string]string) {
+	t.Helper()
 	requireGoToolchain(t)
 	tmpDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(tmpDir, "blueprint.go"), []byte(src), 0o600); err != nil {
-		t.Fatalf("write %s generated code: %v", name, err)
-	}
-	if testSrc != "" {
-		if err := os.WriteFile(filepath.Join(tmpDir, "blueprint_test.go"), []byte(testSrc), 0o600); err != nil {
-			t.Fatalf("write %s generated test: %v", name, err)
+	for file, src := range files {
+		if err := os.WriteFile(filepath.Join(tmpDir, file), []byte(src), 0o600); err != nil {
+			t.Fatalf("write %s file %s: %v", name, file, err)
 		}
 	}
 
@@ -275,10 +309,16 @@ replace gorm.io/gorm => %s
 const sqlWithoutPKLifecycleTest = `package compile
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	"github.com/mhiro2/seedling"
 )
+
+func insertAsIs[T any](_ context.Context, _ seedling.DBTX, v T) (T, error) {
+	return v, nil
+}
 
 func validateAndInsert[T any](t *testing.T, reg *seedling.Registry) {
 	t.Helper()
@@ -294,11 +334,121 @@ func validateAndInsert[T any](t *testing.T, reg *seedling.Registry) {
 	}
 }
 
+func TestGeneratedBlueprintsRequireInsert(t *testing.T) {
+	err := NewBlueprints().Register(seedling.NewRegistry())
+	if err == nil {
+		t.Fatal("registering blueprints without Insert succeeded")
+	}
+	for _, name := range []string{"legacy_user", "audit_log", "config"} {
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("registration error does not report blueprint %q: %v", name, err)
+		}
+	}
+}
+
 func TestGeneratedBlueprintsWithoutPrimaryKey(t *testing.T) {
-	reg := NewRegistry()
+	blueprints := NewBlueprints()
+	blueprints.LegacyUser.Insert = insertAsIs[LegacyUser]
+	blueprints.AuditLog.Insert = insertAsIs[AuditLog]
+	blueprints.Config.Insert = insertAsIs[Config]
+	reg := seedling.NewRegistry()
+	blueprints.MustRegister(reg)
+
 	validateAndInsert[LegacyUser](t, reg)
 	validateAndInsert[AuditLog](t, reg)
 	validateAndInsert[Config](t, reg)
+}
+`
+
+const regenerationSchemaBefore = `
+CREATE TABLE companies (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    company_id INTEGER NOT NULL REFERENCES companies(id),
+    name TEXT NOT NULL
+);
+`
+
+const regenerationSchemaAfter = `
+CREATE TABLE companies (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    parent_id INTEGER REFERENCES companies(id)
+);
+
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    company_id INTEGER NOT NULL REFERENCES companies(id),
+    name TEXT NOT NULL,
+    nickname TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL
+);
+`
+
+const regenerationHandWritten = `package compile
+
+import (
+	"context"
+	"sync/atomic"
+
+	"github.com/mhiro2/seedling"
+)
+
+var lastID atomic.Int64
+
+func insertWithID[T any](setID func(*T, int)) func(context.Context, seedling.DBTX, T) (T, error) {
+	return func(_ context.Context, _ seedling.DBTX, v T) (T, error) {
+		setID(&v, int(lastID.Add(1)))
+		return v, nil
+	}
+}
+
+func NewRegistry() *seedling.Registry {
+	blueprints := NewBlueprints()
+
+	blueprints.Company.Insert = insertWithID(func(c *Company, id int) { c.ID = id })
+	blueprints.User.Insert = insertWithID(func(u *User, id int) { u.ID = id })
+
+	generatedUserDefaults := blueprints.User.Defaults
+	blueprints.User.Defaults = func() User {
+		user := generatedUserDefaults()
+		user.Name = "alice"
+		return user
+	}
+	blueprints.User.Traits = map[string][]seedling.Option{
+		"bob": {seedling.Set("Name", "bob")},
+	}
+
+	reg := seedling.NewRegistry()
+	blueprints.MustRegister(reg)
+	return reg
+}
+`
+
+const regenerationLifecycleTest = `package compile
+
+import (
+	"testing"
+
+	"github.com/mhiro2/seedling"
+)
+
+func TestHandWrittenCustomizations(t *testing.T) {
+	reg := NewRegistry()
+
+	alice := seedling.NewSession[User](reg).InsertOne(t, nil).Root()
+	if alice.ID == 0 || alice.CompanyID == 0 || alice.Name != "alice" {
+		t.Fatalf("default user = %+v, want inserted alice with a company", alice)
+	}
+
+	bob := seedling.NewSession[User](reg).InsertOne(t, nil, seedling.BlueprintTrait("bob")).Root()
+	if bob.ID == 0 || bob.Name != "bob" {
+		t.Fatalf("trait user = %+v, want inserted bob", bob)
+	}
 }
 `
 
@@ -313,7 +463,8 @@ import (
 
 func TestGeneratedSQLCBlueprintLifecycle(t *testing.T) {
 	recorder := &testsqlc.Recorder{}
-	reg := NewRegistry()
+	reg := seedling.NewRegistry()
+	NewBlueprints().MustRegister(reg)
 	result, err := seedling.NewSession[testsqlc.User](reg).InsertOneE(t.Context(), recorder)
 	if err != nil {
 		t.Fatalf("insert generated sqlc blueprint: %v", err)
@@ -385,7 +536,8 @@ func TestGeneratedEntBlueprintLifecycle(t *testing.T) {
 	companyClient := &testent.CompanyClient{}
 	userClient := &testent.UserClient{}
 	client := &testent.Client{Company: companyClient, User: userClient}
-	reg := NewRegistry()
+	reg := seedling.NewRegistry()
+	NewBlueprints().MustRegister(reg)
 	result, err := seedling.NewSession[*testent.User](reg).InsertOneE(
 		t.Context(),
 		client,

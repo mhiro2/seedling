@@ -46,7 +46,7 @@ CREATE TABLE users (
 		"fk=companies",
 		"relation=company",
 		"Inferred blueprints:",
-		"- user (table: users, type: User, pk: ID, insert: stub)",
+		"- user (table: users, type: User, pk: ID, insert: hand-written)",
 		"Relations:",
 		"localFields=CompanyID",
 	}
@@ -99,8 +99,8 @@ CREATE TABLE users (
 	if len(report.Blueprints) != 1 {
 		t.Fatalf("got %d blueprints, want %d", len(report.Blueprints), 1)
 	}
-	if report.Blueprints[0].InsertSource != "stub" {
-		t.Fatalf("got insert source %q, want %q", report.Blueprints[0].InsertSource, "stub")
+	if report.Blueprints[0].InsertSource != "hand-written" {
+		t.Fatalf("got insert source %q, want %q", report.Blueprints[0].InsertSource, "hand-written")
 	}
 }
 
@@ -291,7 +291,7 @@ func TestRun_AtlasExplain_PrintsParsedTables(t *testing.T) {
 		"Parsed tables:",
 		"- users (go: User, blueprint: user)",
 		"relation=manager",
-		"- user (table: users, type: User, pk: ID, insert: stub)",
+		"- user (table: users, type: User, pk: ID, insert: hand-written)",
 	}
 	for _, check := range checks {
 		if !strings.Contains(output, check) {
