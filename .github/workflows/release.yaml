@@ -5,18 +5,28 @@ on:
     tags:
       - "v*"
 
-permissions:
-  contents: write
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+permissions: {}
 
 jobs:
   quality:
     name: Format, lint and test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -45,17 +55,21 @@ jobs:
   seedlingpgx-version:
     name: Check seedlingpgx parent version
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Check seedlingpgx requires the seedling release being cut
         run: bash scripts/check-seedlingpgx-parent-version.sh "$GITHUB_REF_NAME"
 
   integration:
     name: Integration test (${{ matrix.db }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     strategy:
@@ -68,6 +82,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -89,17 +105,20 @@ jobs:
       - seedlingpgx-version
       - integration
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
-          cache-dependency-path: go.sum
+          cache: false
       - name: Install Syft
         uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
       - name: Test seedlingpgx release candidate from an empty consumer
@@ -132,18 +151,22 @@ jobs:
   seedlingpgx:
     needs: goreleaser
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          persist-credentials: false
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: seedlingpgx/go.mod
-          cache: true
-          cache-dependency-path: seedlingpgx/go.sum
+          cache: false
       - name: Publish matching seedlingpgx module tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="seedlingpgx/${GITHUB_REF_NAME}"
           remote_sha="$(
@@ -155,8 +178,9 @@ jobs:
             exit 1
           fi
           if [[ -z "$remote_sha" ]]; then
-            git tag "$tag" "$GITHUB_SHA"
-            git push origin "refs/tags/${tag}"
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/${tag}" \
+              -f sha="$GITHUB_SHA"
           fi
       - name: Test released module from an empty consumer
         env:
