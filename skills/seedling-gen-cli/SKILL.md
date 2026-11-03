@@ -52,8 +52,8 @@ Choose exactly one input source. Prefer the strongest source of truth already us
    Generate the Ent client first, then use `ent --dir` and `--import-path`. The generated package is the source of truth for field and builder names.
 4. Atlas HCL schema
    Use `atlas`.
-5. SQL DDL files
-   Use `sql` and pass a schema file path.
+5. SQL DDL files or a migration directory
+   Use `sql` and pass schema files or migration directories. Statements are applied in order, so `ALTER` / `DROP` / `RENAME` in later migrations are reflected and down migrations are skipped.
 
 ## Workflow
 
@@ -132,6 +132,7 @@ seedling-gen atlas \
 
 - **GORM model parse failure** — Ensure `--import-path` points to the full Go import path of the models package. If unexported fields or custom types cause issues, check that the package compiles independently with `go build`.
 - **FK type mismatch (`sql.NullInt64`, `pgtype.Int8`, named ID types)** — Generated `BelongsTo` relations already carry a `Convert` entry for known nullable wrappers. For anything else (for example `int64` → `UserID`), set `Relation.Convert` in hand-written code with `seedling.ConvertFK(func(id int64) UserID { return UserID(id) })`; `Plan.Validate` reports the remaining mismatches with a hint.
+- **Unsupported migration statement** — `sql` and `sqlc` stop with `file:line` when a migration changes the schema in a way the parser cannot follow (an unknown `ALTER TABLE` action, an `ALTER` on a table no earlier statement created, or a `DROP CONSTRAINT` whose name is unknown). Name the constraint where it is created, or dump the migrated database's schema (`pg_dump --schema-only`, `mysqldump --no-data`, `sqlite3 app.db .schema`) and generate from that file.
 - **FK or relation not detected** — `seedling-gen` infers relations from foreign key constraints. If the schema lacks explicit FK definitions (common in MySQL or older DDL), append the missing `Relation` entries to the blueprint's `Relations` in hand-written code.
 - **Composite key mismatch** — Verify that `LocalFields`, `RefFields`, and `RemoteFields` in the generated `Relation` list their columns in matching schema order.
 - **Generated defaults violate constraints** — The generator reads single-column `UNIQUE`, enum / `CHECK (col IN (...))`, and length constraints. Wrap the generated `Defaults` for composite unique keys, other `CHECK` expressions, rules the schema does not state, or non-scalar custom types, drawing unique values from the `Scope` they receive.

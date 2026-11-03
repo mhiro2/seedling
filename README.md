@@ -118,7 +118,7 @@ The shortest path is two steps: generate blueprints from your schema, then call 
    seedling-gen sql --pkg testutil --out blueprints_gen.go schema.sql
    ```
 
-   Other input sources are supported (sqlc, GORM, ent, Atlas) -- see the [Guide](./docs/guide.md#cli) for the full list.
+   Other input sources are supported (sqlc, GORM, ent, Atlas) -- see the [Guide](./docs/guide.md#cli) for the full list. A migration directory works too: `ALTER` / `DROP` / `RENAME` statements are applied in order, and a change the parser cannot follow is reported with its file and line ([details](./docs/guide.md#migrations-and-the-current-schema)).
 
    This generates struct types and a `Blueprints` struct (built by `NewBlueprints()`) holding one blueprint per table, with constraint-aware `Defaults` for common scalar fields (unique columns draw from the test's scope, enums take an allowed value, lengths are respected), relations, `Register` / `MustRegister` methods, and typed builders returned by `NewFixtures(reg)`. The file is rewritten on every run, so keep your DB logic in a separate hand-written file of the same package:
 
