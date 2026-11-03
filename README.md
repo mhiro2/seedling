@@ -257,7 +257,15 @@ _ = result
 
 ### Clean up when transactions are not an option
 
-If you cannot use `WithTx`, call `Result.Cleanup` to delete inserted rows in reverse dependency order:
+If you cannot use `WithTx` — for example, an HTTP server under test reads the database over its own connection — call `AutoCleanup` once. Every insert of the test is recorded, including one that fails partway, and deleted in reverse order when the test ends:
+
+```go
+seedling.AutoCleanup(t, db)
+user := seedling.NewSession[testutil.User](reg).InsertOne(t, db).Root()
+_ = user
+```
+
+To clean up a single result yourself, call `Result.Cleanup`:
 
 ```go
 result := seedling.NewSession[testutil.User](reg).InsertOne(t, db)
@@ -266,7 +274,7 @@ t.Cleanup(func() { result.Cleanup(t, db) })
 
 `Cleanup` uses a bounded context that remains active during `t.Cleanup`, even after the test context is canceled. Its budget follows the test binary's own deadline; pass `seedling.WithCleanupTimeout` to cap it explicitly when tearing down a large graph against a slow database.
 
-Every blueprint in the inserted graph (the root and every auto-inserted parent) needs a `Delete` callback. All callbacks are checked up front, so if any is missing `Cleanup` fails with `ErrDeleteNotDefined` before deleting anything. `seedling-gen` emits `Delete` for `gorm` and `ent`, and for `sqlc` when a unique `Delete<Table>` query exists; the `sql` and `atlas` subcommands leave it for you to write.
+Every blueprint in the inserted graph (the root and every auto-inserted parent) needs a `Delete` callback. All callbacks are checked up front, so if any is missing `Cleanup` fails with `ErrDeleteNotDefined` before deleting anything, and an insert under `AutoCleanup` fails before inserting anything. `seedling-gen` emits `Delete` for `gorm` and `ent`, and for `sqlc` when a unique `Delete<Table>` query exists; the `sql` and `atlas` subcommands leave it for you to write.
 
 The [Guide](./docs/guide.md#debugging-and-cleanup) lists the full set of debugging APIs, including `BatchResult.NodeAt` for `InsertMany` graphs.
 

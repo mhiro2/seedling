@@ -57,6 +57,15 @@ t.Cleanup(func() { result.Cleanup(t, db) })
 
 When using transaction rollback (recommended), explicit cleanup is unnecessary.
 
+When the code under test reads the database over its own connection (HTTP servers, workers) and the test must commit, use `AutoCleanup` instead of cleaning up each result:
+
+```go
+seedling.AutoCleanup(t, db)
+task := seedling.InsertOne[Task](t, db).Root()
+```
+
+Every testing API for `t` and its subtests is recorded, including partial inserts that fail the test, and deleted newest first when `t` finishes. `Use`'d records are never deleted, and a blueprint without `Delete` fails before anything is inserted. Pass the returned tracker with `seedling.WithCleanup(tracker)` (or `Session.WithCleanup` / `Scenario.WithCleanup`) to record error-returning inserts too.
+
 ## Customization options
 
 ### Set — override a field

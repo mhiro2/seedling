@@ -48,7 +48,7 @@ _ = ok
 
 `InsertManyE` and `Plan.InsertE` return successful nodes together with an execution error when insertion stops partway through. The partial result's cleanup methods delete only those successful nodes. A partial `BatchResult` counts and lists only completed roots through `Len` and `Roots`; `RootAt` and `NodeAt` keep the original request indices and report a missing result for roots that did not complete.
 
-When transaction rollback is unavailable, use `InsertOneE`, `Plan.InsertE`, or `InsertManyE` so an error path can call cleanup on the returned partial result. The `testing.TB` convenience wrappers (`InsertOne`, `Plan.Insert`, and `InsertMany`) still fail the test immediately and therefore do not expose partial results.
+When transaction rollback is unavailable, enable [`AutoCleanup`](#automatic-cleanup-without-transactions): the testing wrappers (`InsertOne`, `Plan.Insert`, and `InsertMany`) then record what they inserted, including a partial insert, before failing the test, and the records are deleted when the test ends. Without it, use `InsertOneE`, `Plan.InsertE`, or `InsertManyE` so an error path can call cleanup on the returned partial result.
 
 `InsertMany` batch-shares auto-created `BelongsTo` parents when each record resolves to the same static relation options.
 
@@ -256,6 +256,29 @@ func TestUser(t *testing.T) {
 }
 ```
 
+### Automatic cleanup without transactions
+
+A test whose HTTP server or worker reads the database over its own connection cannot see rows in an uncommitted test transaction. Commit them instead, and let `AutoCleanup` delete them when the test finishes:
+
+```go
+func TestCreateComment(t *testing.T) {
+    seedling.AutoCleanup(t, db)
+
+    task := seedling.InsertOne[Task](t, db).Root()
+    users := seedling.InsertMany[User](t, db, 3).Roots()
+    // ... call the server, which reads task and users over its own connection
+}
+```
+
+After `AutoCleanup(t, db)`, every testing API for `t` and its subtests — `InsertOne`, `InsertMany`, `Build` / `Plan.Insert`, `BuildMany` / `BatchPlan.Insert`, `Scenario.Insert`, and their `Session`, `Builder`, and typed-builder forms — records what it inserts in the returned `CleanupTracker`. When `t` finishes, the tracker deletes through `db`, newest insert first and children before parents within each insert, so a record that `Use`s an earlier one is deleted before it.
+
+- Records are recorded as soon as their `Insert` returns, before a failing insert fails the test, so a partial insert is deleted as well
+- Records passed with `Use` belong to the caller and are never deleted
+- Every blueprint a plan inserts must define `Delete`; this is checked before anything is inserted, so a missing callback fails with `ErrDeleteNotDefined` instead of leaving rows behind
+- Subtest records are deleted when the test that called `AutoCleanup` finishes. Calling it twice for one test fails the test
+- The error-returning APIs record only when given the tracker: `seedling.WithCleanup(tracker)` as an option, `Session.WithCleanup(tracker)`, or `Scenario.WithCleanup(tracker)`
+- `CleanupTracker.CleanupE(ctx)` deletes what has been recorded so far; an insert whose rows could not all be deleted stays recorded, and errors from separate inserts are joined. The automatic cleanup reports failures with `t.Errorf` and uses the same budget as `Result.Cleanup` (`seedling.WithCleanupTimeout` caps it)
+
 ## Common Options
 
 - `Set`: override one field by Go struct field name. Sets apply in the order written, so a later `Set` wins, including one that sets a field promoted from an embedded struct an earlier `Set` replaced
@@ -337,7 +360,8 @@ When you use `database/sql`, [`WithTx`](https://pkg.go.dev/github.com/mhiro2/see
 - `BatchResult.DebugString`: inspect the full batch execution graph with primary-key values
 - `BatchResult.Node(name)`: searches across the full batch, so use it only when cross-root ambiguity is acceptable
 - `BatchResult.NodeAt(rootIndex, name)` / `NodesForRoot(rootIndex, name)`: inspect one root, its shared ancestors, and the records generated under those ancestors (such as their `HasMany` children) without mixing in sibling roots
-- `BatchResult.Cleanup` / `CleanupE`: delete rows inserted by `InsertManyE`; the same `Delete` requirement applies, and cleanup is fail-fast and stops at the first delete error
+- `BatchResult.Cleanup` / `CleanupE`: delete rows inserted by `InsertMany` or `InsertManyE`; the same `Delete` requirement applies, and cleanup is fail-fast and stops at the first delete error
+- `AutoCleanup` / `CleanupTracker`: record every insert of a test and delete them all when it ends, instead of cleaning up each result (see [Automatic cleanup without transactions](#automatic-cleanup-without-transactions))
 
 ## CLI
 
