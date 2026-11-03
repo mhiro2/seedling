@@ -29,15 +29,19 @@ type Blueprint[T any] struct {
 	// consumed by records that are actually planned. Always return a fresh value
 	// — do not return a package-level variable.
 	//
+	// Defaults receives the [Scope] the record is planned in. Draw values that
+	// must be unique, random, or time-based from it, so they stay unique and
+	// reproducible across every record of a test:
+	//
+	//	Defaults: func(s *seedling.Scope) User {
+	//	    return User{Email: s.Unique("user") + "@example.com", Role: "member"}
+	//	}
+	//
 	// The returned value's dynamic type must equal T. For a pointer blueprint,
 	// Defaults must return a non-nil pointer. When Defaults is omitted, a value
 	// blueprint starts from its zero value and a pointer blueprint starts from a
 	// newly allocated zero-value struct.
-	//
-	//	Defaults: func() User {
-	//	    return User{Name: "test-user", Role: "member"}
-	//	}
-	Defaults func() T
+	Defaults func(s *Scope) T
 
 	// Relations defines the dependencies of this blueprint.
 	// Relations can point to parents via BelongsTo or auto-create children via HasMany.

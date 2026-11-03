@@ -29,7 +29,7 @@ func setupDefaultBuilderRegistry(tb testing.TB) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() Company {
+		Defaults: func(*seedling.Scope) Company {
 			return Company{Name: "test-company"}
 		},
 		Insert: func(_ context.Context, _ seedling.DBTX, v Company) (Company, error) {
@@ -151,7 +151,7 @@ func TestBuilder_Omit(t *testing.T) {
 		Name:    "user",
 		Table:   "users",
 		PKField: "ID",
-		Defaults: func() User {
+		Defaults: func(*seedling.Scope) User {
 			return User{Name: "test-user"}
 		},
 		Insert: func(_ context.Context, _ seedling.DBTX, v User) (User, error) {
@@ -164,7 +164,7 @@ func TestBuilder_Omit(t *testing.T) {
 		Name:    "task",
 		Table:   "tasks",
 		PKField: "ID",
-		Defaults: func() Task {
+		Defaults: func(*seedling.Scope) Task {
 			return Task{Title: "test-task", Status: "open"}
 		},
 		Relations: []seedling.Relation{
@@ -232,7 +232,7 @@ func TestBuilder_Trait(t *testing.T) {
 		Name:     "company",
 		Table:    "companies",
 		PKField:  "ID",
-		Defaults: func() Company { return Company{Name: "default"} },
+		Defaults: func(*seedling.Scope) Company { return Company{Name: "default"} },
 		Traits: map[string][]seedling.Option{
 			"big": {seedling.Set("Name", "big-corp")},
 		},

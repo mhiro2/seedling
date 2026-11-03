@@ -35,6 +35,7 @@ type optionSet struct {
 	genFns       []generateFn                       // typed rand-driven mutators
 	rand         *rand.Rand                         // optional RNG for Generate options
 	logFn        func(InsertLog)                    // optional insert log callback
+	scope        *Scope                             // InScope option: scope Defaults draw from
 	only         map[string]bool                    // Only option: nil = insert all, non-nil = insert only specified relations
 }
 

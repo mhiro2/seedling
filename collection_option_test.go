@@ -55,7 +55,7 @@ func newCollectionRegistry(t *testing.T, itemCount int) *seedling.Registry {
 		Relations: []seedling.Relation{
 			{Name: "items", Kind: seedling.HasMany, LocalField: "OrderID", RefBlueprint: "item", Count: itemCount, Optional: true},
 		},
-		Defaults: func() collectionOrder { return collectionOrder{Status: "open"} },
+		Defaults: func(*seedling.Scope) collectionOrder { return collectionOrder{Status: "open"} },
 		Insert: func(_ context.Context, _ seedling.DBTX, v collectionOrder) (collectionOrder, error) {
 			v.ID = nextID()
 			return v, nil
@@ -67,7 +67,7 @@ func newCollectionRegistry(t *testing.T, itemCount int) *seedling.Registry {
 		Relations: []seedling.Relation{
 			{Name: "order", Kind: seedling.BelongsTo, LocalField: "OrderID", RefBlueprint: "order"},
 		},
-		Defaults: func() collectionItem { return collectionItem{Status: "open"} },
+		Defaults: func(*seedling.Scope) collectionItem { return collectionItem{Status: "open"} },
 		Traits: map[string][]seedling.Option{
 			"cancelled": {seedling.Set("Status", "cancelled")},
 		},
@@ -102,7 +102,7 @@ func newCollectionRegistry(t *testing.T, itemCount int) *seedling.Registry {
 	seedling.MustRegisterTo(reg, seedling.Blueprint[collectionRole]{
 		Name:     "role",
 		PKField:  "ID",
-		Defaults: func() collectionRole { return collectionRole{Name: "role"} },
+		Defaults: func(*seedling.Scope) collectionRole { return collectionRole{Name: "role"} },
 		Insert: func(_ context.Context, db seedling.DBTX, v collectionRole) (collectionRole, error) {
 			v.ID = nextID()
 			if rec, ok := db.(*collectionDB); ok {
@@ -118,7 +118,7 @@ func newCollectionRegistry(t *testing.T, itemCount int) *seedling.Registry {
 			{Name: "member", Kind: seedling.BelongsTo, LocalField: "MemberID", RefBlueprint: "member"},
 			{Name: "role", Kind: seedling.BelongsTo, LocalField: "RoleID", RefBlueprint: "role"},
 		},
-		Defaults: func() collectionMembership { return collectionMembership{Active: true} },
+		Defaults: func(*seedling.Scope) collectionMembership { return collectionMembership{Active: true} },
 		Insert: func(_ context.Context, db seedling.DBTX, v collectionMembership) (collectionMembership, error) {
 			if rec, ok := db.(*collectionDB); ok {
 				rec.memberships = append(rec.memberships, v)
@@ -243,7 +243,7 @@ func TestRef_ElementOptionsFromTrait(t *testing.T) {
 	seedling.MustRegisterTo(reg, seedling.Blueprint[collectionItem]{
 		Name:     "item",
 		PKField:  "ID",
-		Defaults: func() collectionItem { return collectionItem{Status: "open"} },
+		Defaults: func(*seedling.Scope) collectionItem { return collectionItem{Status: "open"} },
 		Relations: []seedling.Relation{
 			{Name: "order", Kind: seedling.BelongsTo, LocalField: "OrderID", RefBlueprint: "order"},
 		},

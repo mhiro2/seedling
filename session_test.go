@@ -21,7 +21,7 @@ func TestSession_WithDB_UsesBoundDBWhenCallSiteDBIsNil(t *testing.T) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() Company {
+		Defaults: func(*seedling.Scope) Company {
 			return Company{Name: "test-company"}
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
@@ -57,7 +57,7 @@ func TestSession_WithDB_ExplicitDBOverridesBoundDB(t *testing.T) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() Company {
+		Defaults: func(*seedling.Scope) Company {
 			return Company{Name: "test-company"}
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
@@ -103,7 +103,7 @@ func TestNewTestSession_RollsBackTransactionOnCleanup(t *testing.T) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() Company {
+		Defaults: func(*seedling.Scope) Company {
 			return Company{Name: "test-company"}
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {

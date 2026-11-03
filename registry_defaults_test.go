@@ -17,7 +17,7 @@ func TestRegisterTo_DoesNotInvokeDefaults(t *testing.T) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() Company {
+		Defaults: func(*seedling.Scope) Company {
 			calls++
 			return Company{}
 		},

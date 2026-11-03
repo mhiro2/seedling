@@ -17,7 +17,7 @@ func registerCompanyWithTraits(tb testing.TB, reg *seedling.Registry, traits map
 		Name:     "company",
 		Table:    "companies",
 		PKField:  "ID",
-		Defaults: func() Company { return Company{Name: "default"} },
+		Defaults: func(*seedling.Scope) Company { return Company{Name: "default"} },
 		Traits:   traits,
 		Insert: func(_ context.Context, _ seedling.DBTX, v Company) (Company, error) {
 			v.ID = ids.Next()

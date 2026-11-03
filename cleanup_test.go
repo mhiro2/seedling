@@ -20,7 +20,7 @@ func setupCleanupBlueprints(tb testing.TB, deleted *[]string) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() Company {
+		Defaults: func(*seedling.Scope) Company {
 			return Company{Name: "test-company"}
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
@@ -37,7 +37,7 @@ func setupCleanupBlueprints(tb testing.TB, deleted *[]string) {
 		Name:    "user",
 		Table:   "users",
 		PKField: "ID",
-		Defaults: func() User {
+		Defaults: func(*seedling.Scope) User {
 			return User{Name: "test-user"}
 		},
 		Relations: []seedling.Relation{
@@ -57,7 +57,7 @@ func setupCleanupBlueprints(tb testing.TB, deleted *[]string) {
 		Name:    "project",
 		Table:   "projects",
 		PKField: "ID",
-		Defaults: func() Project {
+		Defaults: func(*seedling.Scope) Project {
 			return Project{Name: "test-project"}
 		},
 		Relations: []seedling.Relation{
@@ -77,7 +77,7 @@ func setupCleanupBlueprints(tb testing.TB, deleted *[]string) {
 		Name:    "task",
 		Table:   "tasks",
 		PKField: "ID",
-		Defaults: func() Task {
+		Defaults: func(*seedling.Scope) Task {
 			return Task{Title: "test-task", Status: "open"}
 		},
 		Relations: []seedling.Relation{
@@ -212,7 +212,7 @@ func TestCleanup_UsesActiveBoundedContextDuringTestCleanup(t *testing.T) {
 			Name:    "company",
 			Table:   "companies",
 			PKField: "ID",
-			Defaults: func() Company {
+			Defaults: func(*seedling.Scope) Company {
 				return Company{Name: "test-company"}
 			},
 			Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
@@ -256,7 +256,7 @@ func TestCleanup_WithCleanupTimeoutOverridesBudget(t *testing.T) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() Company {
+		Defaults: func(*seedling.Scope) Company {
 			return Company{Name: "test-company"}
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
@@ -335,7 +335,7 @@ func TestCleanup_DefaultBudgetFollowsTestDeadline(t *testing.T) {
 				Name:    "company",
 				Table:   "companies",
 				PKField: "ID",
-				Defaults: func() Company {
+				Defaults: func(*seedling.Scope) Company {
 					return Company{Name: "test-company"}
 				},
 				Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
@@ -394,7 +394,7 @@ func TestCleanup_SnapshotDeleteFns(t *testing.T) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() Company {
+		Defaults: func(*seedling.Scope) Company {
 			return Company{Name: "test-company"}
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
@@ -449,7 +449,7 @@ func TestCleanupE(t *testing.T) {
 			Name:    "company",
 			Table:   "companies",
 			PKField: "ID",
-			Defaults: func() Company {
+			Defaults: func(*seedling.Scope) Company {
 				return Company{Name: "test-company"}
 			},
 			Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
@@ -489,7 +489,7 @@ func TestCleanupE(t *testing.T) {
 			Name:    "company",
 			Table:   "companies",
 			PKField: "ID",
-			Defaults: func() Company {
+			Defaults: func(*seedling.Scope) Company {
 				return Company{Name: "test-company"}
 			},
 			Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
@@ -533,7 +533,7 @@ func TestCleanupE(t *testing.T) {
 			Name:    "company",
 			Table:   "companies",
 			PKField: "ID",
-			Defaults: func() Company {
+			Defaults: func(*seedling.Scope) Company {
 				return Company{Name: "cleanup-company"}
 			},
 			Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
@@ -550,7 +550,7 @@ func TestCleanupE(t *testing.T) {
 			Name:    "user",
 			Table:   "users",
 			PKField: "ID",
-			Defaults: func() User {
+			Defaults: func(*seedling.Scope) User {
 				return User{Name: "cleanup-user"}
 			},
 			Relations: []seedling.Relation{

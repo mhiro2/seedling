@@ -48,7 +48,7 @@ func setupExampleBlueprints() {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() ExCompany {
+		Defaults: func(*seedling.Scope) ExCompany {
 			return ExCompany{Name: "test-company"}
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v ExCompany) (ExCompany, error) {
@@ -61,7 +61,7 @@ func setupExampleBlueprints() {
 		Name:    "user",
 		Table:   "users",
 		PKField: "ID",
-		Defaults: func() ExUser {
+		Defaults: func(*seedling.Scope) ExUser {
 			return ExUser{Name: "test-user"}
 		},
 		Relations: []seedling.Relation{
@@ -80,7 +80,7 @@ func setupExampleBlueprints() {
 		Name:    "project",
 		Table:   "projects",
 		PKField: "ID",
-		Defaults: func() ExProject {
+		Defaults: func(*seedling.Scope) ExProject {
 			return ExProject{Name: "test-project"}
 		},
 		Relations: []seedling.Relation{
@@ -96,7 +96,7 @@ func setupExampleBlueprints() {
 		Name:    "task",
 		Table:   "tasks",
 		PKField: "ID",
-		Defaults: func() ExTask {
+		Defaults: func(*seedling.Scope) ExTask {
 			return ExTask{Title: "test-task", Status: "open"}
 		},
 		Relations: []seedling.Relation{

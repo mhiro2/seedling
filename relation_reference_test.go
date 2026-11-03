@@ -22,7 +22,7 @@ func TestInsert_BelongsToReferencedField(t *testing.T) {
 	seedling.MustRegisterTo(reg, seedling.Blueprint[referenceCountry]{
 		Name:    "reference_country",
 		PKField: "ID",
-		Defaults: func() referenceCountry {
+		Defaults: func(*seedling.Scope) referenceCountry {
 			return referenceCountry{Code: "JP"}
 		},
 		Insert: func(_ context.Context, _ seedling.DBTX, country referenceCountry) (referenceCountry, error) {

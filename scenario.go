@@ -34,6 +34,7 @@ import (
 // A Scenario is not safe for concurrent use.
 type Scenario struct {
 	registry *Registry
+	scope    *Scope
 	roots    []scenarioRoot
 }
 
@@ -46,6 +47,13 @@ type scenarioRoot struct {
 // package default registry is used.
 func NewScenario(reg *Registry) *Scenario {
 	return &Scenario{registry: resolveRegistry(reg)}
+}
+
+// WithScope makes the scenario plan its records in scope, for [Scenario.Build]
+// and [Scenario.Insert] as well as their error-returning forms, and returns s.
+func (s *Scenario) WithScope(scope *Scope) *Scenario {
+	s.scope = scope
+	return s
 }
 
 // Node identifies a record added to a [Scenario]. It is the handle that
@@ -167,6 +175,10 @@ type ScenarioPlan struct {
 // BuildE builds the scenario without inserting anything. Records added later
 // are not part of the returned plan.
 func (s *Scenario) BuildE() (*ScenarioPlan, error) {
+	return s.buildE(s.scope)
+}
+
+func (s *Scenario) buildE(scope *Scope) (*ScenarioPlan, error) {
 	roots := make([]planner.Root, len(s.roots))
 	afterInserts := make([][]afterInsertFn, len(s.roots))
 	for i, root := range s.roots {
@@ -184,7 +196,7 @@ func (s *Scenario) BuildE() (*ScenarioPlan, error) {
 		afterInserts[i] = resolved.afterInserts
 	}
 
-	result, err := planner.PlanRoots(newRegistryAdapter(s.registry), roots)
+	result, err := planner.PlanRoots(newRegistryAdapter(s.registry, scope), roots)
 	if err != nil {
 		return nil, fmt.Errorf("build plan: %w", err)
 	}
@@ -199,7 +211,7 @@ func (s *Scenario) BuildE() (*ScenarioPlan, error) {
 // Build builds the scenario without inserting anything. Fails the test on error.
 func (s *Scenario) Build(tb testing.TB) *ScenarioPlan {
 	tb.Helper()
-	plan, err := s.BuildE()
+	plan, err := s.buildE(s.testScope(tb))
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -210,7 +222,11 @@ func (s *Scenario) Build(tb testing.TB) *ScenarioPlan {
 // failure. If execution fails after inserting some records, the returned
 // result contains them and can be passed to [ScenarioResult.CleanupE].
 func (s *Scenario) InsertE(ctx context.Context, db DBTX) (ScenarioResult, error) {
-	plan, err := s.BuildE()
+	return s.insertE(ctx, db, s.scope)
+}
+
+func (s *Scenario) insertE(ctx context.Context, db DBTX, scope *Scope) (ScenarioResult, error) {
+	plan, err := s.buildE(scope)
 	if err != nil {
 		return ScenarioResult{}, err
 	}
@@ -220,11 +236,21 @@ func (s *Scenario) InsertE(ctx context.Context, db DBTX) (ScenarioResult, error)
 // Insert builds the scenario and inserts every record. Fails the test on error.
 func (s *Scenario) Insert(tb testing.TB, db DBTX) ScenarioResult {
 	tb.Helper()
-	result, err := s.InsertE(tb.Context(), db)
+	result, err := s.insertE(tb.Context(), db, s.testScope(tb))
 	if err != nil {
 		tb.Fatal(err)
 	}
 	return result
+}
+
+// testScope returns the scope the testing APIs plan in: the scenario's own,
+// or else tb's.
+func (s *Scenario) testScope(tb testing.TB) *Scope {
+	tb.Helper()
+	if s.scope != nil {
+		return s.scope
+	}
+	return TestScope(tb)
 }
 
 // InsertE inserts every record of the plan, returning an error on failure.
@@ -235,7 +261,7 @@ func (p *ScenarioPlan) InsertE(ctx context.Context, db DBTX) (ScenarioResult, er
 		ctx = context.Background()
 	}
 	reg := p.scenario.registry
-	execResult, err := executor.Execute(ctx, db, p.graph.Clone(), newRegistryAdapter(reg), nil)
+	execResult, err := executor.Execute(ctx, db, p.graph.Clone(), newRegistryAdapter(reg, nil), nil)
 	if execResult == nil {
 		return ScenarioResult{}, fmt.Errorf("%w: executor returned a nil result", ErrInvalidOption)
 	}

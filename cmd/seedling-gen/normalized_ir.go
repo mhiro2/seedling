@@ -111,7 +111,7 @@ func NewBlueprints() Blueprints {
 {{- else if $model.PKFields}}
 			PKField: {{quote (index $model.PKFields 0)}},
 {{- end}}
-			Defaults: func() {{$model.TypeExpr}} {
+			Defaults: func(*seedling.Scope) {{$model.TypeExpr}} {
 				return {{ defaultLiteral $model }}
 			},
 {{- if $model.Relations}}

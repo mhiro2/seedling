@@ -146,7 +146,7 @@ func TestUseAndBlueprintWhenConflict(t *testing.T) {
 		Name:     "company",
 		Table:    "companies",
 		PKField:  "ID",
-		Defaults: func() Company { return Company{Name: "acme"} },
+		Defaults: func(*seedling.Scope) Company { return Company{Name: "acme"} },
 		Insert: func(_ context.Context, _ seedling.DBTX, v Company) (Company, error) {
 			v.ID = 1
 			return v, nil
@@ -156,7 +156,7 @@ func TestUseAndBlueprintWhenConflict(t *testing.T) {
 		Name:     "user",
 		Table:    "users",
 		PKField:  "ID",
-		Defaults: func() User { return User{Name: "alice"} },
+		Defaults: func(*seedling.Scope) User { return User{Name: "alice"} },
 		Relations: []seedling.Relation{
 			{
 				Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company",
@@ -190,7 +190,7 @@ func TestHasMany_ZeroCount_CreatesNoChildren(t *testing.T) {
 		Name:     "department",
 		Table:    "departments",
 		PKField:  "ID",
-		Defaults: func() Department { return Department{Name: "engineering"} },
+		Defaults: func(*seedling.Scope) Department { return Department{Name: "engineering"} },
 		Relations: []seedling.Relation{
 			{Name: "employees", Kind: seedling.HasMany, LocalField: "DepartmentID", RefBlueprint: "employee", Count: 0},
 		},
@@ -203,7 +203,7 @@ func TestHasMany_ZeroCount_CreatesNoChildren(t *testing.T) {
 		Name:     "employee",
 		Table:    "employees",
 		PKField:  "ID",
-		Defaults: func() Employee { return Employee{Name: "employee"} },
+		Defaults: func(*seedling.Scope) Employee { return Employee{Name: "employee"} },
 		Relations: []seedling.Relation{
 			{Name: "department", Kind: seedling.BelongsTo, LocalField: "DepartmentID", RefBlueprint: "department"},
 		},
@@ -351,7 +351,7 @@ func TestDeepNesting(t *testing.T) {
 		Name:    "l1",
 		Table:   "l1s",
 		PKField: "ID",
-		Defaults: func() L1 {
+		Defaults: func(*seedling.Scope) L1 {
 			return L1{Name: "level1"}
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v L1) (L1, error) {
@@ -365,7 +365,7 @@ func TestDeepNesting(t *testing.T) {
 		Name:    "l2",
 		Table:   "l2s",
 		PKField: "ID",
-		Defaults: func() L2 {
+		Defaults: func(*seedling.Scope) L2 {
 			return L2{Name: "level2"}
 		},
 		Relations: []seedling.Relation{
@@ -382,7 +382,7 @@ func TestDeepNesting(t *testing.T) {
 		Name:    "l3",
 		Table:   "l3s",
 		PKField: "ID",
-		Defaults: func() L3 {
+		Defaults: func(*seedling.Scope) L3 {
 			return L3{Name: "level3"}
 		},
 		Relations: []seedling.Relation{
@@ -399,7 +399,7 @@ func TestDeepNesting(t *testing.T) {
 		Name:    "l4",
 		Table:   "l4s",
 		PKField: "ID",
-		Defaults: func() L4 {
+		Defaults: func(*seedling.Scope) L4 {
 			return L4{Name: "level4"}
 		},
 		Relations: []seedling.Relation{
@@ -416,7 +416,7 @@ func TestDeepNesting(t *testing.T) {
 		Name:    "l5",
 		Table:   "l5s",
 		PKField: "ID",
-		Defaults: func() L5 {
+		Defaults: func(*seedling.Scope) L5 {
 			return L5{Name: "level5"}
 		},
 		Relations: []seedling.Relation{
@@ -500,7 +500,7 @@ func TestZeroPK(t *testing.T) {
 		Name:    "zeropk",
 		Table:   "zeropks",
 		PKField: "ID",
-		Defaults: func() ZeroPK {
+		Defaults: func(*seedling.Scope) ZeroPK {
 			return ZeroPK{Name: "zero"}
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v ZeroPK) (ZeroPK, error) {
@@ -676,7 +676,7 @@ func TestErrInsertFailed_ErrorsIs(t *testing.T) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() Company {
+		Defaults: func(*seedling.Scope) Company {
 			return Company{Name: "fail-test"}
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
@@ -705,7 +705,7 @@ func TestErrInsertFailed_WrapsOriginal(t *testing.T) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() Company {
+		Defaults: func(*seedling.Scope) Company {
 			return Company{Name: "fail-test"}
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
@@ -741,7 +741,7 @@ func TestErrInsertFailed_ErrorsAs(t *testing.T) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() Company {
+		Defaults: func(*seedling.Scope) Company {
 			return Company{Name: "fail-test"}
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {

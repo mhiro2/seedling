@@ -134,7 +134,7 @@ func setupOptionalBelongsToBlueprints(tb testing.TB) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() Company {
+		Defaults: func(*seedling.Scope) Company {
 			return Company{Name: "test-company"}
 		},
 		Insert: func(_ context.Context, _ seedling.DBTX, v Company) (Company, error) {
@@ -147,7 +147,7 @@ func setupOptionalBelongsToBlueprints(tb testing.TB) {
 		Name:    "user",
 		Table:   "users",
 		PKField: "ID",
-		Defaults: func() User {
+		Defaults: func(*seedling.Scope) User {
 			return User{Name: "test-user"}
 		},
 		Relations: []seedling.Relation{
@@ -171,7 +171,7 @@ func setupOptionalHasManyBlueprints(tb testing.TB) {
 		Name:    "department",
 		Table:   "departments",
 		PKField: "ID",
-		Defaults: func() Department {
+		Defaults: func(*seedling.Scope) Department {
 			return Department{Name: "engineering"}
 		},
 		Relations: []seedling.Relation{
@@ -187,7 +187,7 @@ func setupOptionalHasManyBlueprints(tb testing.TB) {
 		Name:    "employee",
 		Table:   "employees",
 		PKField: "ID",
-		Defaults: func() Employee {
+		Defaults: func(*seedling.Scope) Employee {
 			return Employee{Name: "employee"}
 		},
 		Relations: []seedling.Relation{
@@ -211,7 +211,7 @@ func setupOptionalManyToManyBlueprints(tb testing.TB) {
 		Name:    "article",
 		Table:   "articles",
 		PKField: "ID",
-		Defaults: func() Article {
+		Defaults: func(*seedling.Scope) Article {
 			return Article{Title: "seedling"}
 		},
 		Relations: []seedling.Relation{
@@ -236,7 +236,7 @@ func setupOptionalManyToManyBlueprints(tb testing.TB) {
 		Name:    "tag",
 		Table:   "tags",
 		PKField: "ID",
-		Defaults: func() Tag {
+		Defaults: func(*seedling.Scope) Tag {
 			return Tag{Name: "tag"}
 		},
 		Insert: func(_ context.Context, _ seedling.DBTX, v Tag) (Tag, error) {
@@ -249,7 +249,7 @@ func setupOptionalManyToManyBlueprints(tb testing.TB) {
 		Name:     "article_tag",
 		Table:    "article_tags",
 		PKFields: []string{"ArticleID", "TagID"},
-		Defaults: func() ArticleTag {
+		Defaults: func(*seedling.Scope) ArticleTag {
 			return ArticleTag{}
 		},
 		Relations: []seedling.Relation{
@@ -311,7 +311,7 @@ func TestInsertOne_BelongsToDefaultsToRequired(t *testing.T) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() Company {
+		Defaults: func(*seedling.Scope) Company {
 			return Company{Name: "test-company"}
 		},
 		Insert: func(_ context.Context, _ seedling.DBTX, v Company) (Company, error) {
@@ -323,7 +323,7 @@ func TestInsertOne_BelongsToDefaultsToRequired(t *testing.T) {
 		Name:    "user",
 		Table:   "users",
 		PKField: "ID",
-		Defaults: func() User {
+		Defaults: func(*seedling.Scope) User {
 			return User{Name: "test-user"}
 		},
 		Relations: []seedling.Relation{
@@ -666,7 +666,7 @@ func TestPlan_InsertE_ReusesOriginalNodeValues(t *testing.T) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() Company {
+		Defaults: func(*seedling.Scope) Company {
 			return Company{Name: "test-company"}
 		},
 		Insert: func(_ context.Context, _ seedling.DBTX, v Company) (Company, error) {
@@ -1667,7 +1667,7 @@ func registerContextCompany(tb testing.TB, captured *context.Context) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() Company {
+		Defaults: func(*seedling.Scope) Company {
 			return Company{Name: "ctx-test"}
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
@@ -1909,7 +1909,7 @@ func TestDiamondDependency_WithReuse(t *testing.T) {
 	}
 }
 
-func registerPtrModel(tb testing.TB, defaults func() PtrModel) {
+func registerPtrModel(tb testing.TB, defaults func(*seedling.Scope) PtrModel) {
 	tb.Helper()
 	reg := seedlingtest.NewRegistry()
 	ids := seedlingtest.NewIDSequence()
@@ -1927,7 +1927,7 @@ func registerPtrModel(tb testing.TB, defaults func() PtrModel) {
 	})
 }
 
-func registerInterfaceModel(tb testing.TB, defaults func() InterfaceModel) {
+func registerInterfaceModel(tb testing.TB, defaults func(*seedling.Scope) InterfaceModel) {
 	tb.Helper()
 	reg := seedlingtest.NewRegistry()
 	ids := seedlingtest.NewIDSequence()
@@ -1957,7 +1957,7 @@ func TestPtrModel_FieldOptions(t *testing.T) {
 				t.Helper()
 				// Arrange
 				defaultName := "ptr-default"
-				registerPtrModel(t, func() PtrModel {
+				registerPtrModel(t, func(*seedling.Scope) PtrModel {
 					return PtrModel{Name: &defaultName}
 				})
 
@@ -1984,7 +1984,7 @@ func TestPtrModel_FieldOptions(t *testing.T) {
 			run: func(t *testing.T) {
 				t.Helper()
 				// Arrange
-				registerPtrModel(t, func() PtrModel { return PtrModel{} })
+				registerPtrModel(t, func(*seedling.Scope) PtrModel { return PtrModel{} })
 				customName := "custom-ptr"
 
 				// Act
@@ -2004,7 +2004,7 @@ func TestPtrModel_FieldOptions(t *testing.T) {
 			run: func(t *testing.T) {
 				t.Helper()
 				// Arrange
-				registerPtrModel(t, func() PtrModel { return PtrModel{} })
+				registerPtrModel(t, func(*seedling.Scope) PtrModel { return PtrModel{} })
 				opt := 42
 
 				// Act
@@ -2036,7 +2036,7 @@ func TestPtrModel_FieldOptions(t *testing.T) {
 			run: func(t *testing.T) {
 				t.Helper()
 				// Arrange
-				registerPtrModel(t, func() PtrModel { return PtrModel{} })
+				registerPtrModel(t, func(*seedling.Scope) PtrModel { return PtrModel{} })
 
 				// Act
 				models := insertMany[PtrModel](t, nil, 3,
@@ -2079,7 +2079,7 @@ func TestInterfaceModel_FieldOptions(t *testing.T) {
 			run: func(t *testing.T) {
 				t.Helper()
 				// Arrange
-				registerInterfaceModel(t, func() InterfaceModel {
+				registerInterfaceModel(t, func(*seedling.Scope) InterfaceModel {
 					return InterfaceModel{Name: "iface-default", Metadata: map[string]any{"key": "value"}}
 				})
 
@@ -2104,7 +2104,7 @@ func TestInterfaceModel_FieldOptions(t *testing.T) {
 			run: func(t *testing.T) {
 				t.Helper()
 				// Arrange
-				registerInterfaceModel(t, func() InterfaceModel {
+				registerInterfaceModel(t, func(*seedling.Scope) InterfaceModel {
 					return InterfaceModel{Name: "iface-nil", Metadata: "initial"}
 				})
 
@@ -2122,7 +2122,7 @@ func TestInterfaceModel_FieldOptions(t *testing.T) {
 			run: func(t *testing.T) {
 				t.Helper()
 				// Arrange
-				registerInterfaceModel(t, func() InterfaceModel {
+				registerInterfaceModel(t, func(*seedling.Scope) InterfaceModel {
 					return InterfaceModel{Name: "iface-override"}
 				})
 
@@ -2340,7 +2340,7 @@ func TestWhen_BlueprintLevelPredicate(t *testing.T) {
 	reg := seedling.NewRegistry()
 	seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
 		Name: "company", Table: "companies", PKField: "ID",
-		Defaults: func() Company { return Company{Name: "test-company"} },
+		Defaults: func(*seedling.Scope) Company { return Company{Name: "test-company"} },
 		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
 			v.ID = ids.Next()
 			return v, nil
@@ -2348,7 +2348,7 @@ func TestWhen_BlueprintLevelPredicate(t *testing.T) {
 	})
 	seedling.MustRegisterTo(reg, seedling.Blueprint[User]{
 		Name: "user", Table: "users", PKField: "ID",
-		Defaults: func() User { return User{Name: "test-user"} },
+		Defaults: func(*seedling.Scope) User { return User{Name: "test-user"} },
 		Relations: []seedling.Relation{
 			{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
 		},
@@ -2359,7 +2359,7 @@ func TestWhen_BlueprintLevelPredicate(t *testing.T) {
 	})
 	seedling.MustRegisterTo(reg, seedling.Blueprint[Project]{
 		Name: "project", Table: "projects", PKField: "ID",
-		Defaults: func() Project { return Project{Name: "test-project"} },
+		Defaults: func(*seedling.Scope) Project { return Project{Name: "test-project"} },
 		Relations: []seedling.Relation{
 			{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
 		},
@@ -2370,7 +2370,7 @@ func TestWhen_BlueprintLevelPredicate(t *testing.T) {
 	})
 	seedling.MustRegisterTo(reg, seedling.Blueprint[Task]{
 		Name: "task", Table: "tasks", PKField: "ID",
-		Defaults: func() Task { return Task{Title: "test-task", Status: "open"} },
+		Defaults: func(*seedling.Scope) Task { return Task{Title: "test-task", Status: "open"} },
 		Relations: []seedling.Relation{
 			{Name: "project", Kind: seedling.BelongsTo, LocalField: "ProjectID", RefBlueprint: "project"},
 			{
@@ -2406,7 +2406,7 @@ func TestWhen_OptionOverridesBlueprintWhen(t *testing.T) {
 	reg := seedling.NewRegistry()
 	seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
 		Name: "company", Table: "companies", PKField: "ID",
-		Defaults: func() Company { return Company{Name: "test-company"} },
+		Defaults: func(*seedling.Scope) Company { return Company{Name: "test-company"} },
 		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
 			v.ID = ids.Next()
 			return v, nil
@@ -2414,7 +2414,7 @@ func TestWhen_OptionOverridesBlueprintWhen(t *testing.T) {
 	})
 	seedling.MustRegisterTo(reg, seedling.Blueprint[User]{
 		Name: "user", Table: "users", PKField: "ID",
-		Defaults: func() User { return User{Name: "test-user"} },
+		Defaults: func(*seedling.Scope) User { return User{Name: "test-user"} },
 		Relations: []seedling.Relation{
 			{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
 		},
@@ -2425,7 +2425,7 @@ func TestWhen_OptionOverridesBlueprintWhen(t *testing.T) {
 	})
 	seedling.MustRegisterTo(reg, seedling.Blueprint[Project]{
 		Name: "project", Table: "projects", PKField: "ID",
-		Defaults: func() Project { return Project{Name: "test-project"} },
+		Defaults: func(*seedling.Scope) Project { return Project{Name: "test-project"} },
 		Relations: []seedling.Relation{
 			{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
 		},
@@ -2436,7 +2436,7 @@ func TestWhen_OptionOverridesBlueprintWhen(t *testing.T) {
 	})
 	seedling.MustRegisterTo(reg, seedling.Blueprint[Task]{
 		Name: "task", Table: "tasks", PKField: "ID",
-		Defaults: func() Task { return Task{Title: "test-task", Status: "open"} },
+		Defaults: func(*seedling.Scope) Task { return Task{Title: "test-task", Status: "open"} },
 		Relations: []seedling.Relation{
 			{Name: "project", Kind: seedling.BelongsTo, LocalField: "ProjectID", RefBlueprint: "project"},
 			{
@@ -2472,7 +2472,7 @@ func TestWhen_HasMany(t *testing.T) {
 	reg := seedling.NewRegistry()
 	seedling.MustRegisterTo(reg, seedling.Blueprint[Department]{
 		Name: "department", Table: "departments", PKField: "ID",
-		Defaults: func() Department { return Department{Name: "engineering"} },
+		Defaults: func(*seedling.Scope) Department { return Department{Name: "engineering"} },
 		Relations: []seedling.Relation{
 			{
 				Name: "employees", Kind: seedling.HasMany, LocalField: "DepartmentID",
@@ -2489,7 +2489,7 @@ func TestWhen_HasMany(t *testing.T) {
 	})
 	seedling.MustRegisterTo(reg, seedling.Blueprint[Employee]{
 		Name: "employee", Table: "employees", PKField: "ID",
-		Defaults: func() Employee { return Employee{Name: "employee"} },
+		Defaults: func(*seedling.Scope) Employee { return Employee{Name: "employee"} },
 		Relations: []seedling.Relation{
 			{Name: "department", Kind: seedling.BelongsTo, LocalField: "DepartmentID", RefBlueprint: "department"},
 		},
@@ -2523,7 +2523,7 @@ func TestWhenFunc_BlueprintLevel(t *testing.T) {
 	reg := seedling.NewRegistry()
 	seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
 		Name: "company", Table: "companies", PKField: "ID",
-		Defaults: func() Company { return Company{Name: "test-company"} },
+		Defaults: func(*seedling.Scope) Company { return Company{Name: "test-company"} },
 		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
 			v.ID = ids.Next()
 			return v, nil
@@ -2531,7 +2531,7 @@ func TestWhenFunc_BlueprintLevel(t *testing.T) {
 	})
 	seedling.MustRegisterTo(reg, seedling.Blueprint[User]{
 		Name: "user", Table: "users", PKField: "ID",
-		Defaults: func() User { return User{Name: "test-user"} },
+		Defaults: func(*seedling.Scope) User { return User{Name: "test-user"} },
 		Relations: []seedling.Relation{
 			{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
 		},
@@ -2542,7 +2542,7 @@ func TestWhenFunc_BlueprintLevel(t *testing.T) {
 	})
 	seedling.MustRegisterTo(reg, seedling.Blueprint[Project]{
 		Name: "project", Table: "projects", PKField: "ID",
-		Defaults: func() Project { return Project{Name: "test-project"} },
+		Defaults: func(*seedling.Scope) Project { return Project{Name: "test-project"} },
 		Relations: []seedling.Relation{
 			{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
 		},
@@ -2553,7 +2553,7 @@ func TestWhenFunc_BlueprintLevel(t *testing.T) {
 	})
 	seedling.MustRegisterTo(reg, seedling.Blueprint[Task]{
 		Name: "task", Table: "tasks", PKField: "ID",
-		Defaults: func() Task { return Task{Title: "test-task", Status: "open"} },
+		Defaults: func(*seedling.Scope) Task { return Task{Title: "test-task", Status: "open"} },
 		Relations: []seedling.Relation{
 			{Name: "project", Kind: seedling.BelongsTo, LocalField: "ProjectID", RefBlueprint: "project"},
 			{
@@ -2597,7 +2597,7 @@ func TestInsertOneE_AfterInsertEFailure_ReturnsResult(t *testing.T) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() Company {
+		Defaults: func(*seedling.Scope) Company {
 			return Company{Name: "cleanup-test"}
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
@@ -2652,7 +2652,7 @@ func TestPlanInsertE_InsertFailureReturnsPartialResult(t *testing.T) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() Company {
+		Defaults: func(*seedling.Scope) Company {
 			return Company{Name: "inserted-before-failure"}
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
@@ -2668,7 +2668,7 @@ func TestPlanInsertE_InsertFailureReturnsPartialResult(t *testing.T) {
 		Name:    "user",
 		Table:   "users",
 		PKField: "ID",
-		Defaults: func() User {
+		Defaults: func(*seedling.Scope) User {
 			return User{Name: "fails"}
 		},
 		Relations: []seedling.Relation{
@@ -2735,7 +2735,7 @@ func TestInsertManyE_AfterInsertEFailure_ReturnsBatchResult(t *testing.T) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() Company {
+		Defaults: func(*seedling.Scope) Company {
 			return Company{Name: "many-test"}
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
@@ -2804,7 +2804,7 @@ func TestInsertManyE_InsertFailurePreservesSparseRootIndices(t *testing.T) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() Company {
+		Defaults: func(*seedling.Scope) Company {
 			return Company{Name: "fails-after-root-one"}
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
@@ -2820,7 +2820,7 @@ func TestInsertManyE_InsertFailurePreservesSparseRootIndices(t *testing.T) {
 		Name:    "user",
 		Table:   "users",
 		PKField: "ID",
-		Defaults: func() User {
+		Defaults: func(*seedling.Scope) User {
 			return User{Name: "unset"}
 		},
 		Relations: []seedling.Relation{
@@ -2957,7 +2957,7 @@ func TestInsertOneE_NestedBlueprintTrait(t *testing.T) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() Company {
+		Defaults: func(*seedling.Scope) Company {
 			return Company{Name: "default-company"}
 		},
 		Traits: map[string][]seedling.Option{
@@ -2973,7 +2973,7 @@ func TestInsertOneE_NestedBlueprintTrait(t *testing.T) {
 		Name:    "user",
 		Table:   "users",
 		PKField: "ID",
-		Defaults: func() User {
+		Defaults: func(*seedling.Scope) User {
 			return User{Name: "test-user"}
 		},
 		Relations: []seedling.Relation{
@@ -3015,7 +3015,7 @@ func TestBuildE_TraitOfTrait(t *testing.T) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() Company {
+		Defaults: func(*seedling.Scope) Company {
 			return Company{Name: "default-company"}
 		},
 		Traits: map[string][]seedling.Option{
@@ -3156,7 +3156,7 @@ func registerSequenceTraitBlueprints(tb testing.TB) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() Company {
+		Defaults: func(*seedling.Scope) Company {
 			return Company{Name: "test-company"}
 		},
 		Traits: map[string][]seedling.Option{

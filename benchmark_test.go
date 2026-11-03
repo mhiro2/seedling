@@ -139,7 +139,7 @@ func registerDeepChain(b *testing.B, reg *seedling.Registry, ids *seedlingtest.I
 
 	seedling.MustRegisterTo(reg, seedling.Blueprint[D1]{
 		Name: "d1", Table: "d1s", PKField: "ID",
-		Defaults: func() D1 { return D1{Name: "d1"} },
+		Defaults: func(*seedling.Scope) D1 { return D1{Name: "d1"} },
 		Insert: func(_ context.Context, _ seedling.DBTX, v D1) (D1, error) {
 			v.ID = ids.Next()
 			return v, nil
@@ -147,7 +147,7 @@ func registerDeepChain(b *testing.B, reg *seedling.Registry, ids *seedlingtest.I
 	})
 	seedling.MustRegisterTo(reg, seedling.Blueprint[D2]{
 		Name: "d2", Table: "d2s", PKField: "ID",
-		Defaults: func() D2 { return D2{Name: "d2"} },
+		Defaults: func(*seedling.Scope) D2 { return D2{Name: "d2"} },
 		Relations: []seedling.Relation{
 			{Name: "d1", Kind: seedling.BelongsTo, LocalField: "D1ID", RefBlueprint: "d1"},
 		},
@@ -158,7 +158,7 @@ func registerDeepChain(b *testing.B, reg *seedling.Registry, ids *seedlingtest.I
 	})
 	seedling.MustRegisterTo(reg, seedling.Blueprint[D3]{
 		Name: "d3", Table: "d3s", PKField: "ID",
-		Defaults: func() D3 { return D3{Name: "d3"} },
+		Defaults: func(*seedling.Scope) D3 { return D3{Name: "d3"} },
 		Relations: []seedling.Relation{
 			{Name: "d2", Kind: seedling.BelongsTo, LocalField: "D2ID", RefBlueprint: "d2"},
 		},
@@ -169,7 +169,7 @@ func registerDeepChain(b *testing.B, reg *seedling.Registry, ids *seedlingtest.I
 	})
 	seedling.MustRegisterTo(reg, seedling.Blueprint[D4]{
 		Name: "d4", Table: "d4s", PKField: "ID",
-		Defaults: func() D4 { return D4{Name: "d4"} },
+		Defaults: func(*seedling.Scope) D4 { return D4{Name: "d4"} },
 		Relations: []seedling.Relation{
 			{Name: "d3", Kind: seedling.BelongsTo, LocalField: "D3ID", RefBlueprint: "d3"},
 		},
@@ -180,7 +180,7 @@ func registerDeepChain(b *testing.B, reg *seedling.Registry, ids *seedlingtest.I
 	})
 	seedling.MustRegisterTo(reg, seedling.Blueprint[D5]{
 		Name: "d5", Table: "d5s", PKField: "ID",
-		Defaults: func() D5 { return D5{Name: "d5"} },
+		Defaults: func(*seedling.Scope) D5 { return D5{Name: "d5"} },
 		Relations: []seedling.Relation{
 			{Name: "d4", Kind: seedling.BelongsTo, LocalField: "D4ID", RefBlueprint: "d4"},
 		},
@@ -191,7 +191,7 @@ func registerDeepChain(b *testing.B, reg *seedling.Registry, ids *seedlingtest.I
 	})
 	seedling.MustRegisterTo(reg, seedling.Blueprint[D6]{
 		Name: "d6", Table: "d6s", PKField: "ID",
-		Defaults: func() D6 { return D6{Name: "d6"} },
+		Defaults: func(*seedling.Scope) D6 { return D6{Name: "d6"} },
 		Relations: []seedling.Relation{
 			{Name: "d5", Kind: seedling.BelongsTo, LocalField: "D5ID", RefBlueprint: "d5"},
 		},
@@ -202,7 +202,7 @@ func registerDeepChain(b *testing.B, reg *seedling.Registry, ids *seedlingtest.I
 	})
 	seedling.MustRegisterTo(reg, seedling.Blueprint[D7]{
 		Name: "d7", Table: "d7s", PKField: "ID",
-		Defaults: func() D7 { return D7{Name: "d7"} },
+		Defaults: func(*seedling.Scope) D7 { return D7{Name: "d7"} },
 		Relations: []seedling.Relation{
 			{Name: "d6", Kind: seedling.BelongsTo, LocalField: "D6ID", RefBlueprint: "d6"},
 		},
@@ -213,7 +213,7 @@ func registerDeepChain(b *testing.B, reg *seedling.Registry, ids *seedlingtest.I
 	})
 	seedling.MustRegisterTo(reg, seedling.Blueprint[D8]{
 		Name: "d8", Table: "d8s", PKField: "ID",
-		Defaults: func() D8 { return D8{Name: "d8"} },
+		Defaults: func(*seedling.Scope) D8 { return D8{Name: "d8"} },
 		Relations: []seedling.Relation{
 			{Name: "d7", Kind: seedling.BelongsTo, LocalField: "D7ID", RefBlueprint: "d7"},
 		},
@@ -224,7 +224,7 @@ func registerDeepChain(b *testing.B, reg *seedling.Registry, ids *seedlingtest.I
 	})
 	seedling.MustRegisterTo(reg, seedling.Blueprint[D9]{
 		Name: "d9", Table: "d9s", PKField: "ID",
-		Defaults: func() D9 { return D9{Name: "d9"} },
+		Defaults: func(*seedling.Scope) D9 { return D9{Name: "d9"} },
 		Relations: []seedling.Relation{
 			{Name: "d8", Kind: seedling.BelongsTo, LocalField: "D8ID", RefBlueprint: "d8"},
 		},
@@ -235,7 +235,7 @@ func registerDeepChain(b *testing.B, reg *seedling.Registry, ids *seedlingtest.I
 	})
 	seedling.MustRegisterTo(reg, seedling.Blueprint[D10]{
 		Name: "d10", Table: "d10s", PKField: "ID",
-		Defaults: func() D10 { return D10{Name: "d10"} },
+		Defaults: func(*seedling.Scope) D10 { return D10{Name: "d10"} },
 		Relations: []seedling.Relation{
 			{Name: "d9", Kind: seedling.BelongsTo, LocalField: "D9ID", RefBlueprint: "d9"},
 		},
@@ -246,7 +246,7 @@ func registerDeepChain(b *testing.B, reg *seedling.Registry, ids *seedlingtest.I
 	})
 	seedling.MustRegisterTo(reg, seedling.Blueprint[D11]{
 		Name: "d11", Table: "d11s", PKField: "ID",
-		Defaults: func() D11 { return D11{Name: "d11"} },
+		Defaults: func(*seedling.Scope) D11 { return D11{Name: "d11"} },
 		Relations: []seedling.Relation{
 			{Name: "d10", Kind: seedling.BelongsTo, LocalField: "D10ID", RefBlueprint: "d10"},
 		},
@@ -257,7 +257,7 @@ func registerDeepChain(b *testing.B, reg *seedling.Registry, ids *seedlingtest.I
 	})
 	seedling.MustRegisterTo(reg, seedling.Blueprint[D12]{
 		Name: "d12", Table: "d12s", PKField: "ID",
-		Defaults: func() D12 { return D12{Name: "d12"} },
+		Defaults: func(*seedling.Scope) D12 { return D12{Name: "d12"} },
 		Relations: []seedling.Relation{
 			{Name: "d11", Kind: seedling.BelongsTo, LocalField: "D11ID", RefBlueprint: "d11"},
 		},

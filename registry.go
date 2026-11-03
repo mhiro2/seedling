@@ -34,7 +34,7 @@ type blueprintDef struct {
 	pkFields  []string
 	relations []relationDef
 	traits    map[string][]Option
-	defaults  func() any
+	defaults  func(*Scope) any
 	insert    func(ctx context.Context, db, v any) (any, error)
 	delete    func(ctx context.Context, db, v any) error
 	modelType reflect.Type
@@ -192,9 +192,9 @@ func registerTyped[T any](r *registry, bp Blueprint[T]) error {
 		relations: normalizeRelations(bp.Relations),
 		traits:    traits,
 		modelType: modelType,
-		defaults: func() any {
+		defaults: func(scope *Scope) any {
 			if bp.Defaults != nil {
-				return bp.Defaults()
+				return bp.Defaults(scope)
 			}
 			if modelType.Kind() == reflect.Pointer {
 				return reflect.New(modelType.Elem()).Interface()

@@ -57,7 +57,7 @@
 //	        Name:    "company",
 //	        Table:   "companies",
 //	        PKField: "ID",
-//	        Defaults: func() Company {
+//	        Defaults: func(*seedling.Scope) Company {
 //	            return Company{Name: "test-company"}
 //	        },
 //	        Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
@@ -69,7 +69,7 @@
 //	        Name:    "user",
 //	        Table:   "users",
 //	        PKField: "ID",
-//	        Defaults: func() User {
+//	        Defaults: func(*seedling.Scope) User {
 //	            return User{Name: "test-user"}
 //	        },
 //	        Relations: []seedling.Relation{

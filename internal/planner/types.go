@@ -25,6 +25,7 @@ type BlueprintDef struct {
 	PKFields  []string
 	Relations []RelationDef
 	Defaults  func() any
+	NewRand   func() *rand.Rand // source for Generate options without WithRand; nil uses a fixed seed
 	Insert    func(ctx context.Context, db, v any) (any, error)
 	Delete    func(ctx context.Context, db, v any) error
 	ModelType reflect.Type

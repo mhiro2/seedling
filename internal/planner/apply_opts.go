@@ -10,8 +10,9 @@ import (
 	"github.com/mhiro2/seedling/internal/graph"
 )
 
-// applyOpts applies Set and With options to the root node's value.
-func applyOpts(node *graph.Node, opts *OptionSet) error {
+// applyOpts applies Set and With options to the root node's value. Generate
+// options draw from opts.Rand, or else from a source newRand returns.
+func applyOpts(node *graph.Node, opts *OptionSet, newRand func() *rand.Rand) error {
 	if opts == nil {
 		return nil
 	}
@@ -19,7 +20,11 @@ func applyOpts(node *graph.Node, opts *OptionSet) error {
 	// Apply generator functions first so explicit Set/With options can override
 	// generated values deterministically.
 	rng := opts.Rand
-	if rng == nil {
+	switch {
+	case rng != nil || len(opts.GenFns) == 0:
+	case newRand != nil:
+		rng = newRand()
+	default:
 		//nolint:gosec // Generate uses deterministic pseudo-random data for reproducible fixtures.
 		rng = rand.New(rand.NewPCG(1, 1))
 	}

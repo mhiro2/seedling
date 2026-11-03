@@ -159,7 +159,7 @@ func TestCleanup_UsesValueCapturedWhenInsertReturned(t *testing.T) {
 		Name:    "pointer_user",
 		Table:   "pointer_users",
 		PKField: "ID",
-		Defaults: func() *pointerUser {
+		Defaults: func(*seedling.Scope) *pointerUser {
 			return &pointerUser{}
 		},
 		Relations: []seedling.Relation{

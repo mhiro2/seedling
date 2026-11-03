@@ -91,7 +91,7 @@ func newOptionResolutionSession(tb testing.TB) seedling.Session[User] {
 		Name:     "user",
 		Table:    "users",
 		PKField:  "ID",
-		Defaults: func() User { return User{Name: "default"} },
+		Defaults: func(*seedling.Scope) User { return User{Name: "default"} },
 		Relations: []seedling.Relation{
 			{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"},
 		},
