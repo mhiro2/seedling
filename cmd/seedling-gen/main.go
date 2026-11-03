@@ -207,6 +207,18 @@ func requireNoExtraArgs(fs *flag.FlagSet, stderr io.Writer, noun string) bool {
 	return false
 }
 
+// requireSchemaArgs returns the schema paths given as arguments, of which
+// there must be at least one.
+func requireSchemaArgs(fs *flag.FlagSet, stderr io.Writer) ([]string, bool) {
+	if fs.NArg() > 0 {
+		return fs.Args(), true
+	}
+
+	fs.Usage()
+	_, _ = fmt.Fprintln(stderr, "Error: schema file path is required")
+	return nil, false
+}
+
 func requireSingleArg(fs *flag.FlagSet, stderr io.Writer, noun string) (string, bool) {
 	if fs.NArg() == 1 {
 		return fs.Arg(0), true
@@ -222,7 +234,7 @@ func requireSingleArg(fs *flag.FlagSet, stderr io.Writer, noun string) (string, 
 }
 
 func runSQLCmd(args []string, stdout, stderr io.Writer) int {
-	fs := newFlagSet("sql", stderr, "seedling-gen sql [flags] <schema.sql>")
+	fs := newFlagSet("sql", stderr, "seedling-gen sql [flags] <schema.sql | migrations-dir>...")
 	pkg := fs.String("pkg", "blueprints", "package name for generated code")
 	out := fs.String("out", "", "output file path (default: stdout)")
 	dialect := fs.String("dialect", "auto", "schema dialect for string quoting and primary key rules (auto, postgres, mysql, sqlite)")
@@ -240,13 +252,13 @@ func runSQLCmd(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	schemaPath, ok := requireSingleArg(fs, stderr, "schema file")
+	schemaPaths, ok := requireSchemaArgs(fs, stderr)
 	if !ok {
 		return 1
 	}
 
 	if diagnosticModeEnabled(*explain, *jsonOutput) {
-		report, err := buildSQLReportFromPath(*dialect, schemaPath)
+		report, err := buildSQLReportFromPath(*dialect, schemaPaths)
 		if err != nil {
 			_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
 			return 1
@@ -255,7 +267,7 @@ func runSQLCmd(args []string, stdout, stderr io.Writer) int {
 	}
 
 	return writeOutput(stdout, stderr, *out, *check, func(w io.Writer) error {
-		return runSQL(w, *pkg, *dialect, schemaPath)
+		return runSQL(w, *pkg, *dialect, schemaPaths)
 	})
 }
 
@@ -274,7 +286,7 @@ func runSQLCCmd(args []string, stdout, stderr io.Writer) int {
 	fs.Usage = func() {
 		_, _ = fmt.Fprint(stderr, `Usage:
   seedling-gen sqlc [flags] --config <sqlc.yaml>
-  seedling-gen sqlc [flags] --dir <sqlc-dir> --import-path <go-import-path> <schema.sql>
+  seedling-gen sqlc [flags] --dir <sqlc-dir> --import-path <go-import-path> <schema.sql | migrations-dir>...
 
 Flags:
 `)
@@ -314,7 +326,7 @@ Flags:
 		})
 	}
 
-	schemaPath, ok := requireSingleArg(fs, stderr, "schema file")
+	schemaPaths, ok := requireSchemaArgs(fs, stderr)
 	if !ok {
 		return 1
 	}
@@ -330,7 +342,7 @@ Flags:
 	}
 
 	if diagnosticModeEnabled(*explain, *jsonOutput) {
-		report, err := buildSQLCManualReport(*dialect, schemaPath, *sqlcDir, *importPath)
+		report, err := buildSQLCManualReport(*dialect, schemaPaths, *sqlcDir, *importPath)
 		if err != nil {
 			_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
 			return 1
@@ -339,7 +351,7 @@ Flags:
 	}
 
 	return writeOutput(stdout, stderr, *out, *check, func(w io.Writer) error {
-		return runSQLCManual(w, *pkg, *dialect, schemaPath, *sqlcDir, *importPath)
+		return runSQLCManual(w, *pkg, *dialect, schemaPaths, *sqlcDir, *importPath)
 	})
 }
 
@@ -508,8 +520,8 @@ func runEnt(w io.Writer, pkg, dir, importPath string) error {
 	return GenerateEnt(w, pkg, importPath, schemas)
 }
 
-func runSQL(w io.Writer, pkg, dialect, schemaPath string) error {
-	tables, err := loadSQLTables(schemaPath, dialect)
+func runSQL(w io.Writer, pkg, dialect string, schemaPaths []string) error {
+	tables, err := loadSQLTables(schemaPaths, dialect)
 	if err != nil {
 		return err
 	}
@@ -517,8 +529,8 @@ func runSQL(w io.Writer, pkg, dialect, schemaPath string) error {
 	return Generate(w, pkg, tables)
 }
 
-func runSQLCManual(w io.Writer, pkg, dialect, schemaPath, sqlcDir, importPath string) error {
-	tables, sqlcInfo, err := loadSQLCManualInputs(dialect, schemaPath, sqlcDir)
+func runSQLCManual(w io.Writer, pkg, dialect string, schemaPaths []string, sqlcDir, importPath string) error {
+	tables, sqlcInfo, err := loadSQLCManualInputs(dialect, schemaPaths, sqlcDir)
 	if err != nil {
 		return err
 	}
@@ -526,8 +538,8 @@ func runSQLCManual(w io.Writer, pkg, dialect, schemaPath, sqlcDir, importPath st
 	return GenerateSqlc(w, pkg, importPath, tables, sqlcInfo)
 }
 
-func buildSQLReportFromPath(dialect, schemaPath string) (diagnosticReport, error) {
-	tables, err := loadSQLTables(schemaPath, dialect)
+func buildSQLReportFromPath(dialect string, schemaPaths []string) (diagnosticReport, error) {
+	tables, err := loadSQLTables(schemaPaths, dialect)
 	if err != nil {
 		return diagnosticReport{}, err
 	}
@@ -542,8 +554,8 @@ func buildSQLCConfigReport(dialect, configPath string) (diagnosticReport, error)
 	return buildSQLCDiagnosticReport(dialect, cfg.SqlcImportPath, tables, sqlcInfo)
 }
 
-func buildSQLCManualReport(dialect, schemaPath, sqlcDir, importPath string) (diagnosticReport, error) {
-	tables, sqlcInfo, err := loadSQLCManualInputs(dialect, schemaPath, sqlcDir)
+func buildSQLCManualReport(dialect string, schemaPaths []string, sqlcDir, importPath string) (diagnosticReport, error) {
+	tables, sqlcInfo, err := loadSQLCManualInputs(dialect, schemaPaths, sqlcDir)
 	if err != nil {
 		return diagnosticReport{}, err
 	}
@@ -595,12 +607,12 @@ func loadSQLCConfigInputs(dialect, configPath string) (*SqlcConfig, []Table, *Sq
 		return nil, nil, nil, err
 	}
 
-	schemaSQL, err := readSchemaFiles(cfg.SchemaFiles)
+	sources, err := readSchemaFiles(cfg.SchemaFiles)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
-	tables, err := ParseSchemaWithDialect(schemaSQL, dialect)
+	tables, err := parseSchemaSources(sources, dialect)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -616,8 +628,8 @@ func loadSQLCConfigInputs(dialect, configPath string) (*SqlcConfig, []Table, *Sq
 	return cfg, tables, sqlcInfo, nil
 }
 
-func loadSQLCManualInputs(dialect, schemaPath, sqlcDir string) ([]Table, *SqlcInfo, error) {
-	tables, err := loadSQLTables(schemaPath, dialect)
+func loadSQLCManualInputs(dialect string, schemaPaths []string, sqlcDir string) ([]Table, *SqlcInfo, error) {
+	tables, err := loadSQLTables(schemaPaths, dialect)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -648,37 +660,64 @@ func loadAtlasTables(atlasPath string) ([]Table, error) {
 	return tables, nil
 }
 
-func loadSQLTables(schemaPath, dialect string) ([]Table, error) {
-	//nolint:gosec // The CLI is expected to read the schema path explicitly provided by the caller.
-	data, err := os.ReadFile(schemaPath)
+// loadSQLTables parses schema files and migration directories in the order
+// given. A directory contributes its *.sql files in lexical order, skipping
+// *.down.sql migrations, as sqlc reads them.
+func loadSQLTables(schemaPaths []string, dialect string) ([]Table, error) {
+	files, err := expandSchemaPaths(schemaPaths)
 	if err != nil {
-		return nil, fmt.Errorf("read schema file: %w", err)
+		return nil, err
+	}
+	sources, err := readSchemaFiles(files)
+	if err != nil {
+		return nil, err
 	}
 
-	tables, err := ParseSchemaWithDialect(string(data), dialect)
+	tables, err := parseSchemaSources(sources, dialect)
 	if err != nil {
 		return nil, err
 	}
 	if len(tables) == 0 {
-		return nil, fmt.Errorf("no CREATE TABLE statements found in %s", schemaPath)
+		return nil, fmt.Errorf("no CREATE TABLE statements found in %s", strings.Join(schemaPaths, ", "))
 	}
 
 	return tables, nil
 }
 
-// readSchemaFiles reads and concatenates multiple schema files.
-func readSchemaFiles(paths []string) (string, error) {
-	var sb strings.Builder
+// expandSchemaPaths replaces each directory with the schema files it holds.
+func expandSchemaPaths(paths []string) ([]string, error) {
+	files := make([]string, 0, len(paths))
+	for _, p := range paths {
+		info, err := os.Stat(p)
+		if err != nil {
+			return nil, fmt.Errorf("read schema file: %w", err)
+		}
+		if !info.IsDir() {
+			files = append(files, p)
+			continue
+		}
+		listed, err := listSchemaDir(p)
+		if err != nil {
+			return nil, err
+		}
+		if len(listed) == 0 {
+			return nil, fmt.Errorf("schema directory %s contains no schema files", p)
+		}
+		files = append(files, listed...)
+	}
+	return files, nil
+}
+
+// readSchemaFiles reads schema files in the order they are applied.
+func readSchemaFiles(paths []string) ([]schemaSource, error) {
+	sources := make([]schemaSource, 0, len(paths))
 	for _, p := range paths {
 		//nolint:gosec // CLI reads schema paths resolved from config.
 		data, err := os.ReadFile(p)
 		if err != nil {
-			return "", fmt.Errorf("read schema file %s: %w", p, err)
+			return nil, fmt.Errorf("read schema file %s: %w", p, err)
 		}
-		if sb.Len() > 0 {
-			sb.WriteString("\n")
-		}
-		sb.Write(data)
+		sources = append(sources, schemaSource{Name: p, SQL: string(data)})
 	}
-	return sb.String(), nil
+	return sources, nil
 }
