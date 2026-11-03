@@ -378,7 +378,7 @@ func (s seqRefOption) applyOption(r *optionResolver, o *optionSet) error {
 
 // SeqUse provides per-record existing records for a relation when used with InsertMany.
 //
-//	companies := seedling.InsertMany[Company](t, db, 3)
+//	companies := seedling.InsertMany[Company](t, db, 3).Roots()
 //	seedling.InsertMany[Task](t, db, 3,
 //	    seedling.SeqUse("company", func(i int) Company { return companies[i] }),
 //	)

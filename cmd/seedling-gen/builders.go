@@ -347,7 +347,7 @@ func (b {{$b.Builder}}) InsertE(ctx context.Context, db seedling.DBTX) (seedling
 }
 
 // InsertMany inserts n records configured alike. Fails the test on error.
-func (b {{$b.Builder}}) InsertMany(tb testing.TB, db seedling.DBTX, n int) []{{$b.TypeExpr}} {
+func (b {{$b.Builder}}) InsertMany(tb testing.TB, db seedling.DBTX, n int) seedling.BatchResult[{{$b.TypeExpr}}] {
 	tb.Helper()
 	return seedling.NewSession[{{$b.TypeExpr}}](b.reg).InsertMany(tb, db, n, b.opts...)
 }

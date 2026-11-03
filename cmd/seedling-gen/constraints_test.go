@@ -264,7 +264,7 @@ func TestConstraintAwareDefaults(t *testing.T) {
 	blueprints.MustRegister(reg)
 
 	accounts := seedling.NewSession[Account](reg)
-	all := append(accounts.InsertMany(t, nil, 2), accounts.InsertOne(t, nil).Root())
+	all := append(accounts.InsertMany(t, nil, 2).Roots(), accounts.InsertOne(t, nil).Root())
 
 	uuidPattern := regexp.MustCompile("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 	emails, codes, numbers := map[string]bool{}, map[string]bool{}, map[int]bool{}

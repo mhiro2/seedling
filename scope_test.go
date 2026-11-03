@@ -177,7 +177,7 @@ func TestTestScope_SharedByTestingAPIsWithinATest(t *testing.T) {
 
 	// Act
 	first := accounts.InsertOne(t, nil).Root()
-	batch := accounts.InsertMany(t, nil, 2)
+	batch := accounts.InsertMany(t, nil, 2).Roots()
 	built := accounts.Build(t).Insert(t, nil).Root()
 	team := teams.InsertOne(t, nil)
 	viaBuilder := seedling.ForSession(accounts).Insert(t, nil).Root()
@@ -368,7 +368,7 @@ func TestGenerate_DrawsFromTheScopeWithoutWithRand(t *testing.T) {
 	pick := seedling.Generate(func(r *rand.Rand, a *scopeAccount) { a.Score = r.IntN(1_000_000) })
 
 	// Act
-	batch := seedling.NewSession[scopeAccount](reg).InsertMany(t, nil, 3, pick)
+	batch := seedling.NewSession[scopeAccount](reg).InsertMany(t, nil, 3, pick).Roots()
 	seeded := seedling.NewSession[scopeAccount](reg).InsertOne(t, nil, pick, seedling.WithSeed(1)).Root()
 	reseeded := seedling.NewSession[scopeAccount](reg).InsertOne(t, nil, pick, seedling.WithSeed(1)).Root()
 

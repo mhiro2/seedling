@@ -149,7 +149,7 @@ func ExampleInsertMany() {
 		seedling.Seq("Name", func(i int) string {
 			return fmt.Sprintf("company-%d", i)
 		}),
-	)
+	).Roots()
 	fmt.Printf("%s, %s, %s\n", companies[0].Name, companies[1].Name, companies[2].Name)
 	// Output: company-0, company-1, company-2
 }
@@ -355,13 +355,13 @@ func ExampleSeqUse() {
 		seedling.Seq("Name", func(i int) string {
 			return fmt.Sprintf("company-%d", i)
 		}),
-	)
+	).Roots()
 
 	users := seedling.InsertMany[ExUser](t, nil, 2,
 		seedling.SeqUse("company", func(i int) ExCompany {
 			return companies[i]
 		}),
-	)
+	).Roots()
 	fmt.Printf("%d, %d\n", users[0].CompanyID, users[1].CompanyID)
 	// Output: 1, 2
 }

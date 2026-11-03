@@ -136,7 +136,7 @@ func (b *Builder[T]) InsertE(ctx context.Context, db DBTX) (Result[T], error) {
 // InsertMany creates and inserts n records. Shared belongs-to dependencies are
 // inserted once when their resolved options are identical across records. Fails
 // the test on error.
-func (b *Builder[T]) InsertMany(tb testing.TB, db DBTX, n int) []T {
+func (b *Builder[T]) InsertMany(tb testing.TB, db DBTX, n int) BatchResult[T] {
 	tb.Helper()
 	return b.session.InsertMany(tb, db, n, b.opts...)
 }

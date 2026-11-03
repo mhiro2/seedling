@@ -102,7 +102,7 @@ func TestMySQLInsertManySeq_PersistsGeneratedNames(t *testing.T) {
 		seedling.Seq("Name", func(i int) string {
 			return fmt.Sprintf("company-%d", i)
 		}),
-	)
+	).Roots()
 
 	// Assert
 	if len(companies) != 3 {

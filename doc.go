@@ -126,10 +126,10 @@
 // test can assert how many records a fixture creates, and [MaxNodes] stops
 // planning a graph that grows past a limit.
 // [InsertOne] returns a [Result] so you can access the root record and any
-// related inserted nodes. [InsertManyE] returns a [BatchResult] with the batch
-// roots plus cleanup/debug helpers for the full execution graph, including
-// root-scoped lookup helpers such as [BatchResult.NodeAt] and
-// [BatchResult.NodesForRoot].
+// related inserted nodes. [InsertMany] and [InsertManyE] return a
+// [BatchResult] with the batch roots plus cleanup/debug helpers for the full
+// execution graph, including root-scoped lookup helpers such as
+// [BatchResult.NodeAt] and [BatchResult.NodesForRoot].
 //
 // [Session]
 //
@@ -198,7 +198,7 @@
 //	    seedling.Seq("Email", func(i int) string {
 //	        return fmt.Sprintf("user-%d@example.com", i)
 //	    }),
-//	)
+//	).Roots()
 //	_ = users
 //
 // Or inspect / clean up the full batch execution with [InsertManyE]:

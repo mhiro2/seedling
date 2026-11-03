@@ -45,7 +45,7 @@ func (s Session[T]) InsertOneE(ctx context.Context, db DBTX, opts ...Option) (Re
 // InsertMany creates and inserts n records of type T with the same options.
 // Shared belongs-to dependencies are inserted once when their resolved options
 // are identical across records. Fails the test on error.
-func InsertMany[T any](tb testing.TB, db DBTX, n int, opts ...Option) []T {
+func InsertMany[T any](tb testing.TB, db DBTX, n int, opts ...Option) BatchResult[T] {
 	tb.Helper()
 	return NewSession[T](nil).InsertMany(tb, db, n, opts...)
 }
@@ -53,13 +53,13 @@ func InsertMany[T any](tb testing.TB, db DBTX, n int, opts ...Option) []T {
 // InsertMany creates and inserts n records of type T with the same options.
 // Shared belongs-to dependencies are inserted once when their resolved options
 // are identical across records. Fails the test on error.
-func (s Session[T]) InsertMany(tb testing.TB, db DBTX, n int, opts ...Option) []T {
+func (s Session[T]) InsertMany(tb testing.TB, db DBTX, n int, opts ...Option) BatchResult[T] {
 	tb.Helper()
 	result, err := s.forTest(tb).InsertManyE(tb.Context(), db, n, opts...)
 	if err != nil {
 		tb.Fatal(err)
 	}
-	return result.rootsView()
+	return result
 }
 
 // InsertManyE creates and inserts n records of type T, returning a [BatchResult]

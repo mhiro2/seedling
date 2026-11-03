@@ -233,10 +233,6 @@ func (r BatchResult[T]) Roots() []T {
 	return slices.Clone(r.roots)
 }
 
-func (r BatchResult[T]) rootsView() []T {
-	return r.roots
-}
-
 // RootAt returns the successfully inserted root record at its original request
 // index. It returns false when that root did not complete in a partial result.
 func (r BatchResult[T]) RootAt(index int) (T, bool) {

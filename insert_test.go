@@ -70,7 +70,7 @@ func insertOne[T any](tb testing.TB, db seedling.DBTX, opts ...seedling.Option) 
 
 func insertMany[T any](tb testing.TB, db seedling.DBTX, n int, opts ...seedling.Option) []T {
 	tb.Helper()
-	return session[T](tb).InsertMany(tb, db, n, opts...)
+	return session[T](tb).InsertMany(tb, db, n, opts...).Roots()
 }
 
 func insertManyE[T any](ctx context.Context, tb testing.TB, db seedling.DBTX, n int, opts ...seedling.Option) (seedling.BatchResult[T], error) {
