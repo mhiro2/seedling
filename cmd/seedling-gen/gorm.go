@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -34,6 +35,8 @@ type GormField struct {
 	FKRefModel string
 	Relation   *GormRelation
 	Embedded   *embeddedStruct // set for fields promoted from an embedded struct
+	MaxLength  int             // size tag
+	Unique     bool            // unique tag
 }
 
 // GormRelation represents a GORM relationship extracted from struct tags.
@@ -170,6 +173,12 @@ func parseGormStruct(name string, st *ast.StructType, allStructs map[string]*ast
 		}
 		if _, ok := tagParts["not null"]; ok {
 			gf.NotNull = true
+		}
+		if _, ok := tagParts["unique"]; ok {
+			gf.Unique = true
+		}
+		if size, err := strconv.Atoi(tagParts["size"]); err == nil && size > 0 {
+			gf.MaxLength = size
 		}
 
 		// Detect relationships.

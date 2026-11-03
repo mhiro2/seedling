@@ -548,7 +548,7 @@ func TestGenerateEnt_DefaultsAutofillSupportedFields(t *testing.T) {
 	}{
 		{name: "time import", substr: `"time"`},
 		{name: "string default", substr: `Name: "user-name"`},
-		{name: "time default", substr: `CreatedAt: time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)`},
+		{name: "time default", substr: `CreatedAt: scope.Now()`},
 		{name: "unsupported uuid skipped", substr: `Token:`, missing: true},
 	}
 

@@ -299,3 +299,37 @@ func TestRun_AtlasExplain_PrintsParsedTables(t *testing.T) {
 		}
 	}
 }
+
+func TestRun_SQLExplain_PrintsColumnConstraints(t *testing.T) {
+	// Arrange
+	schemaPath := writeSchemaFile(t, `
+CREATE TABLE users (
+    id BIGINT PRIMARY KEY,
+    email VARCHAR(40) NOT NULL UNIQUE,
+    status TEXT NOT NULL CHECK (status IN ('draft', 'active'))
+);
+`)
+	var text, jsonOut, stderr bytes.Buffer
+
+	// Act
+	textCode := run([]string{"sql", "-explain", schemaPath}, &text, &stderr)
+	jsonCode := run([]string{"sql", "-json", schemaPath}, &jsonOut, &stderr)
+
+	// Assert
+	if textCode != 0 || jsonCode != 0 {
+		t.Fatalf("exit codes = %d/%d, stderr = %s", textCode, jsonCode, stderr.String())
+	}
+	for _, want := range []string{
+		"- email: sql=VARCHAR go=Email(string) pk=false notNull=true unique=true maxLength=40",
+		"- status: sql=TEXT go=Status(string) pk=false notNull=true enum=draft|active",
+	} {
+		if !strings.Contains(text.String(), want) {
+			t.Fatalf("explain output does not contain %q:\n%s", want, text.String())
+		}
+	}
+	for _, want := range []string{`"unique": true`, `"maxLength": 40`, `"enumValues": [`} {
+		if !strings.Contains(jsonOut.String(), want) {
+			t.Fatalf("JSON output does not contain %q:\n%s", want, jsonOut.String())
+		}
+	}
+}

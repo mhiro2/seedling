@@ -183,7 +183,7 @@ func TestGeneratedActualSQLCBlueprintLifecycle(t *testing.T) {
 	if root.ID != 101 || root.CompanyCode != company.Code {
 		t.Fatalf("inserted user = %+v, company = %+v", root, company)
 	}
-	if company.Code != "company-code" || company.SpotifyURL != "company-spotify_url" {
+	if !strings.HasPrefix(company.Code, "company-code-") || company.SpotifyURL != "company-spotify_url" {
 		t.Fatalf("company string fields were cross-wired: %+v", company)
 	}
 	if state.insertedCompanyCode != company.Code || state.insertedCompanySpotifyURL != company.SpotifyURL {

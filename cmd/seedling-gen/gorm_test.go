@@ -375,9 +375,9 @@ func TestGenerateGorm_DefaultsAutofillSupportedFields(t *testing.T) {
 		substr  string
 		missing bool
 	}{
-		{name: "time import", substr: `"time"`},
+		{name: "no time import for scope-drawn defaults", substr: `"time"`, missing: true},
 		{name: "string default", substr: `Name: "user-name"`},
-		{name: "time default", substr: `CreatedAt: time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)`},
+		{name: "time default", substr: `CreatedAt: scope.Now()`},
 		{name: "relation key skipped", substr: `CompanyID: 1`, missing: true},
 	}
 
@@ -448,7 +448,7 @@ type Item struct {
 
 	// Assert
 	output := buf.String()
-	want := `return models.Item{Model: gorm.Model{CreatedAt: time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC), UpdatedAt: time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)}, Label: "item-label"}`
+	want := `return models.Item{Model: gorm.Model{CreatedAt: scope.Now(), UpdatedAt: scope.Now()}, Label: "item-label"}`
 	if !strings.Contains(output, want) {
 		t.Fatalf("expected promoted defaults under gorm.Model\n\nGot:\n%s", output)
 	}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -47,6 +48,11 @@ type diagnosticColumn struct {
 	ForeignKey bool   `json:"foreignKey"`
 	RefTable   string `json:"refTable,omitempty"`
 	NotNull    bool   `json:"notNull"`
+	// Unique, MaxLength, and EnumValues are the constraints generated
+	// defaults follow.
+	Unique     bool     `json:"unique,omitempty"`
+	MaxLength  int      `json:"maxLength,omitempty"`
+	EnumValues []string `json:"enumValues,omitempty"`
 }
 
 type diagnosticForeignKey struct {
@@ -286,6 +292,17 @@ func writeTableSection(buf *strings.Builder, tables []diagnosticTable) {
 			if column.ForeignKey {
 				buf.WriteString(" fk=")
 				buf.WriteString(column.RefTable)
+			}
+			if column.Unique {
+				buf.WriteString(" unique=true")
+			}
+			if column.MaxLength > 0 {
+				buf.WriteString(" maxLength=")
+				buf.WriteString(strconv.Itoa(column.MaxLength))
+			}
+			if len(column.EnumValues) > 0 {
+				buf.WriteString(" enum=")
+				buf.WriteString(strings.Join(column.EnumValues, "|"))
 			}
 			buf.WriteString("\n")
 		}
@@ -666,6 +683,9 @@ func buildTableDiagnostics(tables []Table) []diagnosticTable {
 				ForeignKey: column.IsFK,
 				RefTable:   column.FKRefTable,
 				NotNull:    column.NotNull,
+				Unique:     column.Unique,
+				MaxLength:  column.MaxLength,
+				EnumValues: column.EnumValues,
 			})
 		}
 

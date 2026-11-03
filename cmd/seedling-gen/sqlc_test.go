@@ -512,7 +512,7 @@ CREATE TABLE users (
 	}
 	output := buf.String()
 	for _, want := range []string{
-		`SpotifyUrl: "company-spotify_url"`,
+		`SpotifyUrl: scope.Unique("company-spotify_url")`,
 		`DisplayLabel: "user-display_label"`,
 		`LocalField: "CompanySpotifyUrl"`,
 		`RefField: "SpotifyUrl"`,
@@ -988,7 +988,7 @@ CREATE TABLE users (
 	}{
 		{name: "time import", substr: `"time"`},
 		{name: "string default", substr: `Name: "user-name"`},
-		{name: "time default", substr: `CreatedAt: time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)`},
+		{name: "time default", substr: `CreatedAt: scope.Now()`},
 		{name: "relation key skipped", substr: `CompanyID: 1`, missing: true},
 	}
 
