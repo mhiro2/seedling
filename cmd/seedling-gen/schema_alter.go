@@ -74,7 +74,14 @@ func (s *schemaState) apply(stmt sqlStatement) error {
 		loc := alterIndexRE.FindStringSubmatchIndex(stmt.Masked)
 		s.renameIndex(normalizeIdent(stmt.Text[loc[2]:loc[3]]), normalizeIdent(stmt.Text[loc[4]:loc[5]]))
 		return nil
+	case alterTypeRE.MatchString(stmt.Masked):
+		loc := alterTypeRE.FindStringSubmatchIndex(stmt.Masked)
+		s.alterEnumType(normalizeIdent(stmt.Text[loc[2]:loc[3]]), trimSQLText(stmt.slice(loc[1], len(stmt.Masked))))
+		return nil
+	case dropTypeRE.MatchString(stmt.Masked):
+		return s.dropTypes(stmt.sqlText)
 	}
+	s.createEnumTypes(stmt.sqlText)
 	if err := s.createTables(stmt); err != nil {
 		return err
 	}
@@ -95,7 +102,7 @@ func (s *schemaState) createUniqueIndexes(stmt sqlText) {
 			name = normalizeIdent(stmt.Text[loc[2]:loc[3]])
 		}
 		t.uniques = append(t.uniques, &keyConstraint{
-			names:   constraintNames(name),
+			name:    constraintName{declared: name},
 			columns: indexColumnNames(stmt.Text[loc[6]:loc[7]]),
 		})
 	}
@@ -117,7 +124,7 @@ func (s *schemaState) dropIndexes(stmt sqlText) {
 	}
 	for _, name := range splitIdentifierList(rest.Text) {
 		for _, t := range tables {
-			t.uniques = slices.DeleteFunc(t.uniques, func(c *keyConstraint) bool { return slices.Contains(c.names, name) })
+			t.dropUnique(name)
 		}
 	}
 }
@@ -125,7 +132,7 @@ func (s *schemaState) dropIndexes(stmt sqlText) {
 func (s *schemaState) renameIndex(from, to string) {
 	for _, t := range s.tables {
 		for _, c := range t.uniques {
-			renameConstraintName(&c.names, from, to)
+			c.name.rename(from, to)
 		}
 	}
 }
@@ -372,9 +379,11 @@ func (s *schemaState) addColumn(t *tableState, def sqlText, ifNotExists bool) er
 		}
 		return fmt.Errorf("ADD COLUMN %s: column is already defined", normalizeIdent(name))
 	}
-	if !t.defineColumn(def, s.enumTypes, s.dialect.backslashEscapes, position, false) {
+	col, ok := s.parseColumn(def)
+	if !ok {
 		return fmt.Errorf("cannot read column definition %q", def.Text)
 	}
+	t.defineColumn(col, def, position, false)
 	t.addChecks(def, s.dialect.backslashEscapes)
 	return nil
 }
@@ -401,9 +410,11 @@ func (s *schemaState) modifyColumn(t *tableState, old string, def sqlText) error
 	if loc := columnPositionRE.FindStringIndex(def.Masked); loc != nil {
 		def = def.slice(0, loc[0])
 	}
-	if !t.defineColumn(def, s.enumTypes, s.dialect.backslashEscapes, idx, true) {
+	col, ok := s.parseColumn(def)
+	if !ok {
 		return fmt.Errorf("cannot read column definition %q", def.Text)
 	}
+	t.defineColumn(col, def, idx, true)
 	t.addChecks(def, s.dialect.backslashEscapes)
 	return nil
 }
@@ -419,18 +430,17 @@ func (s *schemaState) alterDrop(t *tableState, rest sqlText) error {
 		if !ok {
 			return errors.New("DROP CONSTRAINT needs a name")
 		}
-		if t.dropConstraint(normalizeIdent(name)) || ifExists {
+		if t.dropConstraint(normalizeIdent(name), s.dialect) || ifExists {
 			return nil
 		}
 		return fmt.Errorf("DROP CONSTRAINT %s: constraint is not defined; give it a name with CONSTRAINT where it is created", normalizeIdent(name))
 	case "PRIMARY":
-		t.primaryKey = nil
+		t.dropPrimaryKey(s.dialect)
 		return nil
 	case "INDEX", "KEY":
 		rest, _ = skipWords(rest, firstWord(rest))
 		if name, _, ok := splitLeadingIdent(rest.Text); ok {
-			name := normalizeIdent(name)
-			t.uniques = slices.DeleteFunc(t.uniques, func(c *keyConstraint) bool { return slices.Contains(c.names, name) })
+			t.dropUnique(normalizeIdent(name))
 		}
 		return nil
 	case "PARTITION", "PERIOD":
@@ -458,7 +468,7 @@ func (s *schemaState) alterDrop(t *tableState, rest sqlText) error {
 func (s *schemaState) dropColumn(t *tableState, column string) {
 	t.columns = slices.DeleteFunc(t.columns, func(col Column) bool { return col.Name == column })
 	if t.primaryKey != nil && slices.Contains(t.primaryKey.columns, column) {
-		t.primaryKey = nil
+		t.dropPrimaryKey(s.dialect)
 	}
 	covers := func(c *keyConstraint) bool { return slices.Contains(c.columns, column) }
 	t.uniques = slices.DeleteFunc(t.uniques, covers)
@@ -472,18 +482,55 @@ func (s *schemaState) dropColumn(t *tableState, column string) {
 }
 
 // dropConstraint removes the constraint with the given name and reports
-// whether one existed.
-func (t *tableState) dropConstraint(name string) bool {
-	if t.primaryKey != nil && slices.Contains(t.primaryKey.names, name) {
-		t.primaryKey = nil
-		return true
+// whether one existed. A declared name wins over a generated one, and only one
+// constraint is dropped, as the databases do.
+func (t *tableState) dropConstraint(name string, d sqlDialect) bool {
+	for _, declared := range []bool{true, false} {
+		if t.primaryKey != nil && t.primaryKey.name.matches(name, declared) {
+			t.dropPrimaryKey(d)
+			return true
+		}
+		if i := slices.IndexFunc(t.uniques, func(c *keyConstraint) bool { return c.name.matches(name, declared) }); i >= 0 {
+			t.uniques = slices.Delete(t.uniques, i, i+1)
+			return true
+		}
+		if i := slices.IndexFunc(t.foreignKeys, func(c *foreignKeyConstraint) bool { return c.name.matches(name, declared) }); i >= 0 {
+			t.foreignKeys = slices.Delete(t.foreignKeys, i, i+1)
+			return true
+		}
+		if i := slices.IndexFunc(t.checks, func(c *checkConstraint) bool { return c.name.matches(name, declared) }); i >= 0 {
+			t.checks = slices.Delete(t.checks, i, i+1)
+			return true
+		}
 	}
-	named := func(c *keyConstraint) bool { return slices.Contains(c.names, name) }
-	before := len(t.uniques) + len(t.foreignKeys) + len(t.checks)
-	t.uniques = slices.DeleteFunc(t.uniques, named)
-	t.foreignKeys = slices.DeleteFunc(t.foreignKeys, func(fk *foreignKeyConstraint) bool { return named(&fk.keyConstraint) })
-	t.checks = slices.DeleteFunc(t.checks, func(c *checkConstraint) bool { return slices.Contains(c.names, name) })
-	return len(t.uniques)+len(t.foreignKeys)+len(t.checks) < before
+	return false
+}
+
+// dropUnique removes the unique constraint or index with the given name.
+// Other indexes are not tracked, so an unknown name is ignored.
+func (t *tableState) dropUnique(name string) {
+	for _, declared := range []bool{true, false} {
+		if i := slices.IndexFunc(t.uniques, func(c *keyConstraint) bool { return c.name.matches(name, declared) }); i >= 0 {
+			t.uniques = slices.Delete(t.uniques, i, i+1)
+			return
+		}
+	}
+}
+
+// dropPrimaryKey removes the primary key. PostgreSQL and MySQL keep the NOT
+// NULL the key implied on its columns.
+func (t *tableState) dropPrimaryKey(d sqlDialect) {
+	if t.primaryKey == nil {
+		return
+	}
+	if !d.sqliteKeys {
+		for _, name := range t.primaryKey.columns {
+			if idx := t.columnIndex(name); idx >= 0 {
+				t.columns[idx].NotNull = true
+			}
+		}
+	}
+	t.primaryKey = nil
 }
 
 func (s *schemaState) alterRename(t *tableState, rest sqlText) error {
@@ -528,16 +575,10 @@ func (t *tableState) renameConstraint(from, to string) {
 		keys = append(keys, &fk.keyConstraint)
 	}
 	for _, c := range keys {
-		renameConstraintName(&c.names, from, to)
+		c.name.rename(from, to)
 	}
 	for _, c := range t.checks {
-		renameConstraintName(&c.names, from, to)
-	}
-}
-
-func renameConstraintName(names *[]string, from, to string) {
-	if slices.Contains(*names, from) {
-		*names = []string{to}
+		c.name.rename(from, to)
 	}
 }
 
@@ -628,70 +669,63 @@ func (s *schemaState) alterColumn(t *tableState, rest sqlText) error {
 func (s *schemaState) changeColumnType(t *tableState, idx int, typ sqlText) error {
 	col := t.columns[idx]
 	def := sqlText{Text: col.Name + " " + typ.Text, Masked: col.Name + " " + typ.Masked}
-	changed, ok := parseColumn(def, s.enumTypes, s.dialect.backslashEscapes)
+	changed, ok := s.parseColumn(def)
 	if !ok {
 		return fmt.Errorf("ALTER COLUMN %s: cannot read type %q", col.Name, typ.Text)
 	}
-	col.SQLType, col.GoType, col.MaxLength, col.EnumValues = changed.SQLType, changed.GoType, changed.MaxLength, changed.EnumValues
+	col.SQLType, col.GoType, col.MaxLength, col.EnumValues, col.enumType = changed.SQLType, changed.GoType, changed.MaxLength, changed.EnumValues, changed.enumType
 	t.columns[idx] = col
 	return nil
 }
 
-// resolveEnumTypes maps each enum type to its values as they stand after
-// every statement, following CREATE TYPE ... AS ENUM, ALTER TYPE, and DROP
-// TYPE in order. Columns refer to types by name, so a type renamed later is
-// also reachable under its earlier names. A type whose value list cannot be
-// read maps to nil, which still marks it as an enum.
-func resolveEnumTypes(statements []sqlStatement) map[string][]string {
-	enums := make(map[string][]string)
-	renamed := make(map[string]string)
-	for _, stmt := range statements {
-		switch {
-		case alterTypeRE.MatchString(stmt.Masked):
-			loc := alterTypeRE.FindStringSubmatchIndex(stmt.Masked)
-			alterEnumType(enums, renamed, normalizeIdent(stmt.Text[loc[2]:loc[3]]), trimSQLText(stmt.slice(loc[1], len(stmt.Masked))))
-		case dropTypeRE.MatchString(stmt.Masked):
-			loc := dropTypeRE.FindStringIndex(stmt.Masked)
-			rest := stmt.slice(loc[1], len(stmt.Masked))
-			if end := trailingDropOptionsRE.FindStringIndex(rest.Masked); end != nil {
-				rest = rest.slice(0, end[0])
-			}
-			for _, name := range splitIdentifierList(rest.Text) {
-				delete(enums, name)
-			}
-		default:
-			for _, loc := range createEnumRE.FindAllStringSubmatchIndex(stmt.Masked, -1) {
-				var values []string
-				if end := findMatchingParen(stmt.Masked, loc[1]-1); end != -1 {
-					values, _ = parseStringLiterals(stmt.Text[loc[1]:end], false)
-				}
-				enums[normalizeIdent(stmt.Text[loc[2]:loc[3]])] = values
-			}
+// createEnumTypes defines the enum types of every CREATE TYPE ... AS ENUM in
+// stmt.
+func (s *schemaState) createEnumTypes(stmt sqlText) {
+	for _, loc := range createEnumRE.FindAllStringSubmatchIndex(stmt.Masked, -1) {
+		var values []string
+		if end := findMatchingParen(stmt.Masked, loc[1]-1); end != -1 {
+			values, _ = parseStringLiterals(stmt.Text[loc[1]:end], false)
 		}
+		s.enums[normalizeIdent(stmt.Text[loc[2]:loc[3]])] = &enumType{values: values}
 	}
-	for old := range renamed {
-		name := old
-		for seen := 0; seen <= len(renamed); seen++ {
-			next, ok := renamed[name]
-			if !ok {
-				break
-			}
-			name = next
-		}
-		if values, ok := enums[name]; ok {
-			if _, defined := enums[old]; !defined {
-				enums[old] = values
-			}
-		}
-	}
-	if len(enums) == 0 {
-		return nil
-	}
-	return enums
 }
 
-func alterEnumType(enums map[string][]string, renamed map[string]string, name string, action sqlText) {
-	values, ok := enums[name]
+// dropTypes applies DROP TYPE. CASCADE drops the columns of a dropped enum
+// type, as PostgreSQL does; without it, a type still in use is an error.
+// Types other than enums are not tracked, so an unknown name is ignored.
+func (s *schemaState) dropTypes(stmt sqlText) error {
+	loc := dropTypeRE.FindStringIndex(stmt.Masked)
+	rest := stmt.slice(loc[1], len(stmt.Masked))
+	cascade := false
+	if end := trailingDropOptionsRE.FindStringIndex(rest.Masked); end != nil {
+		cascade = strings.Contains(strings.ToUpper(rest.Masked[end[0]:]), "CASCADE")
+		rest = rest.slice(0, end[0])
+	}
+	for _, name := range splitIdentifierList(rest.Text) {
+		e, ok := s.enums[name]
+		if !ok {
+			continue
+		}
+		for _, t := range slices.Clone(s.tables) {
+			for _, col := range slices.Clone(t.columns) {
+				if col.enumType != e {
+					continue
+				}
+				if !cascade {
+					return fmt.Errorf("DROP TYPE %s: column %s.%s still uses the type; drop it first or use CASCADE", name, t.name, col.Name)
+				}
+				s.dropColumn(t, col.Name)
+			}
+		}
+		delete(s.enums, name)
+	}
+	return nil
+}
+
+// alterEnumType applies ALTER TYPE to an enum type. The type is changed in
+// place, so every column of the type sees the change.
+func (s *schemaState) alterEnumType(name string, action sqlText) {
+	e, ok := s.enums[name]
 	if !ok {
 		return
 	}
@@ -706,31 +740,28 @@ func alterEnumType(enums map[string][]string, renamed map[string]string, name st
 	case addValueRE.MatchString(action.Masked):
 		loc := addValueRE.FindStringSubmatchIndex(action.Masked)
 		value := literal(loc, 2)
-		if slices.Contains(values, value) {
+		if slices.Contains(e.values, value) {
 			return
 		}
-		at := len(values)
+		at := len(e.values)
 		if loc[4] >= 0 {
-			if i := slices.Index(values, literal(loc, 6)); i >= 0 {
+			if i := slices.Index(e.values, literal(loc, 6)); i >= 0 {
 				at = i
 				if strings.EqualFold(action.Text[loc[4]:loc[5]], "AFTER") {
 					at++
 				}
 			}
 		}
-		enums[name] = slices.Insert(slices.Clone(values), at, value)
+		e.values = slices.Insert(slices.Clone(e.values), at, value)
 	case renameValueRE.MatchString(action.Masked):
 		loc := renameValueRE.FindStringSubmatchIndex(action.Masked)
-		if i := slices.Index(values, literal(loc, 2)); i >= 0 {
-			values = slices.Clone(values)
-			values[i] = literal(loc, 4)
-			enums[name] = values
+		if i := slices.Index(e.values, literal(loc, 2)); i >= 0 {
+			e.values = slices.Clone(e.values)
+			e.values[i] = literal(loc, 4)
 		}
 	case renameTypeRE.MatchString(action.Masked):
 		loc := renameTypeRE.FindStringSubmatchIndex(action.Masked)
-		to := normalizeIdent(action.Text[loc[2]:loc[3]])
-		delete(enums, name)
-		enums[to] = values
-		renamed[name] = to
+		delete(s.enums, name)
+		s.enums[normalizeIdent(action.Text[loc[2]:loc[3]])] = e
 	}
 }

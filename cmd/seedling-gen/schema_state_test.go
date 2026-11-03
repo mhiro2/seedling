@@ -441,3 +441,117 @@ func TestReadSchemaFiles_ReportsFileOfFailingMigration(t *testing.T) {
 		t.Fatalf("err = %v, want it to contain %q", err, want)
 	}
 }
+
+func TestParseSchemaSources_RollbackMarkerInsideLiteral(t *testing.T) {
+	// Arrange
+	sql := "CREATE TABLE users (id INT PRIMARY KEY);\nSELECT $body$\n-- +goose Down\n$body$;\nCREATE TABLE events (id INT PRIMARY KEY);\n"
+
+	// Act
+	tables, err := ParseSchemaWithDialect(sql, "postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	if got, want := tableNames(tables), []string{"users", "events"}; !slices.Equal(got, want) {
+		t.Fatalf("tables = %v, want %v", got, want)
+	}
+}
+
+func TestParseSchemaSources_EnumTypeIdentity(t *testing.T) {
+	// Arrange: the column keeps the renamed type, not the new type that
+	// reuses its old name.
+	sql := `
+CREATE TYPE mood AS ENUM ('happy');
+CREATE TABLE users (id INT PRIMARY KEY, mood mood NOT NULL);
+ALTER TYPE mood RENAME TO old_mood;
+CREATE TYPE mood AS ENUM ('sad');
+ALTER TYPE old_mood ADD VALUE 'calm';
+CREATE TABLE posts (id INT PRIMARY KEY, mood mood NOT NULL);
+`
+
+	// Act
+	tables, err := ParseSchemaWithDialect(sql, "postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	if got, want := schemaColumn(t, findTable(t, tables, "users"), "mood").EnumValues, []string{"happy", "calm"}; !slices.Equal(got, want) {
+		t.Fatalf("users.mood = %v, want %v", got, want)
+	}
+	if got, want := schemaColumn(t, findTable(t, tables, "posts"), "mood").EnumValues, []string{"sad"}; !slices.Equal(got, want) {
+		t.Fatalf("posts.mood = %v, want %v", got, want)
+	}
+}
+
+func TestParseSchemaSources_DropTypeCascade(t *testing.T) {
+	// Arrange
+	sql := `
+CREATE TYPE mood AS ENUM ('happy');
+CREATE TABLE users (id INT PRIMARY KEY, mood mood);
+`
+
+	// Act
+	tables, err := ParseSchemaWithDialect(sql+"DROP TYPE mood CASCADE;", "postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, restrictErr := ParseSchemaWithDialect(sql+"DROP TYPE mood;", "postgres")
+
+	// Assert
+	if got := columnNames(findTable(t, tables, "users")); !slices.Equal(got, []string{"id"}) {
+		t.Fatalf("users columns = %v, want [id]", got)
+	}
+	if restrictErr == nil || !strings.Contains(restrictErr.Error(), "column users.mood still uses the type") {
+		t.Fatalf("err = %v, want a type in use error", restrictErr)
+	}
+}
+
+func TestParseSchemaSources_DroppedPrimaryKeyKeepsNotNull(t *testing.T) {
+	// Arrange
+	sql := `
+CREATE TABLE users (id INT PRIMARY KEY, replacement INT);
+ALTER TABLE users DROP CONSTRAINT users_pkey;
+ALTER TABLE users ADD PRIMARY KEY (replacement);
+`
+
+	// Act
+	tables, err := ParseSchemaWithDialect(sql, "postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	users := findTable(t, tables, "users")
+	if id := schemaColumn(t, users, "id"); id.IsPK || !id.NotNull {
+		t.Fatalf("id = %+v, want a NOT NULL non-key column", id)
+	}
+	if !schemaColumn(t, users, "replacement").IsPK {
+		t.Fatal("replacement should be the primary key")
+	}
+}
+
+func TestParseSchemaSources_DeclaredConstraintNameWins(t *testing.T) {
+	// Arrange: users_check names the explicit constraint, so dropping it
+	// keeps the unnamed check on status.
+	sql := `
+CREATE TABLE users (
+    id INT PRIMARY KEY,
+    status TEXT CHECK (status IN ('active', 'inactive')),
+    CONSTRAINT users_check CHECK (id > 0)
+);
+ALTER TABLE users DROP CONSTRAINT users_check;
+`
+
+	// Act
+	tables, err := ParseSchemaWithDialect(sql, "postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	if got, want := schemaColumn(t, findTable(t, tables, "users"), "status").EnumValues, []string{"active", "inactive"}; !slices.Equal(got, want) {
+		t.Fatalf("status enum = %v, want %v", got, want)
+	}
+}

@@ -383,7 +383,7 @@ The `sql` and `sqlc` adapters read the schema a migration history produces, not 
 - `ALTER TABLE ... ADD [COLUMN]`, `DROP [COLUMN]`, `RENAME [COLUMN] ... TO`, `RENAME TO`, and `ALTER [COLUMN] ... SET / DROP NOT NULL` or `TYPE`
 - `ADD CONSTRAINT` / `DROP CONSTRAINT` for primary keys, foreign keys, `UNIQUE`, and `CHECK`, including the names PostgreSQL and MySQL generate for unnamed constraints (`users_company_id_fkey`, `users_ibfk_1`)
 - MySQL `MODIFY`, `CHANGE`, `ADD ... FIRST / AFTER`, `DROP FOREIGN KEY`, `DROP INDEX`, and `RENAME TABLE`
-- `DROP TABLE`, which also drops the foreign keys pointing at the table, `CREATE UNIQUE INDEX` / `DROP INDEX` / `ALTER INDEX ... RENAME TO`, and `ALTER TYPE ... ADD VALUE` / `RENAME VALUE` / `RENAME TO` for enum types
+- `DROP TABLE`, which also drops the foreign keys pointing at the table, `CREATE UNIQUE INDEX` / `DROP INDEX` / `ALTER INDEX ... RENAME TO`, and `ALTER TYPE ... ADD VALUE` / `RENAME VALUE` / `RENAME TO` and `DROP TYPE [CASCADE]` for enum types
 
 The down section of goose, sql-migrate, dbmate, and tern migrations is ignored. Actions that do not change columns, keys, or value constraints, such as `OWNER TO`, `SET DEFAULT`, or MySQL table options, are accepted and skipped. Anything else that could change the schema — an unknown `ALTER TABLE` action, an `ALTER TABLE` on a table no earlier statement created, or a `DROP CONSTRAINT` whose name cannot be resolved — stops generation with the file and line, rather than silently producing blueprints for a schema that no longer exists:
 

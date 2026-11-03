@@ -38,6 +38,8 @@ type Column struct {
 	// descendingKey marks an inline PRIMARY KEY DESC, which in SQLite is not an
 	// alias for the rowid even on an INTEGER column.
 	descendingKey bool
+	// enumType is the enum type of the column while the schema is parsed.
+	enumType *enumType
 }
 
 // ForeignKey represents a table-level or inline foreign key constraint.

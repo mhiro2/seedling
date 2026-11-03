@@ -39,20 +39,18 @@ func parseSchemaSources(sources []schemaSource, dialect string) ([]Table, error)
 		return nil, err
 	}
 
-	var statements []sqlStatement
-	for _, src := range sources {
-		text, masked := d.mask(stripRollbackStatements(src.SQL))
-		statements = append(statements, splitStatements(src.Name, text, masked)...)
-	}
-
 	s := &schemaState{
-		dialect:   d,
-		enumTypes: resolveEnumTypes(statements),
-		byName:    make(map[string]*tableState),
+		dialect: d,
+		enums:   make(map[string]*enumType),
+		byName:  make(map[string]*tableState),
 	}
-	for _, stmt := range statements {
-		if err := s.apply(stmt); err != nil {
-			return nil, fmt.Errorf("%s: %w", stmt.position(), err)
+	for _, src := range sources {
+		text, masked := d.mask(src.SQL)
+		end := rollbackOffset(src.SQL, text)
+		for _, stmt := range splitStatements(src.Name, text[:end], masked[:end]) {
+			if err := s.apply(stmt); err != nil {
+				return nil, fmt.Errorf("%s: %w", stmt.position(), err)
+			}
 		}
 	}
 	return s.build(), nil
@@ -68,20 +66,24 @@ var rollbackMarkers = []string{
 	"-- migrate:down",
 }
 
-// stripRollbackStatements drops the down section of a migration file, so only
-// the statements that bring the schema forward are applied.
-func stripRollbackStatements(sql string) string {
+// rollbackOffset returns where the down section of a migration file starts,
+// or len(sql) when it has none, so only the statements that bring the schema
+// forward are applied. text is sql with its comments blanked by mask, which
+// tells a marker comment from the same characters inside a string literal.
+func rollbackOffset(sql, text string) int {
 	offset := 0
 	for line := range strings.SplitAfterSeq(sql, "\n") {
-		lower := strings.ToLower(strings.TrimSpace(line))
+		trimmed := strings.TrimLeft(line, " \t")
+		start := offset + len(line) - len(trimmed)
+		lower := strings.ToLower(strings.TrimSpace(trimmed))
 		for _, marker := range rollbackMarkers {
-			if strings.HasPrefix(lower, marker) {
-				return sql[:offset]
+			if strings.HasPrefix(lower, marker) && start < len(text) && text[start] == ' ' {
+				return offset
 			}
 		}
 		offset += len(line)
 	}
-	return sql
+	return len(sql)
 }
 
 // sqlStatement is one statement of a schema source, split at a top-level
@@ -130,10 +132,32 @@ func splitStatements(source, text, masked string) []sqlStatement {
 
 // schemaState is the schema built so far while statements are applied.
 type schemaState struct {
-	dialect   sqlDialect
-	enumTypes map[string][]string
-	tables    []*tableState
-	byName    map[string]*tableState
+	dialect sqlDialect
+	enums   map[string]*enumType // enum type name → type
+	tables  []*tableState
+	byName  map[string]*tableState
+}
+
+// enumType is an enum type created by CREATE TYPE ... AS ENUM. Columns hold
+// the type itself rather than its name, so a later ALTER TYPE reaches them and
+// a type created under a reused name does not. values is nil when the value
+// list could not be read.
+type enumType struct {
+	values []string
+}
+
+// parseColumn parses a column definition against the enum types defined so
+// far.
+func (s *schemaState) parseColumn(item sqlText) (Column, bool) {
+	values := make(map[string][]string, len(s.enums))
+	for name, e := range s.enums {
+		values[name] = e.values
+	}
+	col, ok := parseColumn(item, values, s.dialect.backslashEscapes)
+	if ok {
+		col.enumType = s.enums[strings.ToLower(col.SQLType)]
+	}
+	return col, ok
 }
 
 // tableState holds a table's columns and constraints separately, so a later
@@ -141,7 +165,7 @@ type schemaState struct {
 // flags on Column that constraints imply are derived from them in build.
 type tableState struct {
 	name         string
-	columns      []Column // declared NOT NULL and type only; EnumValues holds the type's values
+	columns      []Column // declared NOT NULL and type only; EnumValues holds the values of an inline ENUM(...)
 	primaryKey   *keyConstraint
 	foreignKeys  []*foreignKeyConstraint
 	uniques      []*keyConstraint
@@ -150,11 +174,30 @@ type tableState struct {
 	unnamedFKs   int // counts unnamed foreign keys for MySQL's generated names
 }
 
-// keyConstraint is a primary key or unique constraint. names lists every
-// name a later statement may refer to it by: the declared one, or the names
-// the databases generate for an unnamed constraint.
+// constraintName is how a later statement may refer to a constraint: by its
+// declared name, or, for an unnamed constraint, by a name PostgreSQL or MySQL
+// would generate for it.
+type constraintName struct {
+	declared  string
+	generated []string
+}
+
+func (n constraintName) matches(name string, declared bool) bool {
+	if declared {
+		return n.declared == name
+	}
+	return n.declared == "" && slices.Contains(n.generated, name)
+}
+
+func (n *constraintName) rename(from, to string) {
+	if n.matches(from, true) || n.matches(from, false) {
+		*n = constraintName{declared: to}
+	}
+}
+
+// keyConstraint is a primary key or unique constraint.
 type keyConstraint struct {
-	names   []string
+	name    constraintName
 	columns []string
 }
 
@@ -168,7 +211,7 @@ type foreignKeyConstraint struct {
 // checkConstraint is a CHECK constraint. column and values are set for the
 // CHECK (column IN (...)) shape, the only one that restricts values.
 type checkConstraint struct {
-	names  []string
+	name   constraintName
 	column string
 	values []string
 }
@@ -191,7 +234,12 @@ func (t *tableState) build(d sqlDialect) Table {
 	columnIndex := make(map[string]int, len(columns))
 	for i, col := range columns {
 		columnIndex[col.Name] = i
-		columns[i].EnumValues = slices.Clone(col.EnumValues)
+		if col.enumType != nil {
+			columns[i].EnumValues = slices.Clone(col.enumType.values)
+		} else {
+			columns[i].EnumValues = slices.Clone(col.EnumValues)
+		}
+		columns[i].enumType = nil
 	}
 
 	if t.primaryKey != nil {
@@ -312,11 +360,11 @@ func inlineConstraintName(item sqlText, keyword *regexp.Regexp) string {
 	return declaredConstraintName(item, loc[0])
 }
 
-func constraintNames(declared string, generated ...string) []string {
+func constraintNames(declared string, generated ...string) constraintName {
 	if declared != "" {
-		return []string{declared}
+		return constraintName{declared: declared}
 	}
-	return generated
+	return constraintName{generated: generated}
 }
 
 var (
@@ -329,11 +377,7 @@ var (
 // column there, turning its inline PRIMARY KEY, UNIQUE, and REFERENCES
 // constraints into table constraints. Inline CHECK constraints are left to
 // addChecks.
-func (t *tableState) defineColumn(item sqlText, enumTypes map[string][]string, backslash bool, position int, replace bool) bool {
-	col, ok := parseColumn(item, enumTypes, backslash)
-	if !ok {
-		return false
-	}
+func (t *tableState) defineColumn(col Column, item sqlText, position int, replace bool) {
 	inlinePK, refs, refTable, refColumns := col.IsPK, col.IsFK, col.FKRefTable, col.FKRefColumns
 	col.IsPK, col.Unique, col.IsFK, col.FKRefTable, col.FKRefColumns = false, false, false, "", nil
 	if replace {
@@ -351,12 +395,11 @@ func (t *tableState) defineColumn(item sqlText, enumTypes map[string][]string, b
 	if refs {
 		t.addForeignKey(inlineConstraintName(item, inlineRefRE), columns, refTable, refColumns, true)
 	}
-	return true
 }
 
 func (t *tableState) addPrimaryKey(declared string, columns []string) {
 	if t.primaryKey == nil {
-		t.primaryKey = &keyConstraint{names: constraintNames(declared, t.name+"_pkey", "primary")}
+		t.primaryKey = &keyConstraint{name: constraintNames(declared, t.name+"_pkey", "primary")}
 	}
 	for _, col := range columns {
 		if !slices.Contains(t.primaryKey.columns, col) {
@@ -371,21 +414,21 @@ func (t *tableState) addUnique(declared, index string, columns []string) {
 	if declared == "" {
 		declared = index
 	}
-	names := constraintNames(declared, t.generatedName(columns, "key"))
+	name := constraintNames(declared, t.generatedName(columns, "key"))
 	if declared == "" && len(columns) > 0 {
-		names = append(names, columns[0]) // MySQL names an unnamed unique index after its first column
+		name.generated = append(name.generated, columns[0]) // MySQL names an unnamed unique index after its first column
 	}
-	t.uniques = append(t.uniques, &keyConstraint{names: names, columns: columns})
+	t.uniques = append(t.uniques, &keyConstraint{name: name, columns: columns})
 }
 
 func (t *tableState) addForeignKey(declared string, columns []string, refTable string, refColumns []string, inline bool) {
-	names := []string{declared}
+	name := constraintName{declared: declared}
 	if declared == "" {
 		t.unnamedFKs++
-		names = []string{t.generatedName(columns, "fkey"), t.name + "_ibfk_" + strconv.Itoa(t.unnamedFKs)}
+		name.generated = []string{t.generatedName(columns, "fkey"), t.name + "_ibfk_" + strconv.Itoa(t.unnamedFKs)}
 	}
 	t.foreignKeys = append(t.foreignKeys, &foreignKeyConstraint{
-		keyConstraint: keyConstraint{names: names, columns: columns},
+		keyConstraint: keyConstraint{name: name, columns: columns},
 		refTable:      refTable,
 		refColumns:    refColumns,
 		inline:        inline,
@@ -413,11 +456,12 @@ func (t *tableState) addChecks(text sqlText, backslash bool) {
 				}
 			}
 		}
-		generated := []string{t.name + "_check"}
+		// PostgreSQL names an unnamed check after the column it restricts.
+		generated := t.name + "_check"
 		if check.column != "" {
-			generated = []string{t.generatedName([]string{check.column}, "check"), t.name + "_check"}
+			generated = t.generatedName([]string{check.column}, "check")
 		}
-		check.names = constraintNames(declared, generated...)
+		check.name = constraintNames(declared, generated)
 		t.checks = append(t.checks, check)
 	}
 }
@@ -483,7 +527,9 @@ func (s *schemaState) createTables(stmt sqlStatement) error {
 				constraints = append(constraints, item)
 				continue
 			}
-			t.defineColumn(item, s.enumTypes, s.dialect.backslashEscapes, len(t.columns), false)
+			if col, ok := s.parseColumn(item); ok {
+				t.defineColumn(col, item, len(t.columns), false)
+			}
 		}
 		for _, constraint := range constraints {
 			t.addConstraint(constraint)
