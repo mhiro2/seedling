@@ -156,6 +156,10 @@ Important detail:
 - Cleanup walks the graph in reverse topological order and requires a `Delete` callback on every non-provided blueprint. It validates all callbacks before issuing the first delete, so a missing `Delete` surfaces as `ErrDeleteNotDefined` with no rows removed rather than as a half-finished teardown.
 - A `CleanupTracker` (from `AutoCleanup` or `WithCleanup`) sits at the public API boundary rather than in the executor. Before `Execute` it checks that every non-provided node's blueprint has `Delete`, so nothing is inserted that it could not remove; right after `Execute` returns, and before a testing wrapper can call `Fatal`, it keeps the same partial graph, delete callbacks, and as-inserted values a `Result` would clean up with. At test end it replays those entries newest first, which keeps records that `Use` an earlier insert ahead of the records they point at. Testing APIs find the tracker by test name, walking up subtest names, the same way they find their `Scope` by test.
 
+### Registry check
+
+`CheckRegistry` reads the registered blueprints and runs one case per blueprint default, trait, and requested trait combination as nested subtests. Each case resolves the trait through `BlueprintTrait` and goes through the same non-generic plan builder and `Plan.InsertE` path the typed APIs use (with `any` as the value type), so it exercises the user's real `Insert` callbacks, the subtest's `Scope`, and any `AutoCleanup` tracker exactly as a test would. Failures carry the relation path from the executor's `InsertFailedError`, which is what lets a broken grandparent be located without reading node IDs.
+
 ## Why the split exists
 
 This separation keeps the core predictable:

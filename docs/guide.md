@@ -350,6 +350,32 @@ seedling does not generate SQL at runtime. Your blueprint owns the `Insert` and 
 
 When you use `database/sql`, [`WithTx`](https://pkg.go.dev/github.com/mhiro2/seedling#WithTx) is the easiest way to get a rollback-on-cleanup transaction. [`NewTestSession`](https://pkg.go.dev/github.com/mhiro2/seedling#NewTestSession) offers the same with registry binding and custom `sql.TxOptions`. For pgx, use [`seedlingpgx.WithTx`](https://pkg.go.dev/github.com/mhiro2/seedling/seedlingpgx#WithTx) or [`seedlingpgx.NewTestSession`](https://pkg.go.dev/github.com/mhiro2/seedling/seedlingpgx#NewTestSession).
 
+### Checking every blueprint against the database
+
+`CheckRegistry` inserts every registered blueprint through its own `Insert` callback — once with its defaults and once with each trait — so a fixture that a migration broke fails right away instead of in whichever test uses it next:
+
+```go
+func TestFixtures(t *testing.T) {
+    seedling.CheckRegistry(t, reg, func(t *testing.T) seedling.DBTX {
+        return seedling.WithTx(t, db) // one rolled-back transaction per case
+    },
+        seedling.CheckRepeat(2),                          // insert each case twice to catch repeated unique defaults
+        seedling.CheckTraits("user", "admin", "suspended"), // also check traits applied together
+        seedling.ExpectFailure("user", "invalid_email"),  // a trait for negative tests must still fail
+        seedling.SkipBlueprint("user_role"),               // a join blueprint used only under its relation
+    )
+}
+```
+
+Each case is a subtest named `blueprint/default`, `blueprint/trait`, or `blueprint/trait1+trait2`, so `go test -run 'TestFixtures/user/'` narrows it, and the database handle the function returns for that subtest isolates it. A failure names the blueprint, the traits, and the relation path of the record whose insert failed — the real database error included:
+
+```text
+--- FAIL: TestFixtures/task/default
+    blueprint "task" with defaults: ... insert failed: blueprint "company" at task.project.company: null value in column "region" violates not-null constraint
+```
+
+Because the check goes through the hand-written `Insert` and `Delete` callbacks and the real schema, it catches what neither the generator nor `Plan.Validate` can see: new `NOT NULL` or `CHECK` constraints, a `UNIQUE` column whose defaults repeat (with `CheckRepeat`), and callbacks that no longer match their tables. Cases are planned in the subtest's `TestScope`; when the code cannot use a transaction, call `seedling.AutoCleanup(t, db)` in the function and return `db`. Options that name an unknown blueprint or trait fail the check, so a typo never drops a case silently.
+
 ## Debugging And Cleanup
 
 - `Plan.DebugString`: inspect the dependency tree before inserts

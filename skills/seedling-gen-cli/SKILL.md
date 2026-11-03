@@ -64,7 +64,7 @@ Choose exactly one input source. Prefer the strongest source of truth already us
 5. Review generated relation names, optional relations, and composite key handling.
 6. Review generated `Defaults` values and confirm they satisfy constraints the generator cannot read (composite unique keys, other `CHECK` expressions, business rules).
 7. Write or update the hand-written file that sets missing `Insert` / `Delete` callbacks, wraps `Defaults`, adds `Traits`, and calls `MustRegister`. Do not edit the generated file.
-8. Run formatting and tests in the target repository.
+8. Run formatting and tests in the target repository. A `seedling.CheckRegistry` test that inserts every blueprint and trait against the migrated database confirms the generated and hand-written parts still fit the schema.
 
 Use `--out` when writing a file. The CLI writes atomically, so failures do not leave partial output behind. Add `--check` to the same command in CI to fail when the generated file is missing or stale after a schema change.
 

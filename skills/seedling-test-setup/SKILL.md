@@ -264,6 +264,18 @@ seedling.InsertOne[Task](t, db,
 )
 ```
 
+## Check every fixture against the database
+
+```go
+func TestFixtures(t *testing.T) {
+    seedling.CheckRegistry(t, reg, func(t *testing.T) seedling.DBTX {
+        return seedling.WithTx(t, db)
+    }, seedling.CheckRepeat(2))
+}
+```
+
+Inserts every blueprint with its defaults and each trait as subtests (`user/default`, `user/admin`), reporting the blueprint, trait, and relation path of a failing insert. Add `CheckTraits` for combinations, `ExpectFailure` for traits meant to fail, and `SkipBlueprint` / `SkipTrait` to leave cases out.
+
 ## Plan — inspect before inserting
 
 ```go
