@@ -166,6 +166,7 @@ type diagnosticFieldType struct {
 
 type diagnosticBlueprintRelation struct {
 	Name         string   `json:"name"`
+	Kind         string   `json:"kind"`
 	LocalFields  []string `json:"localFields"`
 	RefFields    []string `json:"refFields,omitempty"`
 	RefBlueprint string   `json:"refBlueprint"`
@@ -548,7 +549,9 @@ func writeBlueprintSection(buf *strings.Builder, blueprints []diagnosticBlueprin
 		for _, relation := range blueprint.Relations {
 			buf.WriteString("  - ")
 			buf.WriteString(relation.Name)
-			buf.WriteString(": ref=")
+			buf.WriteString(": kind=")
+			buf.WriteString(relation.Kind)
+			buf.WriteString(" ref=")
 			buf.WriteString(relation.RefBlueprint)
 			buf.WriteString(" localFields=")
 			buf.WriteString(strings.Join(relation.LocalFields, ","))
@@ -862,6 +865,7 @@ func buildSQLCDiagnostics(info *SqlcInfo, importPath string) *diagnosticSQLC {
 }
 
 func buildBlueprintDiagnostics(models []normalizedModel, insertSources, deleteSources map[string]string) []diagnosticBlueprint {
+	models = withReverseRelations(models)
 	diagnostics := make([]diagnosticBlueprint, 0, len(models))
 	for _, model := range models {
 		fields := make([]diagnosticFieldType, 0, len(model.Fields))
@@ -878,8 +882,13 @@ func buildBlueprintDiagnostics(models []normalizedModel, insertSources, deleteSo
 			if len(localFields) == 0 && relation.LocalField != "" {
 				localFields = []string{relation.LocalField}
 			}
+			kind := "belongs_to"
+			if relation.HasMany {
+				kind = "has_many"
+			}
 			relations = append(relations, diagnosticBlueprintRelation{
 				Name:         relation.Name,
+				Kind:         kind,
 				LocalFields:  slices.Clone(localFields),
 				RefFields:    slices.Clone(relation.RefFields),
 				RefBlueprint: relation.RefBlueprint,

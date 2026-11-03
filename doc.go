@@ -162,6 +162,32 @@
 //	user := result.Root()
 //	_ = user
 //
+// Shape the records of a has-many or many-to-many relation per test with
+// [Count], [At], [Each], and [Through] inside its [Ref]:
+//
+//	order := seedling.InsertOne[Order](t, db,
+//	    seedling.Ref("items",
+//	        seedling.Count(3),
+//	        seedling.At(1, seedling.Set("Status", "cancelled")),
+//	    ),
+//	).Root()
+//	_ = order
+//
+// Share one record across several relation paths with a [Scenario]. [Add]
+// records of any blueprint, [Link] relations to records added earlier, and read
+// each record back through its [Node] handle:
+//
+//	s := seedling.NewScenario(reg)
+//	company := seedling.Add[Company](s)
+//	project := seedling.Add[Project](s, seedling.Link("company", company))
+//	assignee := seedling.Add[User](s, seedling.Link("company", company))
+//	task := seedling.Add[Task](s,
+//	    seedling.Link("project", project),
+//	    seedling.Link("assignee", assignee),
+//	)
+//	result := s.Insert(t, db)
+//	_ = task.Get(result)
+//
 // Generate multiple rows with [InsertMany] and [Seq]:
 //
 //	users := seedling.InsertMany[User](t, db, 3,

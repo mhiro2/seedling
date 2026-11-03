@@ -98,6 +98,71 @@ user := seedling.InsertOne[User](t, db,
 _ = user
 ```
 
+### Sharing records across paths with Scenario
+
+`InsertMany` shares parents only along the same relation path. When one record must sit behind several paths — the same company behind a task's project and its assignee — add each record to a `Scenario` and share it explicitly with `Link`:
+
+```go
+s := seedling.NewScenario(reg)
+
+company := seedling.Add[Company](s)
+project := seedling.Add[Project](s, seedling.Link("company", company))
+assignee := seedling.Add[User](s, seedling.Link("company", company))
+reviewer := seedling.Add[User](s, seedling.Link("company", company))
+task := seedling.Add[Task](s,
+    seedling.Link("project", project),
+    seedling.Link("assignee", assignee),
+)
+
+result := s.Insert(t, db)
+got := task.Get(result)
+_ = reviewer.Get(result) // a second User, read back by role
+```
+
+- `Add[T]` accepts the same options as `InsertOne` and returns a typed `Node[T]` handle. Records of any blueprint can be mixed in one scenario, and seedling orders every insert
+- `Link(name, node)` binds a `BelongsTo` relation to a record added earlier, instead of creating a parent. It also works under `Ref`, for example `Add[Task](s, Ref("project", Link("company", company)))`
+- Nothing is shared implicitly: two `Add[User]` without `Link` get two companies. Sharing is always written down
+- `node.Get(result)` returns the inserted record for that handle, so two records of the same blueprint are read back by role rather than by node ID order. `Lookup` reports whether the record is present, for example in a partial result
+- `Link` conflicts with `Use`, `Ref`, `Omit`, and `When` on the same relation, and is rejected outside `Add`. `WithContext` and `WithInsertLog` are rejected in `Add`; pass the context to `Scenario.InsertE`
+- `Build` / `BuildE` return a `ScenarioPlan` with `DebugString`, `DryRunString`, and `Validate`, and `InsertE` returns a partial `ScenarioResult` with `CleanupE` on failure. `AfterInsert` callbacks run after every record is inserted, in the order the records were added
+
+### Related records per test
+
+Configure `HasMany` and `ManyToMany` relations from the test instead of adding a blueprint or trait for every shape. Options passed to `Ref` apply to every related record, and four options narrow them:
+
+- `Count(n)`: create `n` related records, replacing the relation's `Count`. It must be passed directly to `Ref`; `Count(0)` creates none
+- `At(i, opts...)`: apply options only to the record at index `i`
+- `Each(func(i int) []seedling.Option)`: derive options from each record's index
+- `Through(opts...)`: configure the join record of a `ManyToMany` relation; inside `At`, only that record's join row
+
+```go
+// Three line items; the second is cancelled.
+order := seedling.InsertOne[Order](t, db,
+    seedling.Ref("items",
+        seedling.Count(3),
+        seedling.At(1, seedling.Set("Status", "cancelled")),
+    ),
+).Root()
+
+// Paging boundaries without a blueprint per size.
+for _, n := range []int{0, 1, 21} {
+    seedling.InsertOne[Order](t, db, seedling.Ref("items", seedling.Count(n)))
+}
+```
+
+Like every option, `At`, `Each`, and plain options apply in written order, so an option written after `At` overrides it for that record. `Ref` options that leave a relation with no records are rejected rather than ignored, as is an `At` index outside `Count`.
+
+For a `ManyToMany` relation, `Use` takes a slice of existing related records and creates only the join rows, one per record. `Through` still configures those rows:
+
+```go
+member := seedling.InsertOne[Member](t, db,
+    seedling.Use("roles", []Role{admin, viewer}),
+    seedling.Ref("roles", seedling.At(1, seedling.Through(seedling.Set("ExpiresAt", deadline)))),
+).Root()
+```
+
+The existing roles are neither inserted nor deleted by cleanup, and only `Through` options can apply to them. `HasMany` relations do not accept `Use`: attaching an existing child to another parent would need an `UPDATE`, which seedling leaves to the test.
+
 ### Selective insertion with Only
 
 Use `Only` when a blueprint has many relations but the test only needs a subset. The planner builds only the necessary subgraph, skipping relations not listed in `Only`. `DebugString` / `DryRunString` reflect this lazily built graph.
@@ -145,11 +210,13 @@ func TestUser(t *testing.T) {
 
 - `Set`: override one field by Go struct field name. Sets apply in the order written, so a later `Set` wins, including one that sets a field promoted from an embedded struct an earlier `Set` replaced
 - `Ref`: customize the auto-created node behind a relation and explicitly enable an optional relation
-- `Use`: reuse an existing record instead of inserting a new relation target
+- `Count`, `At`, `Each`, `Through`: shape the records of a `HasMany` / `ManyToMany` relation inside its `Ref` (see [Related records per test](#related-records-per-test))
+- `Use`: reuse an existing record instead of inserting a new relation target, or link a slice of existing records through a `ManyToMany` relation
+- `Link`: share a record added to the same `Scenario` (see [Sharing records across paths with Scenario](#sharing-records-across-paths-with-scenario))
 - `Omit`: skip an optional relation
 - `Only`: restrict insertion to specific relation subtrees
 - `When`: expand a relation only when the current record matches a condition, including optional relations when the predicate returns true
-- `With`: mutate the root struct with full type safety
+- `With`: mutate the root struct with full type safety. Generated [typed builders](#typed-builders) extend this to field setters and relations
 - `Generate` + `WithSeed` / `WithRand`: generate deterministic values for property-style tests
 - `WithInsertLog`: observe insert steps and FK assignments during execution
 
@@ -169,12 +236,13 @@ Options resolve in one pass that every insert path shares (`InsertOne`, `InsertM
 - Field values are applied in fixed stages regardless of where the options sit: blueprint `Defaults`, then `Generate`, then `Set`, then `With`
 - `WithContext`, `AfterInsert`, `AfterInsertE`, `WithInsertLog`, and `Only` apply only to the root record. Under `Ref`, including inside a trait resolved for that relation, they return `ErrInvalidOption`
 - `WithContext` may sit inside a trait, and it overrides the `ctx` passed to `InsertOneE`, `InsertManyE`, or `Plan.InsertE`
+- Options under the `Ref` of a `HasMany` / `ManyToMany` relation resolve once per related record, so `At`, `Each`, and `Through` behave the same inside a trait as written directly
 
 ## Relationship Patterns
 
 - `BelongsTo`: insert required parent rows and write the referenced parent field into the child
-- `HasMany`: insert children automatically from a parent blueprint using `Count`
-- `ManyToMany`: create related rows and join-table rows together
+- `HasMany`: insert children automatically from a parent blueprint using `Count`, or per test with `Ref(name, Count(n), At(...))`
+- `ManyToMany`: create related rows and join-table rows together, or link existing rows with `Use(name, []T{...})`
 - Composite keys: use `PKFields`, `LocalFields`, `RefFields`, and `RemoteFields`
 - Non-primary references: set `RefField` or `RefFields` on `BelongsTo` when the foreign key references a unique parent field other than its primary key (for example, `CountryCode` referencing `Country.Code`)
 - Matching field types: a referenced parent field of type `T` can populate a child FK of type `T` or nullable `*T`. No other implicit conversion or pointer unwrapping is performed. Named and underlying types (for example, `type UserID int64` and `int64`) remain distinct
@@ -255,8 +323,10 @@ The generated file starts with `// Code generated by seedling-gen. DO NOT EDIT.`
 - model structs (`sql` and `atlas` only)
 - a `Blueprints` struct with one `seedling.Blueprint[T]` field per model, returned by `NewBlueprints()`
 - `Name`, `Table`, primary keys, `BelongsTo` relations, and starter `Defaults`
+- an `Optional` `HasMany` relation on each parent for every `BelongsTo` that points at it, named after the plural child blueprint (`users`), or qualified by the relation name when it differs from the parent (`assignee_tasks`). These never expand by default; create children from the parent side with `Ref("users", seedling.Count(3))`
 - `Insert` / `Delete` callbacks where the adapter can derive them
 - `Register(reg) error` and `MustRegister(reg)`, which register every blueprint and report all failures together
+- `NewFixtures(reg)` and one typed builder per model (see [Typed builders](#typed-builders))
 
 Everything project-specific lives in a hand-written file of the same package that edits the generated blueprints before registering them:
 
@@ -295,6 +365,38 @@ seedling-gen sql --pkg testutil --out testutil/blueprints_gen.go --check schema.
 ```
 
 `--check` generates into memory, compares the result with the `--out` file byte for byte, and exits non-zero when the file is missing or differs, without writing anything. It requires `--out` and cannot be combined with `--explain` or `--json`. Imports are grouped the way `goimports` does by default. Formatters that honor the generated-code header, including `golangci-lint fmt`, leave the file alone; exclude it from any formatter that regroups imports (such as `goimports -local`), or `--check` reports a difference.
+
+### Typed builders
+
+The generated file also declares a typed builder per model, so field names, relation names, and the model on the other side of each relation are checked by the compiler instead of at run time:
+
+```go
+f := testutil.NewFixtures(reg)
+
+task := f.Task().
+    Title("review").
+    Assignee(f.User().Name("alice")).
+    Insert(t, db).
+    Root()
+
+// Children through the generated reverse relation: one builder per record.
+order := f.Order().Items(f.Item(), f.Item().Status("cancelled"), f.Item()).Insert(t, db)
+
+// Sharing in a Scenario.
+s := seedling.NewScenario(reg)
+company := f.Company().Add(s)
+alice := f.User().Name("alice").LinkCompany(company).Add(s)
+```
+
+Each `XBuilder` is an immutable value: every method returns a new builder, so a shared base such as `base := f.User()` can be extended in several directions. A builder for a model offers:
+
+- one setter per field, such as `Title(v string)`, for fields whose type the generator can name: predeclared types other than `any`, and pointers, slices, arrays, or maps of them, plus `time`, `database/sql`, and `encoding/json` types except for the hand-written models of the `gorm` adapter, whose package names may be aliases. Relation FK fields and fields shadowed by another field of the same name have no setter, and other types are set through `With`
+- for each `BelongsTo` relation, `Assignee(UserBuilder)` to configure the created parent, `UseAssignee(User)` to bind an existing row, and `LinkAssignee(seedling.Node[User])` to bind a `Scenario` record; passing a builder of another model does not compile
+- for each generated `HasMany` relation, `Items(children ...ItemBuilder)`, which creates exactly one record per builder (`Items()` creates none)
+- `With(func(*Model))`, `Apply(presets ...func(XBuilder) XBuilder)` for typed reusable presets, `Trait(name)` for traits registered on the blueprint, `AfterInsert` (only on the record a terminal method inserts; a builder carrying it cannot be passed to a relation method), and `WithOptions(...seedling.Option)` as an untyped escape hatch for options such as `Seq` or `Omit`
+- `Insert`, `InsertE`, `InsertMany`, `Build`, and `Add(*seedling.Scenario)`
+
+When a field or relation name collides with one of these methods or with another generated method, relations keep the name and the colliding field gets no setter; use `With` for it. Relations added by hand to `Blueprints` have no typed method; use `WithOptions(seedling.Ref(...))`.
 
 ### Callbacks and keys
 

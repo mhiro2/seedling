@@ -76,6 +76,39 @@ seedling.InsertOne[User](t, db,
 
 `Ref` also activates optional relations that are skipped by default. Several `Ref`s to the same relation merge in written order. Root-only options (`WithContext`, `AfterInsert`, `AfterInsertE`, `WithInsertLog`, `Only`) are rejected under `Ref`.
 
+### Count / At / Each / Through — shape has-many and many-to-many records
+
+```go
+seedling.InsertOne[Order](t, db,
+    seedling.Ref("items",
+        seedling.Count(3),                                    // replaces Relation.Count
+        seedling.At(1, seedling.Set("Status", "cancelled")), // only the second item
+    ),
+)
+
+seedling.InsertOne[Member](t, db,
+    seedling.Use("roles", []Role{admin, viewer}), // existing roles: only join rows are inserted
+    seedling.Ref("roles", seedling.At(1, seedling.Through(seedling.Set("ExpiresAt", deadline)))),
+)
+```
+
+`Count` must sit directly under `Ref`. `At` / `Each` / `Through` are valid only inside the `Ref` of a has-many or many-to-many relation (`Through` only for many-to-many). `Ref` options that leave the relation with zero records, or an `At` index outside `Count`, are rejected. Has-many relations do not accept `Use`.
+
+### Scenario / Link — share one record across several paths
+
+```go
+s := seedling.NewScenario(reg)
+company := seedling.Add[Company](s)
+project := seedling.Add[Project](s, seedling.Link("company", company))
+assignee := seedling.Add[User](s, seedling.Link("company", company))
+task := seedling.Add[Task](s, seedling.Link("project", project), seedling.Link("assignee", assignee))
+
+result := s.Insert(t, db)
+got := task.Get(result) // read back by handle, not by blueprint name
+```
+
+Records of any blueprint can be mixed in one scenario. Nothing is shared unless `Link` says so, `Link` may only point at a record added earlier (also under `Ref`), and it is rejected outside `Add`. Prefer this over inserting the shared parent first and passing it to several `Use` calls.
+
 ### Omit — skip an optional relation
 
 ```go
@@ -107,6 +140,22 @@ seedling.InsertMany[User](t, db, 3,
     }),
 )
 ```
+
+## Generated typed builders (preferred with seedling-gen)
+
+```go
+f := testutil.NewFixtures(reg)
+
+task := f.Task().
+    Title("review").
+    Assignee(f.User().Name("alice")). // only a UserBuilder compiles here
+    Insert(t, db).
+    Root()
+
+order := f.Order().Items(f.Item(), f.Item().Status("cancelled")).Insert(t, db) // exactly two items
+```
+
+Builders are immutable values, so `base := f.User()` can be reused. Use `With(func(*Model))` for fields without a generated setter, `Apply(preset)` for typed reusable presets, `UseX` / `LinkX` for existing rows or scenario records, and `WithOptions(...)` only for options with no typed method.
 
 ## Fluent builder
 

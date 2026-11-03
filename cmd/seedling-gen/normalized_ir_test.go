@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"go/parser"
 	"go/token"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -406,5 +407,62 @@ CREATE TABLE cities (
 	}
 	if output := buf.String(); !strings.Contains(output, `LocalField: "CountryCode", RefField: "Code"`) {
 		t.Fatalf("expected non-primary reference mapping, got:\n%s", output)
+	}
+}
+
+func TestWithReverseRelations(t *testing.T) {
+	// Arrange
+	models := []normalizedModel{
+		{BlueprintID: "user", Relations: []normalizedRelation{
+			{Name: "team", LocalField: "TeamID", LocalFields: []string{"TeamID"}, RefBlueprint: "external", Optional: true},
+		}},
+		{BlueprintID: "project"},
+		{BlueprintID: "task", Relations: []normalizedRelation{
+			{Name: "project", LocalField: "ProjectID", LocalFields: []string{"ProjectID"}, RefField: "ID", RefFields: []string{"ID"}, RefBlueprint: "project"},
+			{Name: "assignee", LocalField: "AssigneeID", LocalFields: []string{"AssigneeID"}, RefBlueprint: "user"},
+			{Name: "owner", LocalField: "OwnerID", LocalFields: []string{"OwnerID"}, RefBlueprint: "external"},
+		}},
+	}
+
+	// Act
+	got := withReverseRelations(models)
+
+	// Assert
+	if len(models[1].Relations) != 0 {
+		t.Fatalf("input models were modified: %+v", models[1].Relations)
+	}
+	project := got[1].Relations
+	if len(project) != 1 {
+		t.Fatalf("got project relations %+v, want one has-many", project)
+	}
+	if want := (normalizedRelation{HasMany: true, Name: "tasks", LocalField: "ProjectID", LocalFields: []string{"ProjectID"}, RefField: "ID", RefFields: []string{"ID"}, RefBlueprint: "task", Optional: true}); !reflect.DeepEqual(project[0], want) {
+		t.Fatalf("got %+v, want %+v", project[0], want)
+	}
+	user := got[0].Relations
+	if len(user) != 2 || user[1].Name != "assignee_tasks" || !user[1].HasMany || user[1].RefBlueprint != "task" {
+		t.Fatalf("got user relations %+v, want the existing relation plus assignee_tasks", user)
+	}
+	if len(got[2].Relations) != 3 {
+		t.Fatalf("got task relations %+v, want the belongs-to relations unchanged", got[2].Relations)
+	}
+}
+
+func TestWithReverseRelations_SkipsTakenName(t *testing.T) {
+	// Arrange
+	models := []normalizedModel{
+		{BlueprintID: "company", Relations: []normalizedRelation{
+			{Name: "users", LocalField: "UsersID", LocalFields: []string{"UsersID"}, RefBlueprint: "user"},
+		}},
+		{BlueprintID: "user", Relations: []normalizedRelation{
+			{Name: "company", LocalField: "CompanyID", LocalFields: []string{"CompanyID"}, RefBlueprint: "company"},
+		}},
+	}
+
+	// Act
+	got := withReverseRelations(models)
+
+	// Assert
+	if len(got[0].Relations) != 1 || got[0].Relations[0].HasMany {
+		t.Fatalf("got company relations %+v, want only the existing users relation", got[0].Relations)
 	}
 }

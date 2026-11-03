@@ -63,7 +63,7 @@ type Relation struct {
 	// ManyToMany relations. The zero value (including when Count is left
 	// unset) creates no related records, so set it explicitly (e.g. Count: 1)
 	// to expand the relation. A negative Count is rejected when the blueprint
-	// is registered.
+	// is registered. Tests override it per call with [Count] inside [Ref].
 	Count int
 
 	// When is an optional predicate that dynamically controls whether this

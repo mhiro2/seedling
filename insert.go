@@ -132,13 +132,8 @@ func (s Session[T]) InsertManyE(ctx context.Context, db DBTX, n int, opts ...Opt
 		}
 		root := node.Value.(T)
 		for _, fn := range collected[i].afterInserts {
-			switch cb := fn.(type) {
-			case func(T, DBTX):
-				cb(root, effectiveDB)
-			case func(T, DBTX) error:
-				if err := cb(root, effectiveDB); err != nil {
-					return result, fmt.Errorf("run after-insert callback: %w", err)
-				}
+			if err := fn(root, effectiveDB); err != nil {
+				return result, fmt.Errorf("run after-insert callback: %w", err)
 			}
 		}
 	}

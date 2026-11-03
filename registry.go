@@ -296,7 +296,8 @@ func (r *registry) lookupByType(t reflect.Type) (*blueprintDef, error) {
 }
 
 // cloneOptions copies an option slice together with the option slices nested
-// inside Ref and InlineTrait, so registered traits never alias caller memory.
+// inside Ref, InlineTrait, At, and Through, so registered traits never alias
+// caller memory.
 func cloneOptions(opts []Option) []Option {
 	out := slices.Clone(opts)
 	for i, o := range out {
@@ -305,6 +306,10 @@ func cloneOptions(opts []Option) []Option {
 			out[i] = refOption{name: o.name, opts: cloneOptions(o.opts)}
 		case inlineTraitOption:
 			out[i] = inlineTraitOption{opts: cloneOptions(o.opts)}
+		case atOption:
+			out[i] = atOption{index: o.index, opts: cloneOptions(o.opts)}
+		case throughOption:
+			out[i] = throughOption{opts: cloneOptions(o.opts)}
 		}
 	}
 	return out

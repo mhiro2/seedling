@@ -266,7 +266,7 @@ func TestGenerate_OutputIncludesExpectedSections(t *testing.T) {
 
 	// A DDL-only schema says nothing about how rows are written, so no
 	// blueprint may carry an Insert that silently succeeds.
-	for _, absent := range []string{"Insert: func", `"context"`, "TODO"} {
+	for _, absent := range []string{"Insert: func", "TODO"} {
 		if strings.Contains(output, absent) {
 			t.Errorf("output should not contain %q:\n%s", absent, output)
 		}

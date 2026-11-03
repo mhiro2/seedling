@@ -32,6 +32,9 @@ type embeddedStruct struct {
 }
 
 type normalizedRelation struct {
+	// HasMany marks the reverse side of another model's belongs-to relation;
+	// LocalFields then name the FK fields on RefBlueprint.
+	HasMany      bool
 	Name         string
 	LocalField   string
 	LocalFields  []string
@@ -104,7 +107,7 @@ func NewBlueprints() Blueprints {
 {{- if $model.Relations}}
 			Relations: []seedling.Relation{
 {{- range $model.Relations}}
-				{Name: {{quote .Name}}, Kind: seedling.BelongsTo, {{- if isCompositeRelation .}} LocalFields: []string{ {{- range $i, $field := .LocalFields}}{{if $i}}, {{end}}{{quote $field}}{{end}} }, {{- else}} LocalField: {{quote .LocalField}}, {{- end}}{{- if .RefFields}}{{- if isCompositeReference .}} RefFields: []string{ {{- range $i, $field := .RefFields}}{{if $i}}, {{end}}{{quote $field}}{{end}} }, {{- else}} RefField: {{quote .RefField}}, {{- end}}{{- end}} RefBlueprint: {{quote .RefBlueprint}}{{- if .Optional}}, Optional: true{{- end}}},
+				{Name: {{quote .Name}}, Kind: seedling.{{if .HasMany}}HasMany{{else}}BelongsTo{{end}}, {{- if isCompositeRelation .}} LocalFields: []string{ {{- range $i, $field := .LocalFields}}{{if $i}}, {{end}}{{quote $field}}{{end}} }, {{- else}} LocalField: {{quote .LocalField}}, {{- end}}{{- if .RefFields}}{{- if isCompositeReference .}} RefFields: []string{ {{- range $i, $field := .RefFields}}{{if $i}}, {{end}}{{quote $field}}{{end}} }, {{- else}} RefField: {{quote .RefField}}, {{- end}}{{- end}} RefBlueprint: {{quote .RefBlueprint}}{{- if .Optional}}, Optional: true{{- end}}},
 {{- end}}
 			},
 {{- end}}
@@ -144,9 +147,16 @@ func (b Blueprints) MustRegister(reg *seedling.Registry) {
 `
 
 func generateNormalizedCode(w io.Writer, kind, pkg string, imports []string, models []normalizedModel, emitStructs bool) error {
+	models = withReverseRelations(models)
 	if err := validateNormalizedModels(models, emitStructs); err != nil {
 		return fmt.Errorf("validate %s generated code: %w", kind, err)
 	}
+	if err := validateBuilderNames(models, emitStructs); err != nil {
+		return fmt.Errorf("validate %s generated code: %w", kind, err)
+	}
+	// GORM models are hand-written, so their package qualifiers may not name
+	// the standard packages; the other adapters read generated code.
+	builders, builderImports := buildBuilderModels(models, kind != "gorm")
 
 	var buf strings.Builder
 
@@ -156,7 +166,11 @@ func generateNormalizedCode(w io.Writer, kind, pkg string, imports []string, mod
 	buf.WriteString("\n\n")
 
 	imports = append(imports, `"errors"`)
-	if normalizedModelsNeedContextImport(models) {
+	imports = append(imports, builderImports...)
+	if len(builders) > 0 {
+		imports = append(imports, `"testing"`)
+	}
+	if len(builders) > 0 || normalizedModelsNeedContextImport(models) {
 		imports = append(imports, `"context"`)
 	}
 	if normalizedModelsNeedTimeImport(models, emitStructs) {
@@ -195,6 +209,14 @@ func generateNormalizedCode(w io.Writer, kind, pkg string, imports []string, mod
 	}
 	buf.WriteString(blueprints)
 
+	fixtures, err := renderNormalizedTemplate("builders", builderTemplate, builders, template.FuncMap{
+		"quote": strconv.Quote,
+	})
+	if err != nil {
+		return fmt.Errorf("render %s builders: %w", kind, err)
+	}
+	buf.WriteString(fixtures)
+
 	formatted, err := format.Source([]byte(buf.String()))
 	if err != nil {
 		return fmt.Errorf("format %s generated code: %w", kind, err)
@@ -205,6 +227,58 @@ func generateNormalizedCode(w io.Writer, kind, pkg string, imports []string, mod
 	}
 
 	return nil
+}
+
+// withReverseRelations adds to every model an optional has-many relation for
+// each belongs-to relation that points at it, so tests can create children
+// from the parent side with Ref and Count. The relations never expand by
+// default; the zero Count keeps existing graphs unchanged.
+//
+// A relation is named after the plural child blueprint ("users"), qualified by
+// the belongs-to relation name when that differs from the parent blueprint
+// ("assignee_tasks"). A name already taken on the parent is left out rather
+// than renaming a relation the schema author wrote.
+func withReverseRelations(models []normalizedModel) []normalizedModel {
+	byID := make(map[string]int, len(models))
+	for i, model := range models {
+		byID[model.BlueprintID] = i
+	}
+
+	out := slices.Clone(models)
+	for i := range out {
+		out[i].Relations = slices.Clone(out[i].Relations)
+	}
+	for _, child := range models {
+		for _, rel := range child.Relations {
+			if rel.HasMany {
+				continue
+			}
+			parentIndex, ok := byID[rel.RefBlueprint]
+			if !ok {
+				continue
+			}
+			parent := &out[parentIndex]
+
+			name := pluralize(child.BlueprintID)
+			if rel.Name != parent.BlueprintID {
+				name = rel.Name + "_" + name
+			}
+			if slices.ContainsFunc(parent.Relations, func(existing normalizedRelation) bool { return existing.Name == name }) {
+				continue
+			}
+			parent.Relations = append(parent.Relations, normalizedRelation{
+				HasMany:      true,
+				Name:         name,
+				LocalField:   rel.LocalField,
+				LocalFields:  slices.Clone(rel.LocalFields),
+				RefField:     rel.RefField,
+				RefFields:    slices.Clone(rel.RefFields),
+				RefBlueprint: child.BlueprintID,
+				Optional:     true,
+			})
+		}
+	}
+	return out
 }
 
 // validateNormalizedModels guards against schema-derived identifiers and type
@@ -293,6 +367,8 @@ func validateNormalizedModels(models []normalizedModel, emitStructs bool) error 
 var reservedGeneratedNames = map[string]struct{}{
 	"Blueprints":    {},
 	"NewBlueprints": {},
+	"Fixtures":      {},
+	"NewFixtures":   {},
 }
 
 // reservedBlueprintsFieldNames are the methods declared on the generated

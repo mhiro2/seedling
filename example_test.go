@@ -496,3 +496,23 @@ func ExampleGenerate() {
 	fmt.Println(user.Name)
 	// Output: Amanda Sanders
 }
+
+func ExampleScenario() {
+	setupExampleBlueprints()
+
+	t := &testing.T{}
+	s := seedling.NewScenario(nil)
+	company := seedling.Add[ExCompany](s, seedling.Set("Name", "acme"))
+	project := seedling.Add[ExProject](s, seedling.Link("company", company))
+	member := seedling.Add[ExUser](s, seedling.Link("company", company))
+	task := seedling.Add[ExTask](s, seedling.Link("project", project))
+
+	result := s.Insert(t, nil)
+	fmt.Println(len(result.Nodes("company")))
+	fmt.Println(project.Get(result).CompanyID == member.Get(result).CompanyID)
+	fmt.Println(task.Get(result).ProjectID == project.Get(result).ID)
+	// Output:
+	// 1
+	// true
+	// true
+}

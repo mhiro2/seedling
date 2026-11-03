@@ -36,6 +36,7 @@ type expander struct {
 	graph   *graph.Graph
 	visited map[nodeIdentity]*graph.Node
 	share   *batchShareState
+	roots   []*graph.Node   // roots planned so far by PlanRoots, which Links refer to by index
 	only    map[string]bool // nil = expand all; non-nil = skip root-level relations not in set
 	active  []activeBlueprint
 }

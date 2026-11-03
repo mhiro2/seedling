@@ -944,9 +944,6 @@ CREATE TABLE tags (
 	if !strings.Contains(output, "// Insert is not generated: set it in hand-written code before Register.") {
 		t.Fatalf("expected a note about the missing Insert, got:\n%s", output)
 	}
-	if strings.Contains(output, `"context"`) {
-		t.Fatalf("expected no context import without hooks, got:\n%s", output)
-	}
 }
 
 func TestGenerateSqlc_DefaultsAutofillSupportedFields(t *testing.T) {

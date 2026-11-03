@@ -3,6 +3,7 @@ package seedling
 import (
 	"context"
 	"fmt"
+	"maps"
 	"math/rand/v2"
 	"reflect"
 	"slices"
@@ -21,13 +22,16 @@ type optionSet struct {
 	root  bool          // whether the options target the root record
 
 	sets         []planner.FieldSet                 // Set options in the order they were written
-	uses         map[string]any                     // relation name → existing value
-	refs         map[string]*optionSet              // relation name → nested options
+	uses         map[string]any                     // belongs-to relation name → existing value
+	links        map[string]int                     // belongs-to relation name → index of an earlier Scenario record
+	refs         map[string]*optionSet              // belongs-to relation name → nested options
+	collections  map[string]*collectionTarget       // has-many/many-to-many relation name → element options
+	elem         *elementScope                      // set when the options target one element of a collection
 	omits        map[string]bool                    // relation name → true
 	whens        map[string]func(any) (bool, error) // relation name → dynamic expansion predicate
 	withFns      []withFn                           // typed root mutators
 	ctx          context.Context                    // optional context for insert operations
-	afterInserts []any                              // func(T, DBTX) closures run after insert
+	afterInserts []afterInsertFn                    // callbacks run after the root record is inserted
 	genFns       []generateFn                       // typed rand-driven mutators
 	rand         *rand.Rand                         // optional RNG for Generate options
 	logFn        func(InsertLog)                    // optional insert log callback
@@ -36,16 +40,58 @@ type optionSet struct {
 
 type withFn func(value any) (any, error)
 
+// afterInsertFn runs an AfterInsert or AfterInsertE callback with the inserted
+// root record, whose type was checked when the option resolved.
+type afterInsertFn func(root any, db DBTX) error
+
 type generateFn func(r *rand.Rand, value any) (any, error)
 
 func newOptionSet(bp *blueprintDef, root bool) *optionSet {
 	return &optionSet{
-		bp:    bp,
-		root:  root,
-		uses:  make(map[string]any),
-		refs:  make(map[string]*optionSet),
-		omits: make(map[string]bool),
+		bp:          bp,
+		root:        root,
+		uses:        make(map[string]any),
+		links:       make(map[string]int),
+		refs:        make(map[string]*optionSet),
+		collections: make(map[string]*collectionTarget),
+		omits:       make(map[string]bool),
 	}
+}
+
+// collectionTarget gathers the options given for a has-many or many-to-many
+// relation. Its elements are resolved once the whole option tree is known,
+// because the number of elements and the options of each one can come from
+// any Ref, Use, or trait in the tree.
+type collectionTarget struct {
+	rel    relationDef
+	bp     *blueprintDef // blueprint of each element
+	joinBP *blueprintDef // join blueprint of a many-to-many relation; nil for has-many
+
+	count    int  // element count from Count
+	hasCount bool // whether Count was given
+	use      any  // existing records from Use (many-to-many only)
+	hasUse   bool // whether Use was given
+	refs     []deferredRef
+
+	atIndices []int // At indices seen while resolving elements
+	elements  []*optionSet
+	used      []any // existing record of each element when hasUse is set
+}
+
+// deferredRef holds the options of one Ref to a collection relation together
+// with the traits that were expanding when it was written, so trait cycles are
+// still detected when its options resolve per element.
+type deferredRef struct {
+	opts   []Option
+	active []traitKey
+}
+
+// elementScope identifies the collection element an option set configures.
+type elementScope struct {
+	index       int
+	target      *collectionTarget
+	through     *optionSet // join record options; nil for has-many
+	throughUsed bool       // whether any Through option was given
 }
 
 // noSequenceIndex marks a resolution outside InsertMany, where Seq, SeqRef,
@@ -61,10 +107,12 @@ const noSequenceIndex = -1
 // an option behaves the same whether it is written directly, inside a trait,
 // or returned by SeqRef.
 type optionResolver struct {
-	registry *registry
-	rootType reflect.Type
-	seqIndex int        // 0-based record index of an InsertMany batch, or noSequenceIndex
-	active   []traitKey // traits being expanded, across Ref boundaries
+	registry      *registry
+	rootType      reflect.Type
+	seqIndex      int        // 0-based record index of an InsertMany batch, or noSequenceIndex
+	scenario      *Scenario  // scenario the root record is added to; nil outside Add
+	scenarioIndex int        // index of the root record in scenario
+	active        []traitKey // traits being expanded, across Ref boundaries
 }
 
 // traitKey identifies a trait on a specific blueprint while it is being expanded.
@@ -78,14 +126,20 @@ func (k traitKey) String() string { return k.blueprint + ":" + k.trait }
 // resolveRootOptions resolves the root options of an insert. seqIndex is the
 // 0-based record index of an InsertMany batch, or noSequenceIndex.
 func resolveRootOptions(reg *Registry, rootType reflect.Type, opts []Option, seqIndex int) (*optionSet, error) {
-	r := resolveRegistry(reg).reg
-	def, err := r.lookupByType(rootType)
+	return resolveOptions(&optionResolver{registry: resolveRegistry(reg).reg, rootType: rootType, seqIndex: seqIndex}, opts)
+}
+
+// resolveOptions resolves the root options of r.rootType with r.
+func resolveOptions(r *optionResolver, opts []Option) (*optionSet, error) {
+	def, err := r.registry.lookupByType(r.rootType)
 	if err != nil {
 		return nil, fmt.Errorf("build plan: %w", err)
 	}
 	root := newOptionSet(def, true)
-	res := &optionResolver{registry: r, rootType: rootType, seqIndex: seqIndex}
-	if err := res.resolve(opts, root); err != nil {
+	if err := r.resolve(opts, root); err != nil {
+		return nil, fmt.Errorf("build plan: %w", err)
+	}
+	if err := r.resolveCollections(root); err != nil {
 		return nil, fmt.Errorf("build plan: %w", err)
 	}
 	return root, nil
@@ -140,6 +194,153 @@ func (r *optionResolver) refTarget(o *optionSet, name string) *optionSet {
 	return child
 }
 
+// collectionRelation returns the has-many or many-to-many relation name of o's
+// blueprint, if there is one.
+func collectionRelation(o *optionSet, name string) (relationDef, bool) {
+	if o.bp == nil {
+		return relationDef{}, false
+	}
+	for _, rel := range o.bp.relations {
+		if rel.name == name {
+			return rel, rel.kind == HasMany || rel.kind == ManyToMany
+		}
+	}
+	return relationDef{}, false
+}
+
+// collectionTarget returns the collection options of relation rel under o,
+// creating them on first use so that every Ref and Use to the relation merges
+// in written order.
+func (r *optionResolver) collectionTarget(o *optionSet, rel relationDef) (*collectionTarget, error) {
+	if t, ok := o.collections[rel.name]; ok {
+		return t, nil
+	}
+	bp, err := r.registry.lookupByName(rel.refBlueprint)
+	if err != nil {
+		return nil, fmt.Errorf("resolve relation %q: %w", rel.name, err)
+	}
+	t := &collectionTarget{rel: rel, bp: bp}
+	if rel.kind == ManyToMany && rel.throughBlueprint != "" {
+		if t.joinBP, err = r.registry.lookupByName(rel.throughBlueprint); err != nil {
+			return nil, fmt.Errorf("resolve relation %q: %w", rel.name, err)
+		}
+	}
+	o.collections[rel.name] = t
+	return t, nil
+}
+
+// addRef records the options of a Ref to the collection. Count applies to the
+// relation itself, so it is taken out here; everything else resolves per
+// element.
+func (t *collectionTarget) addRef(r *optionResolver, opts []Option) error {
+	rest := make([]Option, 0, len(opts))
+	for _, opt := range opts {
+		c, ok := opt.(countOption)
+		if !ok {
+			rest = append(rest, opt)
+			continue
+		}
+		if c.n < 0 {
+			return fmt.Errorf("%w: Count for relation %q must be >= 0, got %d", ErrInvalidOption, t.rel.name, c.n)
+		}
+		t.count, t.hasCount = c.n, true
+	}
+	t.refs = append(t.refs, deferredRef{opts: rest, active: slices.Clone(r.active)})
+	return nil
+}
+
+// resolveCollections resolves the elements of every collection relation in
+// the option tree rooted at o.
+func (r *optionResolver) resolveCollections(o *optionSet) error {
+	for _, name := range slices.Sorted(maps.Keys(o.refs)) {
+		if err := r.resolveCollections(o.refs[name]); err != nil {
+			return fmt.Errorf("resolve options for ref %q: %w", name, err)
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(o.collections)) {
+		if err := r.resolveElements(o.collections[name]); err != nil {
+			return fmt.Errorf("resolve options for ref %q: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// resolveElements decides the number of elements of a collection relation and
+// resolves the options of each one. Every Ref option applies to each element in
+// written order, with At and Each narrowing options to particular elements.
+func (r *optionResolver) resolveElements(t *collectionTarget) error {
+	count := t.rel.count
+	if t.hasCount {
+		count = t.count
+	}
+	if t.hasUse {
+		used, err := useElements(t.rel.name, t.use)
+		if err != nil {
+			return err
+		}
+		if t.hasCount && t.count != len(used) {
+			return fmt.Errorf("%w: relation %q has Count(%d) but Use provides %d records", ErrInvalidOption, t.rel.name, t.count, len(used))
+		}
+		count = len(used)
+		t.used = used
+	}
+	if count == 0 && slices.ContainsFunc(t.refs, func(ref deferredRef) bool { return len(ref.opts) > 0 }) {
+		return fmt.Errorf("%w: relation %q creates no records, so its options apply to nothing; pass Count(n) to Ref", ErrInvalidOption, t.rel.name)
+	}
+
+	saved := r.active
+	defer func() { r.active = saved }()
+	t.elements = make([]*optionSet, count)
+	for i := range count {
+		elem := newOptionSet(t.bp, false)
+		elem.elem = &elementScope{index: i, target: t}
+		if t.joinBP != nil {
+			elem.elem.through = newOptionSet(t.joinBP, false)
+		}
+		for _, ref := range t.refs {
+			r.active = ref.active
+			if err := r.resolve(ref.opts, elem); err != nil {
+				return fmt.Errorf("element %d: %w", i, err)
+			}
+		}
+		r.active = saved
+		if err := r.resolveCollections(elem); err != nil {
+			return fmt.Errorf("element %d: %w", i, err)
+		}
+		if elem.elem.through != nil {
+			if err := r.resolveCollections(elem.elem.through); err != nil {
+				return fmt.Errorf("element %d through: %w", i, err)
+			}
+		}
+		t.elements[i] = elem
+	}
+
+	for _, index := range t.atIndices {
+		if index >= count {
+			return fmt.Errorf("%w: At(%d) is out of range for relation %q with %d records", ErrInvalidOption, index, t.rel.name, count)
+		}
+	}
+	return nil
+}
+
+// useElements splits the value given to Use for a many-to-many relation into
+// its existing records.
+func useElements(relation string, value any) ([]any, error) {
+	rv := reflect.ValueOf(value)
+	if !rv.IsValid() || (rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array) {
+		return nil, fmt.Errorf("%w: Use(%q) on a many_to_many relation expects a slice of existing records, got %T", ErrInvalidOption, relation, value)
+	}
+	used := make([]any, rv.Len())
+	for i := range used {
+		elem := rv.Index(i)
+		if !elem.IsValid() || (elem.Kind() == reflect.Pointer || elem.Kind() == reflect.Interface) && elem.IsNil() {
+			return nil, fmt.Errorf("%w: Use(%q) element %d must not be nil", ErrInvalidOption, relation, i)
+		}
+		used[i] = elem.Interface()
+	}
+	return used, nil
+}
+
 // sequenceIndex returns the record index a sequence option resolves for.
 func (r *optionResolver) sequenceIndex() (int, error) {
 	if r.seqIndex == noSequenceIndex {
@@ -152,7 +353,7 @@ func (r *optionResolver) sequenceIndex() (int, error) {
 // root options, a nil callback that would panic when invoked, and one whose
 // record type does not match the root blueprint type, e.g. AfterInsert[Post]
 // passed to InsertOne[User].
-func (o *optionSet) addAfterInsert(r *optionResolver, fn any) error {
+func (o *optionSet) addAfterInsert(r *optionResolver, fn any, call afterInsertFn) error {
 	if !o.root {
 		return rootOnlyError("after-insert")
 	}
@@ -164,7 +365,7 @@ func (o *optionSet) addAfterInsert(r *optionResolver, fn any) error {
 	if ft.NumIn() != 2 || ft.In(0) != r.rootType || ft.In(1) != reflect.TypeFor[DBTX]() {
 		return afterInsertTypeMismatch(r.rootType, fn)
 	}
-	o.afterInserts = append(o.afterInserts, fn)
+	o.afterInserts = append(o.afterInserts, call)
 	return nil
 }
 
@@ -196,6 +397,23 @@ func toOptionSet(os *optionSet) *planner.OptionSet {
 	for name, refOpts := range os.refs {
 		refs[name] = toOptionSet(refOpts)
 	}
+	var collections map[string][]planner.ElementOptions
+	if len(os.collections) > 0 {
+		collections = make(map[string][]planner.ElementOptions, len(os.collections))
+		for name, t := range os.collections {
+			elements := make([]planner.ElementOptions, len(t.elements))
+			for i, elem := range t.elements {
+				elements[i].Opts = toOptionSet(elem)
+				if elem.elem.throughUsed {
+					elements[i].Through = toOptionSet(elem.elem.through)
+				}
+				if t.hasUse {
+					elements[i].Use = t.used[i]
+				}
+			}
+			collections[name] = elements
+		}
+	}
 	withFns := make([]planner.WithFn, len(os.withFns))
 	for i, fn := range os.withFns {
 		withFns[i] = planner.WithFn(fn)
@@ -206,14 +424,16 @@ func toOptionSet(os *optionSet) *planner.OptionSet {
 	}
 
 	return &planner.OptionSet{
-		Sets:    os.sets,
-		Uses:    os.uses,
-		Refs:    refs,
-		Omits:   os.omits,
-		Whens:   os.whens,
-		WithFns: withFns,
-		GenFns:  genFns,
-		Rand:    os.rand,
-		Only:    os.only,
+		Sets:        os.sets,
+		Uses:        os.uses,
+		Links:       os.links,
+		Refs:        refs,
+		Collections: collections,
+		Omits:       os.omits,
+		Whens:       os.whens,
+		WithFns:     withFns,
+		GenFns:      genFns,
+		Rand:        os.rand,
+		Only:        os.only,
 	}
 }
