@@ -379,3 +379,32 @@ func TestGenerate_DrawsFromTheScopeWithoutWithRand(t *testing.T) {
 		t.Fatalf("WithSeed records drew %d and %d, want the same seeded value", seeded.Score, reseeded.Score)
 	}
 }
+
+func TestTestScope_RecordsCreatedDuringCleanupDoNotRepeatValues(t *testing.T) {
+	// Arrange
+	var bodyEmail, cleanupEmail string
+	t.Run("inner", func(t *testing.T) {
+		reg := newScopeRegistry(t)
+		t.Cleanup(func() {
+			// The test context is canceled by now, so cleanup code inserts
+			// through the error-returning API, joining the test's scope.
+			result, err := seedling.NewSession[scopeAccount](reg).InsertOneE(context.Background(), nil, seedling.InScope(seedling.TestScope(t)))
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			cleanupEmail = result.Root().Email
+		})
+
+		// Act
+		bodyEmail = seedling.NewSession[scopeAccount](reg).InsertOne(t, nil).Root().Email
+	})
+
+	// Assert
+	if bodyEmail == "" || cleanupEmail == "" {
+		t.Fatalf("emails = %q / %q, want both set", bodyEmail, cleanupEmail)
+	}
+	if bodyEmail == cleanupEmail {
+		t.Fatalf("cleanup reused the test's unique email %q", bodyEmail)
+	}
+}

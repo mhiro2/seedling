@@ -31,7 +31,9 @@ var defaultScopeTime = time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)
 // their [Session] and [Builder] forms) use [TestScope] for the test they are
 // given. The error-returning APIs use a scope set with [InScope],
 // [Session.WithScope], or [Scenario.WithScope], and otherwise one scope shared
-// by the whole process.
+// by the whole process. Values are reproducible when records are planned in the
+// same order; records planned concurrently in one scope stay unique, but which
+// of them draws which value depends on scheduling.
 //
 // Uniqueness holds within one scope only. A scope does not query the database,
 // so rows written outside it, such as by another process or an earlier run that
@@ -84,24 +86,37 @@ var testScopes sync.Map // testing.TB → *Scope
 
 // TestScope returns the scope the testing APIs use for tb, creating it on first
 // use and discarding it when the test finishes. Its namespace and seed are
-// derived from tb.Name(), so a test draws the same values on every run and two
-// tests draw different unique values. Pass it with [InScope] to make an
-// error-returning API share the test's scope:
+// derived from tb.Name(), so a test that draws in the same order draws the same
+// values on every run, and two tests draw different unique values. Pass it with
+// [InScope] to make an error-returning API share the test's scope:
 //
 //	seedling.InsertOneE[User](ctx, db, seedling.InScope(seedling.TestScope(t)))
+//
+// The scope is discarded by a cleanup registered on first use, so a cleanup
+// function registered earlier runs after it. A record such a function creates
+// is planned in a second scope with its own namespace and seed, which is kept
+// until the process exits, so it never repeats the test's values.
 func TestScope(tb testing.TB) *Scope {
 	tb.Helper()
 	if scope, ok := testScopes.Load(tb); ok {
 		return scope.(*Scope)
 	}
+	name := tb.Name()
+	// The test context is canceled just before cleanup functions run. A
+	// testing.T that was not created by the test runner has none.
+	ctx := tb.Context()
+	cleaningUp := ctx != nil && ctx.Err() != nil
+	if cleaningUp {
+		name += "\x00cleanup"
+	}
 	h := fnv.New64a()
-	_, _ = h.Write([]byte(tb.Name()))
+	_, _ = h.Write([]byte(name))
 	sum := h.Sum64()
 	scope, loaded := testScopes.LoadOrStore(tb, NewScope(ScopeConfig{
 		Namespace: strconv.FormatUint(sum%(36*36*36*36*36*36), 36),
 		Seed:      sum,
 	}))
-	if !loaded {
+	if !loaded && !cleaningUp {
 		tb.Cleanup(func() { testScopes.Delete(tb) })
 	}
 	return scope.(*Scope)
