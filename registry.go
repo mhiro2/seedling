@@ -3,11 +3,14 @@ package seedling
 import (
 	"context"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/mhiro2/seedling/internal/errx"
+	"github.com/mhiro2/seedling/internal/field"
 )
 
 type relationDef struct {
@@ -21,6 +24,7 @@ type relationDef struct {
 	required         bool
 	count            int
 	when             func(any) bool
+	convert          map[string]*field.Converter
 }
 
 // blueprintDef is a type-erased wrapper around Blueprint[T].
@@ -151,6 +155,9 @@ func registerTyped[T any](r *registry, bp Blueprint[T]) error {
 		if rel.Count < 0 {
 			return fmt.Errorf("%w: blueprint %q relation %q has negative Count %d", errx.ErrInvalidOption, bp.Name, rel.Name, rel.Count)
 		}
+		if err := validateRelationConverters(rel); err != nil {
+			return fmt.Errorf("%w: blueprint %q relation %q: %w", errx.ErrInvalidOption, bp.Name, rel.Name, err)
+		}
 	}
 
 	r.mu.Lock()
@@ -250,7 +257,38 @@ func normalizeRelations(rels []Relation) []relationDef {
 			required:         relationRequired(rel),
 			count:            rel.Count,
 			when:             rel.When,
+			convert:          relationConverters(rel.Convert),
 		}
+	}
+	return out
+}
+
+// validateRelationConverters rejects a converter that is unset or keyed by a
+// field the relation never assigns, so a misspelled FK field name cannot leave
+// the converter silently unused.
+func validateRelationConverters(rel Relation) error {
+	fields := normalizeFields(rel.LocalField, rel.LocalFields)
+	if rel.Kind == ManyToMany {
+		fields = append(fields, normalizeFields(rel.RemoteField, rel.RemoteFields)...)
+	}
+	for _, name := range slices.Sorted(maps.Keys(rel.Convert)) {
+		if rel.Convert[name].conv == nil {
+			return fmt.Errorf("converter for FK field %q is not set; build it with ConvertFK", name)
+		}
+		if !slices.Contains(fields, name) {
+			return fmt.Errorf("converter key %q names no FK field of the relation (FK fields: %s)", name, strings.Join(fields, ", "))
+		}
+	}
+	return nil
+}
+
+func relationConverters(convert map[string]FKConverter) map[string]*field.Converter {
+	if len(convert) == 0 {
+		return nil
+	}
+	out := make(map[string]*field.Converter, len(convert))
+	for name, c := range convert {
+		out[name] = c.conv
 	}
 	return out
 }

@@ -42,6 +42,7 @@ func buildBindings(blueprint string, rel RelationDef, parentFields, childFields 
 		bindings[i] = graph.FieldBinding{
 			ParentField: parentFields[i],
 			ChildField:  childFields[i],
+			Convert:     rel.Convert[childFields[i]],
 		}
 	}
 	return bindings, nil

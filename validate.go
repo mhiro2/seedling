@@ -70,11 +70,18 @@ func validatePlan(g *graph.Graph) error {
 						binding.ChildField, childType, child.ID)
 				}
 
-				if !field.CanCopyType(refField.Type, fkField.Type) {
-					return fmt.Errorf("validate plan: type mismatch: parent %s.%s (%s) is not assignable to child %s.%s (%s)",
+				if field.CanBindType(refField.Type, fkField.Type, binding.Convert) {
+					continue
+				}
+				if binding.Convert != nil {
+					return fmt.Errorf("validate plan: type mismatch: converter %s -> %s cannot bind parent %s.%s (%s) to child %s.%s (%s)",
+						binding.Convert.From, binding.Convert.To,
 						parent.BlueprintName, binding.ParentField, refField.Type,
 						child.BlueprintName, binding.ChildField, fkField.Type)
 				}
+				return fmt.Errorf("validate plan: type mismatch: parent %s.%s (%s) is not assignable to child %s.%s (%s); convert it with Relation.Convert",
+					parent.BlueprintName, binding.ParentField, refField.Type,
+					child.BlueprintName, binding.ChildField, fkField.Type)
 			}
 		}
 	}

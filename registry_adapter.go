@@ -63,6 +63,7 @@ func toBlueprintDef(def *blueprintDef) *planner.BlueprintDef {
 			Required:         r.required,
 			Count:            r.count,
 			When:             r.when,
+			Convert:          r.convert,
 		}
 	}
 	return &planner.BlueprintDef{

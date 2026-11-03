@@ -1,5 +1,7 @@
 package graph
 
+import "github.com/mhiro2/seedling/internal/field"
+
 // Node represents a single entity in the dependency graph.
 type Node struct {
 	ID            string // unique identifier within the graph
@@ -34,6 +36,9 @@ type Edge struct {
 type FieldBinding struct {
 	ParentField string
 	ChildField  string
+	// Convert, when non-nil, turns the parent value into the child field's
+	// type before assignment.
+	Convert *field.Converter
 }
 
 // Dependencies returns the edges to nodes that this node depends on.
