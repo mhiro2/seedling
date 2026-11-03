@@ -7,11 +7,6 @@ import (
 	"strings"
 )
 
-// uniqueSuffixReserve is the room a Scope.Unique suffix ("-" + sequence +
-// "-" + namespace) takes in a length-limited column: up to five sequence
-// digits and the six characters of a TestScope namespace.
-const uniqueSuffixReserve = 13
-
 // scopeVarCandidates are the names tried, in order, for the Scope parameter of
 // generated Defaults; the first one no import binds is used.
 var scopeVarCandidates = []string{"scope", "seedlingScope", "genScope"}
@@ -113,8 +108,9 @@ func normalizedModelsNeedTimeImport(models []normalizedModel, emitStructs bool) 
 // relation fields, and types the generator cannot construct. Defaults respect
 // the column's constraints where the schema states them: the first enumerated
 // value, a valid UUID or JSON document, a string within its maximum length, and
-// a value drawn from the scope for a unique column, so that every record of a
-// test gets its own.
+// a value drawn from the scope for a unique string, number, enum, or time
+// column, so that every record of a test gets its own. Unique booleans and
+// JSON documents keep their fixed default.
 func defaultFieldExpr(model normalizedModel, field normalizedField, scopeVar string) (string, []string) {
 	if field.IsPK || field.IsRelationFK {
 		return "", nil
@@ -127,7 +123,7 @@ func defaultFieldExpr(model normalizedModel, field normalizedField, scopeVar str
 	}
 
 	if len(field.EnumValues) > 0 {
-		return enumDefaultExpr(model, fieldType, field.EnumValues[0]), nil
+		return enumDefaultExpr(model, field, fieldType, label, scopeVar), nil
 	}
 	switch field.SQLType {
 	case "UUID":
@@ -165,25 +161,39 @@ func defaultFieldExpr(model normalizedModel, field normalizedField, scopeVar str
 		}
 		return fieldType + "(" + seq + ")", nil
 	case "time.Time":
+		if field.Unique {
+			// One second apart per record keeps unique timestamps distinct
+			// at any column precision down to seconds.
+			return scopeVar + ".Now().Add(time.Duration(" + scopeVar + ".Seq(" + strconv.Quote(label) + ")) * time.Second)", []string{`"time"`}
+		}
 		return scopeVar + ".Now()", nil
 	default:
 		return "", nil
 	}
 }
 
-// enumDefaultExpr returns value as a default of fieldType: a string literal
-// for a string field, or a conversion to a named string type declared in the
-// model's package, such as the enum types sqlc generates.
-func enumDefaultExpr(model normalizedModel, fieldType, value string) string {
-	literal := strconv.Quote(value)
+// enumDefaultExpr returns an allowed value as a default of fieldType: a string
+// literal for a string field, or a conversion to a named string type declared
+// in the model's package, such as the enum types sqlc generates. A unique
+// column cycles through the allowed values so consecutive records differ. sqlc
+// wraps a nullable enum in a Null<Type> struct, which is left unset.
+func enumDefaultExpr(model normalizedModel, field normalizedField, fieldType, label, scopeVar string) string {
+	value := strconv.Quote(field.EnumValues[0])
+	if field.Unique && len(field.EnumValues) > 1 {
+		quoted := make([]string, len(field.EnumValues))
+		for i, v := range field.EnumValues {
+			quoted[i] = strconv.Quote(v)
+		}
+		value = "[]string{" + strings.Join(quoted, ", ") + "}[(" + scopeVar + ".Seq(" + strconv.Quote(label) + ")-1)%" + strconv.Itoa(len(quoted)) + "]"
+	}
 	if fieldType == "string" {
-		return literal
+		return value
 	}
 	qualifier, _, ok := strings.Cut(strings.TrimPrefix(model.TypeExpr, "*"), ".")
-	if !ok || !token.IsIdentifier(fieldType) || predeclaredTypes[fieldType] {
+	if !ok || !token.IsIdentifier(fieldType) || predeclaredTypes[fieldType] || strings.HasPrefix(fieldType, "Null") {
 		return ""
 	}
-	return qualifier + "." + fieldType + "(" + literal + ")"
+	return qualifier + "." + fieldType + "(" + value + ")"
 }
 
 // jsonDefaultExpr returns an empty JSON object as a default of fieldType.
@@ -203,16 +213,10 @@ func jsonDefaultExpr(model normalizedModel, fieldType string) (string, []string)
 }
 
 // uniqueStringExpr draws a unique string for a column of at most maxLength
-// characters (zero for no limit). The label is shortened to leave room for
-// the scope's suffix; a column too short for any label gets the bare sequence
-// number.
+// bytes (zero for no limit).
 func uniqueStringExpr(label string, maxLength int, scopeVar string) (string, []string) {
-	switch {
-	case maxLength == 0 || maxLength >= len(label)+uniqueSuffixReserve:
-	case maxLength > uniqueSuffixReserve:
-		label = label[:maxLength-uniqueSuffixReserve]
-	default:
-		return "strconv.Itoa(" + scopeVar + ".Seq(" + strconv.Quote(label) + "))", []string{`"strconv"`}
+	if maxLength > 0 {
+		return scopeVar + ".UniqueN(" + strconv.Quote(label) + ", " + strconv.Itoa(maxLength) + ")", nil
 	}
 	return scopeVar + ".Unique(" + strconv.Quote(label) + ")", nil
 }

@@ -73,9 +73,74 @@ CREATE UNIQUE INDEX users_tenant_note_idx ON users (tenant_id, note);
 	}
 }
 
+func TestParseStringLiterals_DecodesEscapes(t *testing.T) {
+	tests := []struct {
+		list      string
+		backslash bool
+		want      []string
+	}{
+		{list: `'it''s', 'b'`, want: []string{"it's", "b"}},
+		{list: `'a\n', 'b'`, want: []string{`a\n`, "b"}},
+		{list: `'a\n', 'it\'s'`, backslash: true, want: []string{"a\n", "it's"}},
+		{list: `E'a\tb', 'c\d'`, want: []string{"a\tb", `c\d`}},
+	}
+	for _, tt := range tests {
+		got, ok := parseStringLiterals(tt.list, tt.backslash)
+		if !ok || !slices.Equal(got, tt.want) {
+			t.Fatalf("parseStringLiterals(%q, %v) = %q, %v; want %q", tt.list, tt.backslash, got, ok, tt.want)
+		}
+	}
+}
+
+func TestParseSchema_IntersectsEnumConstraintsAndReadsOrderedIndexes(t *testing.T) {
+	// Arrange
+	schema := `
+CREATE TYPE level AS ENUM ('low', 'mid', 'high');
+CREATE TABLE tasks (
+    id BIGINT PRIMARY KEY,
+    status TEXT NOT NULL CHECK (status IN ('a', 'b')),
+    lvl level NOT NULL CHECK (lvl IN ('high', 'mid')),
+    email TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    CHECK (status IN ('c', 'b'))
+);
+CREATE UNIQUE INDEX tasks_email_idx ON tasks (email ASC);
+CREATE UNIQUE INDEX tasks_slug_idx ON tasks USING btree (slug COLLATE "C" text_pattern_ops);
+`
+
+	// Act
+	tables, err := ParseSchema(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	if got := columnByName(t, tables[0], "status").EnumValues; !slices.Equal(got, []string{"b"}) {
+		t.Fatalf("status enum = %q, want [b]", got)
+	}
+	if got := columnByName(t, tables[0], "lvl").EnumValues; !slices.Equal(got, []string{"mid", "high"}) {
+		t.Fatalf("lvl enum = %q, want [mid high]", got)
+	}
+	for _, name := range []string{"email", "slug"} {
+		if !columnByName(t, tables[0], name).Unique {
+			t.Fatalf("%s is not unique", name)
+		}
+	}
+}
+
+func TestParseSchemaWithDialect_MySQLEnumEscapes(t *testing.T) {
+	tables, err := ParseSchemaWithDialect("CREATE TABLE t (id BIGINT PRIMARY KEY, kind ENUM('it\\'s', 'b') NOT NULL);", "mysql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := columnByName(t, tables[0], "kind").EnumValues; !slices.Equal(got, []string{"it's", "b"}) {
+		t.Fatalf("kind enum = %q, want [it's b]", got)
+	}
+}
+
 func TestParseStringLiterals_RejectsExpressions(t *testing.T) {
 	for _, list := range []string{"", "1, 2", "'a', b", "'a' 'b'", "'unterminated"} {
-		if values, ok := parseStringLiterals(list); ok {
+		if values, ok := parseStringLiterals(list, false); ok {
 			t.Fatalf("parseStringLiterals(%q) = %q, want rejection", list, values)
 		}
 	}

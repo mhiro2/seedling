@@ -193,7 +193,7 @@ func extractEnumTypes(sql, masked string) map[string][]string {
 	for _, loc := range locs {
 		var values []string
 		if end := findMatchingParen(masked, loc[1]-1); end != -1 {
-			values, _ = parseStringLiterals(sql[loc[1]:end])
+			values, _ = parseStringLiterals(sql[loc[1]:end], false)
 		}
 		enumTypes[normalizeIdent(sql[loc[2]:loc[3]])] = values
 	}
@@ -218,7 +218,7 @@ func parseColumns(block createTableBlock, enumTypes map[string][]string, d sqlDi
 			continue
 		}
 
-		col, ok := parseColumn(item, enumTypes)
+		col, ok := parseColumn(item, enumTypes, d.backslashEscapes)
 		if !ok {
 			continue
 		}
@@ -240,7 +240,7 @@ func parseColumns(block createTableBlock, enumTypes map[string][]string, d sqlDi
 		}
 	}
 	for _, item := range items {
-		applyCheckIn(columns, columnIndex, item)
+		applyCheckIn(columns, columnIndex, item, d.backslashEscapes)
 	}
 
 	// Nullability is settled only once every constraint is known, because a
@@ -287,7 +287,7 @@ func columnsNotNull(columns []Column, columnIndex map[string]int, names []string
 	return true
 }
 
-func parseColumn(item sqlText, enumTypes map[string][]string) (Column, bool) {
+func parseColumn(item sqlText, enumTypes map[string][]string, backslash bool) (Column, bool) {
 	nameToken, rest, ok := splitLeadingIdent(item.Text)
 	if !ok {
 		return Column{}, false
@@ -319,7 +319,7 @@ func parseColumn(item sqlText, enumTypes map[string][]string) (Column, bool) {
 		col.EnumValues = values
 	}
 	if afterName := strings.Index(item.Text, nameToken) + len(nameToken); afterName >= len(nameToken) {
-		applyColumnTypeArgs(&col, item.slice(afterName, len(item.Text)))
+		applyColumnTypeArgs(&col, item.slice(afterName, len(item.Text)), backslash)
 	}
 	col.Unique = !col.IsPK && columnUniqueRE.MatchString(item.Masked)
 
@@ -341,7 +341,7 @@ func applyTableConstraint(columns []Column, columnIndex map[string]int, constrai
 	leading := len(constraint.Masked) - len(strings.TrimLeft(constraint.Masked, " \t\r\n"))
 	trimmed := constraint.slice(leading, len(constraint.Masked))
 	if loc := uniqueColumnsRE.FindStringSubmatchIndex(trimmed.Masked); loc != nil {
-		markUniqueColumns(columns, columnIndex, splitIdentifierList(trimmed.Text[loc[2]:loc[3]]))
+		markUniqueColumns(columns, columnIndex, indexColumnNames(trimmed.Text[loc[2]:loc[3]]))
 	}
 
 	if loc := tablePKRE.FindStringSubmatchIndex(constraint.Masked); loc != nil {

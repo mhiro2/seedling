@@ -11,7 +11,7 @@ Use this skill when a Go project wants seedling blueprint scaffolding.
 
 - Go model structs for tables (`sql` and `atlas` only)
 - a `Blueprints` struct with one `seedling.Blueprint[T]` field per model, built by `NewBlueprints()`
-- constraint-aware `Defaults` for common scalar fields (unique, enum / `CHECK IN`, length, UUID, JSON)
+- constraint-aware `Defaults` for common scalar fields (unique, enum / `CHECK IN`, length, UUID, JSON; fullest for `sql` / `sqlc`, partial for `atlas` / `gorm`, none for `ent`)
 - relation definitions such as `seedling.BelongsTo`
 - `Insert` / `Delete` callbacks only where the adapter can derive them (GORM, ent, sqlc with matching queries)
 - `Register(reg) error` / `MustRegister(reg)` methods that register every blueprint
@@ -125,7 +125,7 @@ seedling-gen atlas \
 - The `ent` import path must resolve to compilable entc output. `seedling-gen` reads exact field, mixin, setter, lifecycle, and ID signatures so custom acronyms are preserved and missing or incompatible generated signatures are rejected.
 - Every `BelongsTo` also produces an `Optional` `HasMany` relation on the parent (`users`, or `assignee_tasks` when the relation name differs from the parent). It never expands by default; tests opt in with `Ref("users", seedling.Count(n))`.
 - The generated file also declares `NewFixtures(reg)` and an immutable `XBuilder` per model: typed field setters (predeclared types except `any`, plus `time`, `database/sql`, `encoding/json` types outside the `gorm` adapter; others through `With`), `Rel(TargetBuilder)` / `UseRel(Target)` / `LinkRel(seedling.Node[Target])` per belongs-to, `Children(builders...)` per generated has-many, plus `With`, `Apply`, `Trait`, `AfterInsert`, `WithOptions`, `Insert`, `InsertE`, `InsertMany`, `Build`, and `Add`. A model whose `XBuilder` name collides with another declaration is rejected.
-- Generated `Defaults` take a `*seedling.Scope` and fill common scalar fields from the schema's single-column constraints: unique columns use `scope.Unique` / `scope.Seq` (distinct across every insert of a test), enum and `CHECK (col IN (...))` columns use the first allowed value, `VARCHAR(n)` values fit, UUID strings use `scope.UUID()`, JSON columns get `{}`, and `time.Time` uses `scope.Now()`. They skip primary keys (including GORM's untagged `ID` convention), relation foreign keys, and unsupported custom types. Fields promoted from an embedded `gorm.Model` are set through the embedded struct literal.
+- Generated `Defaults` take a `*seedling.Scope` and fill common scalar fields from the schema's single-column constraints: unique columns use `scope.Unique` / `scope.UniqueN` / `scope.Seq` (distinct across every insert of a test), enum and `CHECK (col IN (...))` columns use the first allowed value, `VARCHAR(n)` values fit, UUID strings use `scope.UUID()`, JSON columns get `{}`, and `time.Time` uses `scope.Now()`. They skip primary keys (including GORM's untagged `ID` convention), relation foreign keys, and unsupported custom types. Fields promoted from an embedded `gorm.Model` are set through the embedded struct literal.
 - Customize through the `Blueprints` fields in hand-written code: assign `Insert` / `Delete`, wrap the generated `Defaults` (`base := b.User.Defaults; b.User.Defaults = func(s *seedling.Scope) User { u := base(s); u.Email = s.Unique("user") + "@example.com"; return u }`), set `Traits`, or `append` to `Relations`. Adding columns or relations and regenerating then needs no repair to that code.
 
 ## Troubleshooting

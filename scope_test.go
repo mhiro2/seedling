@@ -430,3 +430,24 @@ func TestScope_UUID(t *testing.T) {
 		t.Fatalf("same seed returned %q, want %q", replayed, first)
 	}
 }
+
+func TestScope_UniqueNFitsMaxLength(t *testing.T) {
+	// Arrange
+	scope := seedling.NewScope(seedling.ScopeConfig{Namespace: "ns"})
+	plain := seedling.NewScope(seedling.ScopeConfig{})
+
+	// Act
+	got := []string{
+		scope.UniqueN("email", 0),
+		scope.UniqueN("email", 8),
+		scope.UniqueN("email", 6),
+		scope.UniqueN("email", 4),
+		scope.UniqueN("email", 2),
+		plain.UniqueN("code", 1),
+	}
+
+	// Assert
+	if want := []string{"email-1-ns", "ema-2-ns", "e-3-ns", "4-ns", "5", "1"}; !slices.Equal(got, want) {
+		t.Fatalf("UniqueN = %q, want %q", got, want)
+	}
+}

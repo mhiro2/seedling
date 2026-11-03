@@ -2,6 +2,7 @@ package main
 
 import (
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -28,34 +29,28 @@ var lengthTypes = map[string]bool{
 }
 
 // parseStringLiterals reads a comma-separated list of single-quoted SQL string
-// literals, such as 'draft', 'it”s'. It reports false for anything else, so
-// a list of expressions is never mistaken for enumerated values.
-func parseStringLiterals(list string) ([]string, bool) {
+// literals, such as 'draft', 'it”s'. A doubled quote always escapes a quote;
+// with backslash (MySQL), and in a PostgreSQL E'...' literal, a backslash
+// escapes the next character as well. It reports false for anything else, so a
+// list of expressions is never mistaken for enumerated values.
+func parseStringLiterals(list string, backslash bool) ([]string, bool) {
 	var values []string
 	rest := strings.TrimSpace(list)
 	for rest != "" {
+		escapes := backslash
+		if len(rest) > 1 && (rest[0] == 'E' || rest[0] == 'e') && rest[1] == '\'' {
+			escapes = true
+			rest = rest[1:]
+		}
 		if rest[0] != '\'' {
 			return nil, false
 		}
-		var value strings.Builder
-		i := 1
-		for ; i < len(rest); i++ {
-			if rest[i] != '\'' {
-				value.WriteByte(rest[i])
-				continue
-			}
-			if i+1 < len(rest) && rest[i+1] == '\'' {
-				value.WriteByte('\'')
-				i++
-				continue
-			}
-			break
-		}
-		if i >= len(rest) {
+		value, n, ok := readStringLiteral(rest, escapes)
+		if !ok {
 			return nil, false
 		}
-		values = append(values, value.String())
-		rest = strings.TrimSpace(rest[i+1:])
+		values = append(values, value)
+		rest = strings.TrimSpace(rest[n:])
 		if rest == "" {
 			break
 		}
@@ -67,9 +62,64 @@ func parseStringLiterals(list string) ([]string, bool) {
 	return values, len(values) > 0
 }
 
+// readStringLiteral decodes the literal opening at s[0] and returns its value
+// and length.
+func readStringLiteral(s string, escapes bool) (string, int, bool) {
+	var value strings.Builder
+	for i := 1; i < len(s); i++ {
+		switch c := s[i]; {
+		case c == '\\' && escapes && i+1 < len(s):
+			i++
+			value.WriteByte(unescapeByte(s[i]))
+		case c != '\'':
+			value.WriteByte(c)
+		case i+1 < len(s) && s[i+1] == '\'':
+			value.WriteByte('\'')
+			i++
+		default:
+			return value.String(), i + 1, true
+		}
+	}
+	return "", 0, false
+}
+
+// unescapeByte decodes the character after a backslash in a MySQL or
+// PostgreSQL escape-string literal.
+func unescapeByte(c byte) byte {
+	switch c {
+	case 'n':
+		return '\n'
+	case 't':
+		return '\t'
+	case 'r':
+		return '\r'
+	case 'b':
+		return '\b'
+	case '0':
+		return 0
+	case 'Z':
+		return 0x1a
+	default:
+		return c
+	}
+}
+
+// restrictEnum narrows the values a column accepts to those in values as
+// well, so a column under an enum type and several CHECK constraints keeps
+// only the values every one of them allows.
+func restrictEnum(col *Column, values []string) {
+	if col.EnumValues == nil {
+		col.EnumValues = values
+		return
+	}
+	col.EnumValues = slices.DeleteFunc(slices.Clone(col.EnumValues), func(v string) bool {
+		return !slices.Contains(values, v)
+	})
+}
+
 // applyColumnTypeArgs reads the maximum length or the enumerated values from
 // the arguments of a column type, given the text after the column name.
-func applyColumnTypeArgs(col *Column, afterName sqlText) {
+func applyColumnTypeArgs(col *Column, afterName sqlText, backslash bool) {
 	loc := typeArgsRE.FindStringSubmatchIndex(afterName.Masked)
 	if loc == nil {
 		return
@@ -82,22 +132,22 @@ func applyColumnTypeArgs(col *Column, afterName sqlText) {
 			col.MaxLength = n
 		}
 	case typeName == "ENUM":
-		if values, ok := parseStringLiterals(args); ok {
-			col.EnumValues = values
+		if values, ok := parseStringLiterals(args, backslash); ok {
+			restrictEnum(col, values)
 		}
 	}
 }
 
 // applyCheckIn records the values of CHECK (column IN (...)) constraints in
 // text on the columns they restrict.
-func applyCheckIn(columns []Column, columnIndex map[string]int, text sqlText) {
+func applyCheckIn(columns []Column, columnIndex map[string]int, text sqlText, backslash bool) {
 	for _, loc := range checkInRE.FindAllStringSubmatchIndex(text.Masked, -1) {
 		idx, ok := columnIndex[normalizeIdent(text.Text[loc[2]:loc[3]])]
 		if !ok {
 			continue
 		}
-		if values, ok := parseStringLiterals(text.Text[loc[4]:loc[5]]); ok {
-			columns[idx].EnumValues = values
+		if values, ok := parseStringLiterals(text.Text[loc[4]:loc[5]], backslash); ok {
+			restrictEnum(&columns[idx], values)
 		}
 	}
 }
@@ -112,6 +162,18 @@ func markUniqueColumns(columns []Column, columnIndex map[string]int, names []str
 	if idx, ok := columnIndex[names[0]]; ok {
 		columns[idx].Unique = true
 	}
+}
+
+// indexColumnNames returns the column names of an index column list, dropping
+// what may follow each name, such as ASC, DESC, COLLATE, or an operator class.
+func indexColumnNames(list string) []string {
+	var names []string
+	for item := range strings.SplitSeq(list, ",") {
+		if fields := strings.Fields(item); len(fields) > 0 {
+			names = append(names, normalizeIdent(fields[0]))
+		}
+	}
+	return names
 }
 
 // applyUniqueIndexes marks the columns of single-column CREATE UNIQUE INDEX
@@ -131,6 +193,6 @@ func applyUniqueIndexes(tables []Table, sql, masked string) {
 		for i, col := range table.Columns {
 			columnIndex[col.Name] = i
 		}
-		markUniqueColumns(table.Columns, columnIndex, splitIdentifierList(sql[loc[4]:loc[5]]))
+		markUniqueColumns(table.Columns, columnIndex, indexColumnNames(sql[loc[4]:loc[5]]))
 	}
 }

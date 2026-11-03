@@ -195,7 +195,7 @@ Defaults: func(s *seedling.Scope) User {
 },
 ```
 
-- `Seq(name)` returns the next value of a named sequence, starting at 1, and `Unique(prefix)` formats it as `prefix-N`, followed by the scope's namespace when it has one
+- `Seq(name)` returns the next value of a named sequence, starting at 1, and `Unique(prefix)` formats it as `prefix-N`, followed by the scope's namespace when it has one. `UniqueN(prefix, n)` keeps the value within `n` bytes for a length-limited column by shortening the prefix, then dropping it, then the namespace
 - `Rand()` returns a new random source seeded from the scope's seed and the number of sources drawn before it, so draws are reproducible and records do not share one stream. `Generate` options without `WithRand` / `WithSeed` draw from the same scope
 - `UUID()` returns a random version 4 UUID string drawn the same way
 - `Now()` is a fixed clock (2024-01-01T00:00:00Z unless configured), so time-based defaults do not change between runs
@@ -318,20 +318,26 @@ When you use `database/sql`, [`WithTx`](https://pkg.go.dev/github.com/mhiro2/see
 
 [`seedling-gen`](../cmd/seedling-gen) generates model and blueprint definitions from multiple input sources.
 
-Generated blueprints include `Defaults` for common scalar fields such as strings, numbers, booleans, byte slices, and `time.Time`, shaped by the constraints the schema states for each column:
+Generated blueprints include `Defaults` for common scalar fields such as strings, numbers, booleans, byte slices, and `time.Time`, shaped by the constraints each adapter can read:
+
+- `sql` and `sqlc`: `UNIQUE` (inline, `UNIQUE (col)`, or a single-column `CREATE UNIQUE INDEX`, including `ASC` / `DESC` / `COLLATE`), `ENUM(...)`, `CREATE TYPE ... AS ENUM`, `CHECK (col IN (...))`, `VARCHAR(n)` / `CHAR(n)`, and `UUID` / `JSON` / `JSONB` column types. Several enum and `CHECK` lists on one column are intersected
+- `atlas`: unique `index` blocks over one column and `varchar(n)` / `char(n)` sizes
+- `gorm`: the `unique` and `size:n` tags
+- `ent`: none; only `time.Time` fields take `scope.Now()`
 
 | Column | Generated default |
 |---|---|
-| `UNIQUE` (inline, `UNIQUE (col)`, or a single-column `CREATE UNIQUE INDEX` / Atlas unique `index` / GORM `unique` tag) string | `scope.Unique("user-email")` |
+| unique string | `scope.Unique("user-email")`, or `scope.UniqueN("user-email", n)` for a `VARCHAR(n)` column |
 | unique integer or float | `int64(scope.Seq("user-number"))` |
-| `ENUM(...)`, `CREATE TYPE ... AS ENUM`, or `CHECK (col IN (...))` | the first listed value; for a sqlc enum type, `db.UserStatus("draft")` |
-| `VARCHAR(n)` / `CHAR(n)` (or GORM `size:n`) | a label cut to `n` characters; a unique value keeps its suffix by shortening the label, and a column too short for one gets `strconv.Itoa(scope.Seq(...))` |
+| enum or `CHECK (col IN (...))` | the first allowed value, or the allowed values in turn for a unique column; for a sqlc enum type, `db.UserStatus("draft")` (a nullable `NullUserStatus` is left unset) |
+| `VARCHAR(n)` / `CHAR(n)` | a label cut to `n` characters |
+| unique `time.Time` | `scope.Now()` plus one second per record |
 | `UUID` stored as `string` | `scope.UUID()` |
 | `JSON` / `JSONB` stored as `string`, `[]byte`, or `json.RawMessage` | `{}` |
 | `time.Time` | `scope.Now()` |
 | other strings, numbers, booleans | `"user-name"`, `1`, `true` |
 
-`scope` is the [`*seedling.Scope`](#unique-and-reproducible-values-with-scope) the generated `Defaults` receive, so unique values keep counting across every insert of a test. Uniqueness covers rows created in that scope; the generator does not query existing rows, and composite unique constraints and arbitrary `CHECK` expressions are not solved. Primary keys (including the untagged `ID` field GORM treats as the key by convention), relation FK fields, and unsupported custom types stay untouched so relation resolution and application-specific constraints remain explicit. Defaults for fields promoted from an embedded `gorm.Model` are written through the embedded struct (`Model: gorm.Model{CreatedAt: scope.Now(), ...}`).
+`scope` is the [`*seedling.Scope`](#unique-and-reproducible-values-with-scope) the generated `Defaults` receive, so unique values keep counting across every insert of a test. Uniqueness covers rows created in that scope; the generator does not query existing rows, and composite unique constraints, arbitrary `CHECK` expressions, and unique booleans or JSON documents are not solved. Primary keys (including the untagged `ID` field GORM treats as the key by convention), relation FK fields, and unsupported custom types stay untouched so relation resolution and application-specific constraints remain explicit. Defaults for fields promoted from an embedded `gorm.Model` are written through the embedded struct (`Model: gorm.Model{CreatedAt: scope.Now(), ...}`).
 
 Install the CLI:
 
@@ -481,7 +487,7 @@ When `--out` is specified, the output is written atomically via a temporary file
 
 The `ent` subcommand requires the package at `--import-path` to exist and compile. Run Ent code generation before `seedling-gen ent`; this lets seedling-gen use the exact generated names even when the project configures custom acronyms with entc. Generated mixin fields are included in the blueprint and its Insert callback so required mixin values are not silently omitted.
 
-Treat generated `Defaults` as ergonomic starters, not full fake-data generation. They satisfy the single-column constraints the schema states; for domain-specific shapes or constraints the schema does not express, wrap them in the hand-written file, drawing from the `Scope` they receive, or override them per test with `Set`, `With`, or `Generate`.
+Treat generated `Defaults` as ergonomic starters, not full fake-data generation. They follow the single-column constraints their adapter reads (see above); for other constraints and domain-specific shapes, wrap them in the hand-written file, drawing from the `Scope` they receive, or override them per test with `Set`, `With`, or `Generate`.
 
 ## Faker Locales
 

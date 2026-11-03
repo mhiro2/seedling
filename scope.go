@@ -144,6 +144,30 @@ func (s *Scope) Unique(prefix string) string {
 	return value
 }
 
+// UniqueN is like [Scope.Unique] for a column that holds at most maxLen
+// bytes. It shortens prefix to make room for the suffix, then drops the
+// prefix, then the namespace, keeping the value unique within the scope. Once
+// even the bare sequence number is longer than maxLen, the column cannot hold
+// another distinct value, and the number is returned whole so the insert fails
+// instead of repeating a value. A maxLen of zero or less means no limit.
+func (s *Scope) UniqueN(prefix string, maxLen int) string {
+	n := strconv.Itoa(s.Seq(prefix))
+	suffix := "-" + n
+	if s.namespace != "" {
+		suffix += "-" + s.namespace
+	}
+	switch {
+	case maxLen <= 0 || len(prefix)+len(suffix) <= maxLen:
+		return prefix + suffix
+	case len(suffix) < maxLen:
+		return prefix[:maxLen-len(suffix)] + suffix
+	case s.namespace != "" && len(suffix)-1 <= maxLen:
+		return suffix[1:]
+	default:
+		return n
+	}
+}
+
 // Rand returns a new random source. Every call returns an independent source
 // seeded from the scope's seed and the number of sources drawn before it, so
 // the values a test draws depend only on its seed and the order of its calls.
