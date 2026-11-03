@@ -70,6 +70,7 @@ seedling handles FK ordering, graph expansion, and cleanup so your tests stay fo
 - 🧱 Generated typed builders (`f.Task().Title("review").Assignee(f.User().Name("alice"))`) that turn field and relation mistakes into compile errors
 - ♻️ `WithTx` for auto-rollback transactions -- no manual cleanup
 - 🔌 Works with sqlc, `database/sql`, pgx, GORM, ent, or any other DB handle you own
+- 🔢 A per-test generation `Scope` passed to `Defaults`: named sequences, unique values, seeded randomness, and a fixed clock shared by every insert in the test
 - 🎲 Deterministic fake data via [`seedling/faker`](https://pkg.go.dev/github.com/mhiro2/seedling/faker) with multi-locale support (en, ja, zh, ko, de, fr)
 
 For advanced features such as `InsertMany`, batch sharing, explicit sharing across relation paths with `Scenario`, `Only`, `When`, and dry runs, see the [Guide](./docs/guide.md).

@@ -129,6 +129,8 @@ seedling.InsertOne[User](t, db, seedling.With(func(u *User) {
 seedling.InsertOne[User](t, db, seedling.BlueprintTrait("admin"))
 ```
 
+`Defaults` receives a `*seedling.Scope`. Use `s.Unique("user")`, `s.Seq(name)`, `s.Rand()`, and `s.Now()` there for values that must be unique, random, or time-based: the testing APIs share `seedling.TestScope(t)` across every insert of a test, so `UNIQUE` columns do not collide and values repeat across runs. Error-returning APIs need `seedling.InScope(seedling.TestScope(t))` to join that scope.
+
 Traits are defined in the blueprint's `Traits` map. A trait expands in place, so it behaves exactly like writing its options at that position: `Set` written after `BlueprintTrait` overrides the trait, and `BlueprintTrait` written after `Set` overrides the explicit value. A trait may also carry `WithContext`, or `Seq` / `SeqRef` / `SeqUse` for use with `InsertMany`. Whatever the written order, field values are applied as `Defaults` → `Generate` → `Set` → `With`. Every insert path (`InsertOne`, `InsertMany`, `Build`, and the fluent builder) resolves options the same way.
 
 ### Seq — per-record sequencing in InsertMany

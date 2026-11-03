@@ -181,6 +181,30 @@ result := seedling.InsertOne[Task](t, db, seedling.Only())
 
 `Only` also works with `InsertMany`. The filter is applied per root before batch sharing is resolved, so matching `BelongsTo` parents can still be shared across the batch.
 
+### Unique and reproducible values with Scope
+
+`Defaults` receives the `*seedling.Scope` the record is planned in. Draw values that must be unique, random, or time-based from it rather than from package-level counters or `time.Now()`:
+
+```go
+Defaults: func(s *seedling.Scope) User {
+    return User{
+        Email:     s.Unique("user") + "@example.com", // "user-1-k2x9q1@example.com"
+        Name:      faker.New(s.Rand()).Name(),
+        CreatedAt: s.Now(),
+    }
+},
+```
+
+- `Seq(name)` returns the next value of a named sequence, starting at 1, and `Unique(prefix)` formats it as `prefix-N`, followed by the scope's namespace when it has one
+- `Rand()` returns a new random source seeded from the scope's seed and the number of sources drawn before it, so draws are reproducible and records do not share one stream. `Generate` options without `WithRand` / `WithSeed` draw from the same scope
+- `Now()` is a fixed clock (2024-01-01T00:00:00Z unless configured), so time-based defaults do not change between runs
+
+Every testing API (`InsertOne`, `InsertMany`, `Build`, `Scenario.Insert`, and their `Session`, `Builder`, and generated typed-builder forms) plans in `seedling.TestScope(t)`, one scope per test. Sequences therefore continue across every `Insert` call and every related record of the test, and the namespace and seed are derived from `t.Name()`, so a test draws the same values on every run while two tests draw different unique values. The scope is discarded when the test finishes.
+
+The error-returning APIs (`InsertOneE`, `BuildE`, `Scenario.InsertE`, ...) have no test to scope to and use one scope shared by the whole process unless given one. Pass `InScope(seedling.TestScope(t))` to make them share the test's scope, or build an explicit one with `seedling.NewScope(seedling.ScopeConfig{Namespace: "...", Seed: 42, Now: t0})` and bind it with `InScope`, `Session.WithScope`, or `Scenario.WithScope`. `InScope` is a root option and overrides the other two.
+
+Uniqueness holds within one scope. A scope never queries the database, so rows written outside it — by another process, or by an earlier run that did not roll back — can still collide; the namespace only makes collisions between tests unlikely.
+
 ### Transaction auto-rollback
 
 Use `WithTx` to wrap each test in a transaction that rolls back on cleanup. This is the simplest way to isolate test data without manual deletion.
@@ -217,7 +241,8 @@ func TestUser(t *testing.T) {
 - `Only`: restrict insertion to specific relation subtrees
 - `When`: expand a relation only when the current record matches a condition, including optional relations when the predicate returns true
 - `With`: mutate the root struct with full type safety. Generated [typed builders](#typed-builders) extend this to field setters and relations
-- `Generate` + `WithSeed` / `WithRand`: generate deterministic values for property-style tests
+- `Generate` + `WithSeed` / `WithRand`: generate deterministic values for property-style tests. Without `WithSeed` / `WithRand`, `Generate` draws from the record's [Scope](#unique-and-reproducible-values-with-scope)
+- `InScope`: plan the record in a specific [Scope](#unique-and-reproducible-values-with-scope)
 - `WithInsertLog`: observe insert steps and FK assignments during execution
 
 For runnable examples of these options, see [`example_test.go`](../example_test.go).
@@ -232,9 +257,9 @@ Options resolve in one pass that every insert path shares (`InsertOne`, `InsertM
 
 - Options apply in the order they are written. `BlueprintTrait` and `InlineTrait` expand in place, so an option written after a trait overrides it and a trait written after an option overrides that option
 - Inside `InsertMany`, `Seq`, `SeqRef`, and `SeqUse` resolve per record into the `Set`, `Ref`, and `Use` they produce, so they also work inside a trait or a `SeqRef` result. Anywhere else they return `ErrInvalidOption`
-- A later `Set`, `Use`, `When`, `WithContext`, `WithRand`, or `WithInsertLog` replaces an earlier one. Several `Ref`s to the same relation merge in written order, while `Omit`, `Only`, and `AfterInsert` accumulate
+- A later `Set`, `Use`, `When`, `WithContext`, `WithRand`, `InScope`, or `WithInsertLog` replaces an earlier one. Several `Ref`s to the same relation merge in written order, while `Omit`, `Only`, and `AfterInsert` accumulate
 - Field values are applied in fixed stages regardless of where the options sit: blueprint `Defaults`, then `Generate`, then `Set`, then `With`
-- `WithContext`, `AfterInsert`, `AfterInsertE`, `WithInsertLog`, and `Only` apply only to the root record. Under `Ref`, including inside a trait resolved for that relation, they return `ErrInvalidOption`
+- `WithContext`, `AfterInsert`, `AfterInsertE`, `WithInsertLog`, `InScope`, and `Only` apply only to the root record. Under `Ref`, including inside a trait resolved for that relation, they return `ErrInvalidOption`
 - `WithContext` may sit inside a trait, and it overrides the `ctx` passed to `InsertOneE`, `InsertManyE`, or `Plan.InsertE`
 - Options under the `Ref` of a `HasMany` / `ManyToMany` relation resolve once per related record, so `At`, `Each`, and `Through` behave the same inside a trait as written directly
 
@@ -353,9 +378,9 @@ func NewRegistry() *seedling.Registry {
     }
 
     generatedDefaults := blueprints.User.Defaults
-    blueprints.User.Defaults = func() User {
-        u := generatedDefaults()
-        u.Email = "alice@example.com"
+    blueprints.User.Defaults = func(s *seedling.Scope) User {
+        u := generatedDefaults(s)
+        u.Email = s.Unique("user") + "@example.com"
         return u
     }
 
@@ -442,7 +467,7 @@ When `--out` is specified, the output is written atomically via a temporary file
 
 The `ent` subcommand requires the package at `--import-path` to exist and compile. Run Ent code generation before `seedling-gen ent`; this lets seedling-gen use the exact generated names even when the project configures custom acronyms with entc. Generated mixin fields are included in the blueprint and its Insert callback so required mixin values are not silently omitted.
 
-Treat generated `Defaults` as ergonomic starters, not full fake-data generation. If a test needs unique values or domain-specific shapes, wrap them in the hand-written file or override them per test with `Set`, `With`, or `Generate`.
+Treat generated `Defaults` as ergonomic starters, not full fake-data generation. If a test needs unique values or domain-specific shapes, wrap them in the hand-written file, drawing from the `Scope` they receive, or override them per test with `Set`, `With`, or `Generate`.
 
 ## Faker Locales
 
