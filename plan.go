@@ -180,6 +180,11 @@ func (p *Plan[T]) DryRunString() string {
 	return debug.DryRunString(p.graph)
 }
 
+// Snapshot returns a read-only description of every record the plan holds.
+func (p *Plan[T]) Snapshot() PlanSnapshot {
+	return newPlanSnapshot(p.graph)
+}
+
 func (p *Plan[T]) toExecutorLogFn() func(executor.LogEntry) {
 	return toExecutorLogFn(p.logFn)
 }

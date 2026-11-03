@@ -31,6 +31,8 @@ func (g *Graph) Clone() *Graph {
 
 	for _, node := range g.nodes {
 		parent := nodeMap[node]
+		parent.Origin = node.Origin
+		parent.Origin.From = nodeMap[node.Origin.From]
 		for _, edge := range node.dependents {
 			copied := &Edge{
 				Parent:     parent,

@@ -35,6 +35,7 @@ import (
 type Scenario struct {
 	registry *Registry
 	scope    *Scope
+	maxNodes int
 	roots    []scenarioRoot
 }
 
@@ -53,6 +54,14 @@ func NewScenario(reg *Registry) *Scenario {
 // and [Scenario.Insert] as well as their error-returning forms, and returns s.
 func (s *Scenario) WithScope(scope *Scope) *Scenario {
 	s.scope = scope
+	return s
+}
+
+// WithMaxNodes makes building the scenario fail once its plan would hold more
+// than n records, as [MaxNodes] does for a single insert, and returns s. A
+// value of zero or less removes the limit.
+func (s *Scenario) WithMaxNodes(n int) *Scenario {
+	s.maxNodes = max(n, 0)
 	return s
 }
 
@@ -196,7 +205,7 @@ func (s *Scenario) buildE(scope *Scope) (*ScenarioPlan, error) {
 		afterInserts[i] = resolved.afterInserts
 	}
 
-	result, err := planner.PlanRoots(newRegistryAdapter(s.registry, scope), roots)
+	result, err := planner.PlanRoots(newRegistryAdapter(s.registry, scope), roots, s.maxNodes)
 	if err != nil {
 		return nil, fmt.Errorf("build plan: %w", err)
 	}
@@ -312,6 +321,11 @@ func (p *ScenarioPlan) DryRunString() string {
 // constraint violations without inserting any records.
 func (p *ScenarioPlan) Validate() error {
 	return validatePlan(p.graph)
+}
+
+// Snapshot returns a read-only description of every record the plan holds.
+func (p *ScenarioPlan) Snapshot() PlanSnapshot {
+	return newPlanSnapshot(p.graph)
 }
 
 // ScenarioResult holds every record inserted by a [Scenario]. Read a record

@@ -10,35 +10,15 @@ import (
 	"github.com/mhiro2/seedling/internal/graph"
 )
 
-// expand recursively creates nodes for a blueprint and its required relations.
-// visited tracks opaque node identities already expanded to handle diamond
-// dependencies without conflating relation names with path separators.
-func expand(
-	reg Registry,
-	bp *BlueprintDef,
-	nodeID nodeIdentity,
-	opts *OptionSet,
-	g *graph.Graph,
-	visited map[nodeIdentity]*graph.Node,
-	bindings map[string]*graph.Node,
-	only map[string]bool,
-) (*graph.Node, error) {
-	return (&expander{
-		reg:     reg,
-		graph:   g,
-		visited: visited,
-		only:    only,
-	}).expandBlueprint(bp, nodeID, opts, bindings, "")
-}
-
 type expander struct {
-	reg     Registry
-	graph   *graph.Graph
-	visited map[nodeIdentity]*graph.Node
-	share   *batchShareState
-	roots   []*graph.Node   // roots planned so far by PlanRoots, which Links refer to by index
-	only    map[string]bool // nil = expand all; non-nil = skip root-level relations not in set
-	active  []activeBlueprint
+	reg      Registry
+	graph    *graph.Graph
+	visited  map[nodeIdentity]*graph.Node
+	share    *batchShareState
+	roots    []*graph.Node   // roots planned so far by PlanRoots, which Links refer to by index
+	only     map[string]bool // nil = expand all; non-nil = skip root-level relations not in set
+	maxNodes int             // zero = unlimited
+	active   []activeBlueprint
 }
 
 // activeBlueprint records a blueprint currently on the expansion stack. The
@@ -61,7 +41,7 @@ type activeBlueprint struct {
 	bound []string
 }
 
-func (e *expander) expandBlueprint(bp *BlueprintDef, nodeID nodeIdentity, opts *OptionSet, bindings map[string]*graph.Node, relationPath relationPath) (*graph.Node, error) {
+func (e *expander) expandBlueprint(bp *BlueprintDef, nodeID nodeIdentity, opts *OptionSet, bindings map[string]*graph.Node, relationPath relationPath, origin graph.Origin) (*graph.Node, error) {
 	if existing, ok := e.visited[nodeID]; ok {
 		return existing, nil
 	}
@@ -75,9 +55,10 @@ func (e *expander) expandBlueprint(bp *BlueprintDef, nodeID nodeIdentity, opts *
 	if err != nil {
 		return nil, err
 	}
-
-	e.graph.AddNode(node)
-	e.visited[nodeID] = node
+	node.Origin = origin
+	if err := e.addNode(nodeID, node); err != nil {
+		return nil, err
+	}
 
 	for _, rel := range bp.Relations {
 		// Lazy evaluation: at root level, skip relations not in the only set.
@@ -90,6 +71,19 @@ func (e *expander) expandBlueprint(bp *BlueprintDef, nodeID nodeIdentity, opts *
 	}
 
 	return node, nil
+}
+
+// addNode adds a planned node to the graph, failing once the plan would hold
+// more than maxNodes nodes. The limit is checked as nodes are added, so a
+// relation that would expand into a huge graph stops at the limit instead of
+// being planned in full first.
+func (e *expander) addNode(nodeID nodeIdentity, node *graph.Node) error {
+	if e.maxNodes > 0 && e.graph.Len() >= e.maxNodes {
+		return fmt.Errorf("expand %s: %w", node.Path(), errx.TooManyNodes(e.maxNodes))
+	}
+	e.graph.AddNode(node)
+	e.visited[nodeID] = node
+	return nil
 }
 
 // enterBlueprint pushes a blueprint onto the active expansion stack, reporting

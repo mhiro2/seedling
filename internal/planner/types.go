@@ -76,6 +76,7 @@ type OptionSet struct {
 	GenFns      []GenerateFn                       // typed rand-driven mutators
 	Rand        *rand.Rand                         // RNG used by GenFns
 	Only        map[string]bool                    // nil = expand all; non-nil = lazy mode (root-level relation filter)
+	MaxNodes    int                                // root only: positive = most nodes the plan may hold
 }
 
 // ElementOptions configures one element of a has-many or many-to-many

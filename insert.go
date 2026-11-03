@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/mhiro2/seedling/internal/executor"
-	"github.com/mhiro2/seedling/internal/planner"
 )
 
 // InsertOne creates and inserts a single record of type T with all required
@@ -82,64 +81,12 @@ func InsertManyE[T any](ctx context.Context, db DBTX, n int, opts ...Option) (Ba
 // If execution fails after inserting some nodes, the returned BatchResult
 // contains every successful node and only the roots that completed successfully.
 func (s Session[T]) InsertManyE(ctx context.Context, db DBTX, n int, opts ...Option) (BatchResult[T], error) {
-	var zero BatchResult[T]
-
-	if n < 0 {
-		return zero, fmt.Errorf("validate insert count: n must be >= 0, got %d: %w", n, ErrInvalidOption)
-	}
-	if n == 0 {
-		return emptyBatchResult[T](), nil
-	}
-
-	rootType := reflect.TypeFor[T]()
-	collected := make([]*optionSet, n)
-	internalOpts := make([]*planner.OptionSet, n)
-
-	for i := range n {
-		prepared, err := resolveRootOptions(s.registry, rootType, opts, i)
-		if err != nil {
-			return zero, err
-		}
-		collected[i] = prepared
-		internalOpts[i] = toOptionSet(prepared)
-	}
-
-	// InScope is a root option, so every record resolves the same one.
-	adapter := newRegistryAdapter(s.registry, resolveScope(collected[0].scope, s.scope))
-	plan, err := planner.PlanMany(adapter, rootType, internalOpts)
+	plan, err := s.BuildManyE(n, opts...)
 	if err != nil {
-		return zero, fmt.Errorf("build plan: %w", err)
+		var zero BatchResult[T]
+		return zero, err
 	}
-
-	// Execute a clone, as Plan.InsertE does, so every node owns its values and
-	// an Insert callback mutating a Set slice, map, or pointer cannot leak into
-	// the caller's option value or another record of the batch.
-	// WithContext is a root option, so every record resolves the same one.
-	ctx = insertContext(ctx, collected[0].ctx)
-	effectiveDB := s.resolveDB(db)
-	execResult, err := executor.Execute(ctx, effectiveDB, plan.Graph.Clone(), adapter, toExecutorLogFn(collected[0].logFn))
-	result, resultErr := batchResultFromExecutor[T](s.registry, plan.RootIDs, execResult, err == nil)
-	if resultErr != nil {
-		return result, resultErr
-	}
-	if err != nil {
-		return result, fmt.Errorf("execute plan: %w", err)
-	}
-
-	for i, rootID := range plan.RootIDs {
-		node, ok := execResult.Nodes[rootID]
-		if !ok {
-			continue
-		}
-		root := node.Value.(T)
-		for _, fn := range collected[i].afterInserts {
-			if err := fn(root, effectiveDB); err != nil {
-				return result, fmt.Errorf("run after-insert callback: %w", err)
-			}
-		}
-	}
-
-	return result, nil
+	return plan.InsertE(ctx, s.resolveDB(db))
 }
 
 func batchResultFromExecutor[T any](reg *Registry, rootIDs []string, execResult *executor.Result, requireAllRoots bool) (BatchResult[T], error) {

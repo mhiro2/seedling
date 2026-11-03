@@ -181,6 +181,13 @@ func (b CompanyBuilder) Build(tb testing.TB) *seedling.Plan[Company] {
 	return seedling.NewSession[Company](b.reg).Build(tb, b.opts...)
 }
 
+// BuildMany plans n records configured alike without inserting them. Fails
+// the test on error.
+func (b CompanyBuilder) BuildMany(tb testing.TB, n int) *seedling.BatchPlan[Company] {
+	tb.Helper()
+	return seedling.NewSession[Company](b.reg).BuildMany(tb, n, b.opts...)
+}
+
 // Add adds the record to a scenario and returns its handle.
 func (b CompanyBuilder) Add(s *seedling.Scenario) seedling.Node[Company] {
 	return seedling.Add[Company](s, b.opts...)
@@ -284,6 +291,13 @@ func (b UserBuilder) InsertMany(tb testing.TB, db seedling.DBTX, n int) []User {
 func (b UserBuilder) Build(tb testing.TB) *seedling.Plan[User] {
 	tb.Helper()
 	return seedling.NewSession[User](b.reg).Build(tb, b.opts...)
+}
+
+// BuildMany plans n records configured alike without inserting them. Fails
+// the test on error.
+func (b UserBuilder) BuildMany(tb testing.TB, n int) *seedling.BatchPlan[User] {
+	tb.Helper()
+	return seedling.NewSession[User](b.reg).BuildMany(tb, n, b.opts...)
 }
 
 // Add adds the record to a scenario and returns its handle.

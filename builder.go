@@ -148,6 +148,18 @@ func (b *Builder[T]) InsertManyE(ctx context.Context, db DBTX, n int) (BatchResu
 	return b.session.InsertManyE(ctx, db, n, b.opts...)
 }
 
+// BuildMany constructs the plan of n records without inserting anything.
+// Fails the test on error.
+func (b *Builder[T]) BuildMany(tb testing.TB, n int) *BatchPlan[T] {
+	tb.Helper()
+	return b.session.BuildMany(tb, n, b.opts...)
+}
+
+// BuildManyE constructs the plan of n records without inserting anything.
+func (b *Builder[T]) BuildManyE(n int) (*BatchPlan[T], error) {
+	return b.session.BuildManyE(n, b.opts...)
+}
+
 // Build constructs a dependency plan without inserting anything. Fails the test on error.
 func (b *Builder[T]) Build(tb testing.TB) *Plan[T] {
 	tb.Helper()

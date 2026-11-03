@@ -75,7 +75,7 @@ func (u useOption) applyOption(r *optionResolver, o *optionSet) error {
 // It also enables expansion for optional relations.
 //
 // Options that only apply to the root record — [WithContext], [AfterInsert],
-// [AfterInsertE], [WithInsertLog], and [Only] — cannot appear under Ref
+// [AfterInsertE], [WithInsertLog], [Only], and [MaxNodes] — cannot appear under Ref
 // (including inside traits resolved for that relation) and return
 // [ErrInvalidOption].
 //
@@ -630,6 +630,39 @@ func (o onlyOption) applyOption(_ *optionResolver, os *optionSet) error {
 	for _, r := range o.relations {
 		os.only[r] = true
 	}
+	return nil
+}
+
+// MaxNodes fails planning once the plan would hold more than n records,
+// counting every record it inserts and every existing record passed with
+// [Use]. The limit is checked while relations expand, so a relation change
+// that would turn a small fixture into a large graph is reported with the path
+// of the record that crossed it instead of being planned and inserted:
+//
+//	seedling.InsertOne[Task](t, db, seedling.MaxNodes(5))
+//
+// For [InsertMany] and [BuildMany] the limit covers the whole batch. A
+// [Scenario] takes its limit from [Scenario.WithMaxNodes]. Use
+// [Plan.Snapshot] to assert exact counts instead.
+func MaxNodes(n int) Option {
+	return maxNodesOption{n: n}
+}
+
+type maxNodesOption struct {
+	n int
+}
+
+func (m maxNodesOption) applyOption(r *optionResolver, o *optionSet) error {
+	if !o.root {
+		return rootOnlyError("max-nodes")
+	}
+	if r.scenario != nil {
+		return fmt.Errorf("%w: MaxNodes does not apply to a record added to a Scenario; use Scenario.WithMaxNodes instead", ErrInvalidOption)
+	}
+	if m.n <= 0 {
+		return fmt.Errorf("%w: MaxNodes must be > 0, got %d", ErrInvalidOption, m.n)
+	}
+	o.maxNodes = m.n
 	return nil
 }
 

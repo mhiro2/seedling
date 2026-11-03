@@ -120,7 +120,7 @@ func (e *expander) expandBelongsTo(
 ) error {
 	usedNode, ok, err := e.linkedBelongsToNode(rel, opts)
 	if err == nil && !ok {
-		usedNode, ok, err = e.providedBelongsToNode(rel, nodeID, opts)
+		usedNode, ok, err = e.providedBelongsToNode(rel, node, nodeID, opts)
 	}
 	if err != nil {
 		return err
@@ -140,7 +140,8 @@ func (e *expander) expandBelongsTo(
 	}
 
 	childPath := appendRelationPath(relationPath, rel.Name)
-	childNode, err := e.expandBlueprint(parentBP, e.belongsToNodeID(nodeID, childPath, rel, nestedRelationOpts(opts, rel.Name)), nestedRelationOpts(opts, rel.Name), nil, childPath)
+	origin := graph.Origin{Kind: graph.OriginBelongsTo, From: node, Relation: rel.Name}
+	childNode, err := e.expandBlueprint(parentBP, e.belongsToNodeID(nodeID, childPath, rel, nestedRelationOpts(opts, rel.Name)), nestedRelationOpts(opts, rel.Name), nil, childPath, origin)
 	if err != nil {
 		return err
 	}
@@ -176,7 +177,8 @@ func (e *expander) expandHasMany(
 
 	for i, elem := range elements {
 		childPath := appendRelationPath(relationPath, rel.Name)
-		childNode, err := e.expandBlueprint(childBP, relationNodeIdentity(parentNodeID, rel.Name, i, count), elem.Opts, childBindings, childPath)
+		origin := graph.Origin{Kind: graph.OriginHasMany, From: parentNode, Relation: rel.Name, Index: i, Indexed: true}
+		childNode, err := e.expandBlueprint(childBP, relationNodeIdentity(parentNodeID, rel.Name, i, count), elem.Opts, childBindings, childPath, origin)
 		if err != nil {
 			return err
 		}
@@ -246,18 +248,20 @@ func (e *expander) expandManyToMany(
 	for i, elem := range elements {
 		childPath := appendRelationPath(relationPath, rel.Name)
 		childNodeID := relationNodeIdentity(parentNodeID, rel.Name, i, count)
+		origin := graph.Origin{Kind: graph.OriginManyToMany, From: parentNode, Relation: rel.Name, Index: i, Indexed: true}
 		var childNode *graph.Node
 		if elem.Use != nil {
-			childNode = e.addProvidedNode(childBP, childNodeID, elem.Use)
+			childNode, err = e.addProvidedNode(childBP, childNodeID, elem.Use, origin)
 		} else {
-			childNode, err = e.expandBlueprint(childBP, childNodeID, elem.Opts, nil, childPath)
-			if err != nil {
-				return err
-			}
+			childNode, err = e.expandBlueprint(childBP, childNodeID, elem.Opts, nil, childPath, origin)
+		}
+		if err != nil {
+			return err
 		}
 
 		joinBindings, parentBound, childBound := manyToManyBindings(joinBP, parentNode, childNode, rel)
-		joinNode, err := e.expandBlueprint(joinBP, joinNodeIdentity(childNodeID, rel.ThroughBlueprint), elem.Through, joinBindings, appendJoinPath(childPath, rel.ThroughBlueprint))
+		joinOrigin := graph.Origin{Kind: graph.OriginThrough, From: childNode, Relation: rel.Name}
+		joinNode, err := e.expandBlueprint(joinBP, joinNodeIdentity(childNodeID, rel.ThroughBlueprint), elem.Through, joinBindings, appendJoinPath(childPath, rel.ThroughBlueprint), joinOrigin)
 		if err != nil {
 			return err
 		}

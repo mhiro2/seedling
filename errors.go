@@ -23,14 +23,19 @@ var (
 
 	ErrDuplicateBlueprint = errx.ErrDuplicateBlueprint
 	ErrInvalidOption      = errx.ErrInvalidOption
+
+	// ErrTooManyNodes reports that planning stopped because the plan would
+	// exceed the limit set with [MaxNodes] or [Scenario.WithMaxNodes].
+	ErrTooManyNodes = errx.ErrTooManyNodes
 )
 
-// InsertFailedError wraps ErrInsertFailed with the blueprint name and the
-// original insert callback error. Use errors.As to extract the blueprint name:
+// InsertFailedError wraps ErrInsertFailed with the blueprint name, the
+// relation path of the failing record, and the original insert callback
+// error. Use errors.As to extract them:
 //
 //	var ife *seedling.InsertFailedError
 //	if errors.As(err, &ife) {
-//	    log.Printf("blueprint %s failed", ife.Blueprint())
+//	    log.Printf("blueprint %s failed at %s", ife.Blueprint(), ife.Path())
 //	}
 type InsertFailedError = errx.InsertFailedError
 

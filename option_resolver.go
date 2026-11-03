@@ -37,6 +37,7 @@ type optionSet struct {
 	logFn        func(InsertLog)                    // optional insert log callback
 	scope        *Scope                             // InScope option: scope Defaults draw from
 	only         map[string]bool                    // Only option: nil = insert all, non-nil = insert only specified relations
+	maxNodes     int                                // MaxNodes option: zero = unlimited
 }
 
 type withFn func(value any) (any, error)
@@ -436,5 +437,6 @@ func toOptionSet(os *optionSet) *planner.OptionSet {
 		GenFns:      genFns,
 		Rand:        os.rand,
 		Only:        os.only,
+		MaxNodes:    os.maxNodes,
 	}
 }
