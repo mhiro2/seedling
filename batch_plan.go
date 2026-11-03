@@ -24,6 +24,7 @@ type BatchPlan[T any] struct {
 	registry     *Registry
 	db           DBTX
 	logFn        func(InsertLog)
+	cleanup      *CleanupTracker
 }
 
 // BuildManyE constructs the plan of n records of type T without inserting
@@ -45,6 +46,7 @@ func (s Session[T]) BuildManyE(n int, opts ...Option) (*BatchPlan[T], error) {
 		rootIDs:  []string{},
 		registry: s.registry,
 		db:       s.db,
+		cleanup:  s.cleanup,
 	}
 	if n == 0 {
 		return plan, nil
@@ -79,6 +81,7 @@ func (s Session[T]) BuildManyE(n int, opts ...Option) (*BatchPlan[T], error) {
 	// the same ones.
 	plan.ctx = collected[0].ctx
 	plan.logFn = collected[0].logFn
+	plan.cleanup = resolveCleanup(collected[0].cleanup, s.cleanup)
 	return plan, nil
 }
 
@@ -106,9 +109,11 @@ func (p *BatchPlan[T]) Len() int {
 }
 
 // Insert executes the plan and inserts all records. Fails the test on error.
+// Without a tracker bound at build time, it records in the one
+// [AutoCleanup] enabled for tb.
 func (p *BatchPlan[T]) Insert(tb testing.TB, db DBTX) BatchResult[T] {
 	tb.Helper()
-	result, err := p.InsertE(tb.Context(), db)
+	result, err := p.insertE(tb.Context(), db, resolveCleanup(p.cleanup, cleanupTrackerFor(tb)))
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -120,8 +125,16 @@ func (p *BatchPlan[T]) Insert(tb testing.TB, db DBTX) BatchResult[T] {
 // BatchResult contains every successful node and only the roots that completed
 // successfully.
 func (p *BatchPlan[T]) InsertE(ctx context.Context, db DBTX) (BatchResult[T], error) {
+	return p.insertE(ctx, db, p.cleanup)
+}
+
+func (p *BatchPlan[T]) insertE(ctx context.Context, db DBTX, tracker *CleanupTracker) (BatchResult[T], error) {
 	if len(p.rootIDs) == 0 {
 		return emptyBatchResult[T](), nil
+	}
+	if err := tracker.check(p.registry, p.graph); err != nil {
+		var zero BatchResult[T]
+		return zero, err
 	}
 
 	// Execute a clone, as Plan.InsertE does, so every node owns its values and
@@ -133,6 +146,7 @@ func (p *BatchPlan[T]) InsertE(ctx context.Context, db DBTX) (BatchResult[T], er
 		effectiveDB = p.db
 	}
 	execResult, err := executor.Execute(ctx, effectiveDB, p.graph.Clone(), newRegistryAdapter(p.registry, nil), toExecutorLogFn(p.logFn))
+	tracker.record(p.registry, execResult)
 	result, resultErr := batchResultFromExecutor[T](p.registry, p.rootIDs, execResult, err == nil)
 	if resultErr != nil {
 		return result, resultErr

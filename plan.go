@@ -27,6 +27,7 @@ type Plan[T any] struct {
 	registry     *Registry
 	db           DBTX
 	logFn        func(InsertLog)
+	cleanup      *CleanupTracker
 }
 
 // BuildE constructs a dependency plan for type T without inserting anything.
@@ -58,6 +59,7 @@ func (s Session[T]) BuildE(opts ...Option) (*Plan[T], error) {
 		registry:     s.registry,
 		db:           s.db,
 		logFn:        collected.logFn,
+		cleanup:      resolveCleanup(collected.cleanup, s.cleanup),
 	}, nil
 }
 
@@ -80,9 +82,11 @@ func (s Session[T]) Build(tb testing.TB, opts ...Option) *Plan[T] {
 }
 
 // Insert executes the plan and inserts all records. Fails the test on error.
+// Without a tracker bound at build time, it records in the one
+// [AutoCleanup] enabled for tb.
 func (p *Plan[T]) Insert(tb testing.TB, db DBTX) Result[T] {
 	tb.Helper()
-	result, err := p.InsertE(tb.Context(), db)
+	result, err := p.insertE(tb.Context(), db, resolveCleanup(p.cleanup, cleanupTrackerFor(tb)))
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -94,6 +98,10 @@ func (p *Plan[T]) Insert(tb testing.TB, db DBTX) Result[T] {
 // If execution fails after inserting dependencies, the returned Result contains
 // the successful nodes and can be passed to [Result.CleanupE].
 func (p *Plan[T]) InsertE(ctx context.Context, db DBTX) (Result[T], error) {
+	return p.insertE(ctx, db, p.cleanup)
+}
+
+func (p *Plan[T]) insertE(ctx context.Context, db DBTX, tracker *CleanupTracker) (Result[T], error) {
 	ctx = insertContext(ctx, p.ctx)
 	if p.graph != nil {
 		if root := p.graph.Root(); root != nil {
@@ -104,10 +112,15 @@ func (p *Plan[T]) InsertE(ctx context.Context, db DBTX) (Result[T], error) {
 		}
 	}
 
+	if err := tracker.check(p.registry, p.graph); err != nil {
+		var zero Result[T]
+		return zero, err
+	}
 	adapter := newRegistryAdapter(p.registry, nil)
 	g := p.graph.Clone()
 	effectiveDB := p.resolveDB(db)
 	execResult, err := executor.Execute(ctx, effectiveDB, g, adapter, p.toExecutorLogFn())
+	tracker.record(p.registry, execResult)
 	result, resultErr := p.resultFromExecutor(execResult, err == nil)
 	if resultErr != nil {
 		return result, resultErr

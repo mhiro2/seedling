@@ -39,6 +39,7 @@ type optionSet struct {
 	scope        *Scope                             // InScope option: scope Defaults draw from
 	only         map[string]bool                    // Only option: nil = insert all, non-nil = insert only specified relations
 	maxNodes     int                                // MaxNodes option: zero = unlimited
+	cleanup      *CleanupTracker                    // WithCleanup option: tracker that records the insert
 }
 
 type withFn func(value any) (any, error)

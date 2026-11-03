@@ -280,7 +280,7 @@
 //   - [Seq], [Generate], [WithRand], [WithSeed]
 //   - [WithContext], [WithInsertLog]
 //   - [Plan.Validate], [Plan.DebugString], [Plan.DryRunString], [Plan.Snapshot]
-//   - [WithTx], [NewTestSession]
+//   - [WithTx], [NewTestSession], [AutoCleanup], [WithCleanup]
 //   - [Result.Root], [Result.DebugString], [Result.Cleanup], [Result.CleanupE]
 //   - [BatchResult.Roots], [BatchResult.RootAt], [BatchResult.NodeAt], [BatchResult.NodesForRoot]
 //   - [BatchResult.DebugString], [BatchResult.Cleanup], [BatchResult.CleanupE]

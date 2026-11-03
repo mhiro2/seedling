@@ -17,6 +17,7 @@ type Session[T any] struct {
 	registry *Registry
 	db       DBTX
 	scope    *Scope
+	cleanup  *CleanupTracker
 }
 
 // NewSession returns a typed session backed by the provided registry.
@@ -65,12 +66,24 @@ func (s Session[T]) WithScope(scope *Scope) Session[T] {
 	return s
 }
 
+// WithCleanup returns a copy of the session that records every insert in
+// tracker, for the testing APIs as well as the error-returning ones. A
+// [WithCleanup] option overrides it.
+func (s Session[T]) WithCleanup(tracker *CleanupTracker) Session[T] {
+	s.cleanup = tracker
+	return s
+}
+
 // forTest returns the session the testing APIs use for tb: one planning in
-// the test's scope unless a scope is already bound.
+// the test's scope unless a scope is already bound, and recording in the
+// tracker AutoCleanup enabled for the test unless one is already bound.
 func (s Session[T]) forTest(tb testing.TB) Session[T] {
 	tb.Helper()
 	if s.scope == nil {
 		s.scope = TestScope(tb)
+	}
+	if s.cleanup == nil {
+		s.cleanup = cleanupTrackerFor(tb)
 	}
 	return s
 }

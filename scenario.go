@@ -36,6 +36,7 @@ type Scenario struct {
 	registry *Registry
 	scope    *Scope
 	maxNodes int
+	cleanup  *CleanupTracker
 	roots    []scenarioRoot
 }
 
@@ -62,6 +63,15 @@ func (s *Scenario) WithScope(scope *Scope) *Scenario {
 // value of zero or less removes the limit.
 func (s *Scenario) WithMaxNodes(n int) *Scenario {
 	s.maxNodes = max(n, 0)
+	return s
+}
+
+// WithCleanup makes the scenario record what it inserts in tracker, for
+// [Scenario.Insert] and [Scenario.InsertE] and the plans it builds, and
+// returns s. Without it, the testing APIs record in the tracker
+// [AutoCleanup] enabled for the test.
+func (s *Scenario) WithCleanup(tracker *CleanupTracker) *Scenario {
+	s.cleanup = tracker
 	return s
 }
 
@@ -179,6 +189,7 @@ type ScenarioPlan struct {
 	graph        *graph.Graph
 	rootIDs      []string
 	afterInserts [][]afterInsertFn // per root, in the order the records were added
+	cleanup      *CleanupTracker
 }
 
 // BuildE builds the scenario without inserting anything. Records added later
@@ -214,6 +225,7 @@ func (s *Scenario) buildE(scope *Scope) (*ScenarioPlan, error) {
 		graph:        result.Graph,
 		rootIDs:      result.RootIDs,
 		afterInserts: afterInserts,
+		cleanup:      s.cleanup,
 	}, nil
 }
 
@@ -231,21 +243,21 @@ func (s *Scenario) Build(tb testing.TB) *ScenarioPlan {
 // failure. If execution fails after inserting some records, the returned
 // result contains them and can be passed to [ScenarioResult.CleanupE].
 func (s *Scenario) InsertE(ctx context.Context, db DBTX) (ScenarioResult, error) {
-	return s.insertE(ctx, db, s.scope)
+	return s.insertE(ctx, db, s.scope, s.cleanup)
 }
 
-func (s *Scenario) insertE(ctx context.Context, db DBTX, scope *Scope) (ScenarioResult, error) {
+func (s *Scenario) insertE(ctx context.Context, db DBTX, scope *Scope, tracker *CleanupTracker) (ScenarioResult, error) {
 	plan, err := s.buildE(scope)
 	if err != nil {
 		return ScenarioResult{}, err
 	}
-	return plan.InsertE(ctx, db)
+	return plan.insertE(ctx, db, tracker)
 }
 
 // Insert builds the scenario and inserts every record. Fails the test on error.
 func (s *Scenario) Insert(tb testing.TB, db DBTX) ScenarioResult {
 	tb.Helper()
-	result, err := s.insertE(tb.Context(), db, s.testScope(tb))
+	result, err := s.insertE(tb.Context(), db, s.testScope(tb), resolveCleanup(s.cleanup, cleanupTrackerFor(tb)))
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -266,11 +278,19 @@ func (s *Scenario) testScope(tb testing.TB) *Scope {
 // AfterInsert callbacks run after all records are inserted, in the order the
 // records were added.
 func (p *ScenarioPlan) InsertE(ctx context.Context, db DBTX) (ScenarioResult, error) {
+	return p.insertE(ctx, db, p.cleanup)
+}
+
+func (p *ScenarioPlan) insertE(ctx context.Context, db DBTX, tracker *CleanupTracker) (ScenarioResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	reg := p.scenario.registry
+	if err := tracker.check(reg, p.graph); err != nil {
+		return ScenarioResult{}, err
+	}
 	execResult, err := executor.Execute(ctx, db, p.graph.Clone(), newRegistryAdapter(reg, nil), nil)
+	tracker.record(reg, execResult)
 	if execResult == nil {
 		return ScenarioResult{}, fmt.Errorf("%w: executor returned a nil result", ErrInvalidOption)
 	}
@@ -297,10 +317,12 @@ func (p *ScenarioPlan) InsertE(ctx context.Context, db DBTX) (ScenarioResult, er
 	return result, nil
 }
 
-// Insert inserts every record of the plan. Fails the test on error.
+// Insert inserts every record of the plan. Fails the test on error. Without
+// a tracker bound to the scenario, it records in the one [AutoCleanup]
+// enabled for tb.
 func (p *ScenarioPlan) Insert(tb testing.TB, db DBTX) ScenarioResult {
 	tb.Helper()
-	result, err := p.InsertE(tb.Context(), db)
+	result, err := p.insertE(tb.Context(), db, resolveCleanup(p.cleanup, cleanupTrackerFor(tb)))
 	if err != nil {
 		tb.Fatal(err)
 	}
