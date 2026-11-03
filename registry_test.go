@@ -24,7 +24,7 @@ func TestRegisterTo_IsolatedRegistry(t *testing.T) {
 			Name:    "company",
 			Table:   "companies",
 			PKField: "ID",
-			Defaults: func() testCompany {
+			Defaults: func(*seedling.Scope) testCompany {
 				return testCompany{Name: fmt.Sprintf("test-company-%d", id)}
 			},
 			Insert: func(ctx context.Context, db seedling.DBTX, v testCompany) (testCompany, error) {
@@ -106,7 +106,7 @@ func TestRegister_Duplicate(t *testing.T) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() testCompany {
+		Defaults: func(*seedling.Scope) testCompany {
 			return testCompany{Name: "test-company"}
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v testCompany) (testCompany, error) {
@@ -135,7 +135,7 @@ func TestMustRegister_Panics(t *testing.T) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() testCompany {
+		Defaults: func(*seedling.Scope) testCompany {
 			return testCompany{Name: "test-company"}
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v testCompany) (testCompany, error) {
@@ -280,7 +280,7 @@ func TestRegistry_ConcurrentRegisterAndLookup(t *testing.T) {
 		Name:    "preregistered",
 		Table:   "items",
 		PKField: "ID",
-		Defaults: func() concurrencyItem {
+		Defaults: func(*seedling.Scope) concurrencyItem {
 			return concurrencyItem{Name: "pre"}
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v concurrencyItem) (concurrencyItem, error) {
@@ -302,7 +302,7 @@ func TestRegistry_ConcurrentRegisterAndLookup(t *testing.T) {
 				Name:    name,
 				Table:   "companies",
 				PKField: "ID",
-				Defaults: func() testCompany {
+				Defaults: func(*seedling.Scope) testCompany {
 					return testCompany{Name: name}
 				},
 				Insert: func(ctx context.Context, db seedling.DBTX, v testCompany) (testCompany, error) {

@@ -215,7 +215,7 @@ func TestCopy_WrapsValueForNullableDestination(t *testing.T) {
 	}
 
 	var dst destination
-	if err := field.Copy(source{Code: 42}, "Code", &dst, "SourceCode"); err != nil {
+	if err := field.Copy(source{Code: 42}, "Code", &dst, "SourceCode", nil); err != nil {
 		t.Fatal(err)
 	}
 	if dst.SourceCode == nil || *dst.SourceCode != 42 {
@@ -233,7 +233,7 @@ func TestCopy_PointerSourceGetsIndependentDestinationStorage(t *testing.T) {
 
 	id := 42
 	var dst destination
-	if err := field.Copy(source{ID: &id}, "ID", &dst, "SourceID"); err != nil {
+	if err := field.Copy(source{ID: &id}, "ID", &dst, "SourceID", nil); err != nil {
 		t.Fatal(err)
 	}
 	if dst.SourceID == nil || *dst.SourceID != 42 {
@@ -247,7 +247,7 @@ func TestCopy_PointerSourceGetsIndependentDestinationStorage(t *testing.T) {
 		SourceID **int
 	}
 	var nested nestedDestination
-	if err := field.Copy(source{ID: &id}, "ID", &nested, "SourceID"); err != nil {
+	if err := field.Copy(source{ID: &id}, "ID", &nested, "SourceID", nil); err != nil {
 		t.Fatal(err)
 	}
 	if nested.SourceID == nil || *nested.SourceID == &id || **nested.SourceID != 42 {
@@ -255,7 +255,7 @@ func TestCopy_PointerSourceGetsIndependentDestinationStorage(t *testing.T) {
 	}
 
 	var nilDst destination
-	if err := field.Copy(source{}, "ID", &nilDst, "SourceID"); err != nil {
+	if err := field.Copy(source{}, "ID", &nilDst, "SourceID", nil); err != nil {
 		t.Fatal(err)
 	}
 	if nilDst.SourceID != nil {
@@ -271,7 +271,7 @@ func TestCopy_NilEmbeddedPointerSourceReturnsError(t *testing.T) {
 		*embedded
 	}
 
-	err := field.Copy(model{}, "ID", &sample{}, "ID")
+	err := field.Copy(model{}, "ID", &sample{}, "ID", nil)
 	if !errors.Is(err, errx.ErrInvalidOption) {
 		t.Fatalf("got %v, want %v", err, errx.ErrInvalidOption)
 	}
@@ -286,7 +286,7 @@ func TestCopy_NilEmbeddedPointerDestinationIsAllocated(t *testing.T) {
 	}
 	var dst model
 
-	err := field.Copy(sample{ID: 42}, "ID", &dst, "ID")
+	err := field.Copy(sample{ID: 42}, "ID", &dst, "ID", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -304,7 +304,7 @@ func TestCopy_UnexportedNilEmbeddedPointerDestinationReturnsError(t *testing.T) 
 	}
 	var dst model
 
-	err := field.Copy(sample{ID: 42}, "ID", &dst, "ID")
+	err := field.Copy(sample{ID: 42}, "ID", &dst, "ID", nil)
 	if !errors.Is(err, errx.ErrInvalidOption) {
 		t.Fatalf("got %v, want %v", err, errx.ErrInvalidOption)
 	}
@@ -315,7 +315,7 @@ func TestCopy_UnexportedSourceFieldReturnsError(t *testing.T) {
 		id int
 	}
 
-	err := field.Copy(source{id: 42}, "id", &sample{}, "ID")
+	err := field.Copy(source{id: 42}, "id", &sample{}, "ID", nil)
 	if !errors.Is(err, errx.ErrFieldNotFound) {
 		t.Fatalf("got %v, want %v", err, errx.ErrFieldNotFound)
 	}

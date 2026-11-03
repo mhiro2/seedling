@@ -181,6 +181,31 @@ result := seedling.InsertOne[Task](t, db, seedling.Only())
 
 `Only` also works with `InsertMany`. The filter is applied per root before batch sharing is resolved, so matching `BelongsTo` parents can still be shared across the batch.
 
+### Unique and reproducible values with Scope
+
+`Defaults` receives the `*seedling.Scope` the record is planned in. Draw values that must be unique, random, or time-based from it rather than from package-level counters or `time.Now()`:
+
+```go
+Defaults: func(s *seedling.Scope) User {
+    return User{
+        Email:     s.Unique("user") + "@example.com", // "user-1-k2x9q1@example.com"
+        Name:      faker.New(s.Rand()).Name(),
+        CreatedAt: s.Now(),
+    }
+},
+```
+
+- `Seq(name)` returns the next value of a named sequence, starting at 1, and `Unique(prefix)` formats it as `prefix-N`, followed by the scope's namespace when it has one. `UniqueN(prefix, n)` keeps the value within `n` bytes for a length-limited column by shortening the prefix, then dropping it, then the namespace
+- `Rand()` returns a new random source seeded from the scope's seed and the number of sources drawn before it, so draws are reproducible and records do not share one stream. `Generate` options without `WithRand` / `WithSeed` draw from the same scope
+- `UUID()` returns a random version 4 UUID string drawn the same way
+- `Now()` is a fixed clock (2024-01-01T00:00:00Z unless configured), so time-based defaults do not change between runs
+
+Every testing API (`InsertOne`, `InsertMany`, `Build`, `Scenario.Insert`, and their `Session`, `Builder`, and generated typed-builder forms) plans in `seedling.TestScope(t)`, one scope per test. Sequences therefore continue across every `Insert` call and every related record of the test, and the namespace and seed are derived from `t.Name()`, so two tests draw different unique values and a test draws the same values on every run as long as it plans its records in the same order. Records planned concurrently from goroutines of one test take sequence numbers and random sources in whatever order they reach the scope, so they stay unique but not reproducible. The scope is discarded when the test finishes; a cleanup function registered before the test's first insert runs after that, and a record it creates gets a separate scope that never repeats the test's values.
+
+The error-returning APIs (`InsertOneE`, `BuildE`, `Scenario.InsertE`, ...) have no test to scope to and use one scope shared by the whole process unless given one. Pass `InScope(seedling.TestScope(t))` to make them share the test's scope, or build an explicit one with `seedling.NewScope(seedling.ScopeConfig{Namespace: "...", Seed: 42, Now: t0})` and bind it with `InScope` or `Session.WithScope`, where `InScope` overrides the session's scope. A `Scenario` takes its scope only from `Scenario.WithScope`; `InScope` on a record added to it is rejected.
+
+Uniqueness holds within one scope. A scope never queries the database, so rows written outside it — by another process, or by an earlier run that did not roll back — can still collide; the namespace only makes collisions between tests unlikely.
+
 ### Transaction auto-rollback
 
 Use `WithTx` to wrap each test in a transaction that rolls back on cleanup. This is the simplest way to isolate test data without manual deletion.
@@ -217,7 +242,8 @@ func TestUser(t *testing.T) {
 - `Only`: restrict insertion to specific relation subtrees
 - `When`: expand a relation only when the current record matches a condition, including optional relations when the predicate returns true
 - `With`: mutate the root struct with full type safety. Generated [typed builders](#typed-builders) extend this to field setters and relations
-- `Generate` + `WithSeed` / `WithRand`: generate deterministic values for property-style tests
+- `Generate` + `WithSeed` / `WithRand`: generate deterministic values for property-style tests. Without `WithSeed` / `WithRand`, `Generate` draws from the record's [Scope](#unique-and-reproducible-values-with-scope)
+- `InScope`: plan the record in a specific [Scope](#unique-and-reproducible-values-with-scope)
 - `WithInsertLog`: observe insert steps and FK assignments during execution
 
 For runnable examples of these options, see [`example_test.go`](../example_test.go).
@@ -232,9 +258,9 @@ Options resolve in one pass that every insert path shares (`InsertOne`, `InsertM
 
 - Options apply in the order they are written. `BlueprintTrait` and `InlineTrait` expand in place, so an option written after a trait overrides it and a trait written after an option overrides that option
 - Inside `InsertMany`, `Seq`, `SeqRef`, and `SeqUse` resolve per record into the `Set`, `Ref`, and `Use` they produce, so they also work inside a trait or a `SeqRef` result. Anywhere else they return `ErrInvalidOption`
-- A later `Set`, `Use`, `When`, `WithContext`, `WithRand`, or `WithInsertLog` replaces an earlier one. Several `Ref`s to the same relation merge in written order, while `Omit`, `Only`, and `AfterInsert` accumulate
+- A later `Set`, `Use`, `When`, `WithContext`, `WithRand`, `InScope`, or `WithInsertLog` replaces an earlier one. Several `Ref`s to the same relation merge in written order, while `Omit`, `Only`, and `AfterInsert` accumulate
 - Field values are applied in fixed stages regardless of where the options sit: blueprint `Defaults`, then `Generate`, then `Set`, then `With`
-- `WithContext`, `AfterInsert`, `AfterInsertE`, `WithInsertLog`, and `Only` apply only to the root record. Under `Ref`, including inside a trait resolved for that relation, they return `ErrInvalidOption`
+- `WithContext`, `AfterInsert`, `AfterInsertE`, `WithInsertLog`, `InScope`, and `Only` apply only to the root record. Under `Ref`, including inside a trait resolved for that relation, they return `ErrInvalidOption`
 - `WithContext` may sit inside a trait, and it overrides the `ctx` passed to `InsertOneE`, `InsertManyE`, or `Plan.InsertE`
 - Options under the `Ref` of a `HasMany` / `ManyToMany` relation resolve once per related record, so `At`, `Each`, and `Through` behave the same inside a trait as written directly
 
@@ -246,6 +272,18 @@ Options resolve in one pass that every insert path shares (`InsertOne`, `InsertM
 - Composite keys: use `PKFields`, `LocalFields`, `RefFields`, and `RemoteFields`
 - Non-primary references: set `RefField` or `RefFields` on `BelongsTo` when the foreign key references a unique parent field other than its primary key (for example, `CountryCode` referencing `Country.Code`)
 - Matching field types: a referenced parent field of type `T` can populate a child FK of type `T` or nullable `*T`. No other implicit conversion or pointer unwrapping is performed. Named and underlying types (for example, `type UserID int64` and `int64`) remain distinct
+- Converted field types: when the FK field holds the key in another type, such as `sql.NullInt64`, `sql.Null[int64]`, `pgtype.Int8`, or a named `UserID`, set `Relation.Convert` to say how the value is converted. Keys name the FK fields (`LocalFields`, plus `RemoteFields` for `ManyToMany`); a key that names no FK field of the relation is rejected at registration. Converters run after the parent is inserted, so a zero key still becomes `{Int64: 0, Valid: true}` rather than NULL, and both the converter's input and output types are checked before the first insert. `DryRunString` shows a converted binding as `SET TenantID ← sql.NullInt64(tenants.ID)`. `seedlingpgx` provides converters for the common `pgtype` types (`Int8FK`, `Int4FK`, `Int2FK`, `TextFK`, `UUIDFK`)
+
+```go
+seedling.Relation{
+    Name: "tenant", Kind: seedling.BelongsTo, LocalField: "TenantID", RefBlueprint: "tenant",
+    Convert: map[string]seedling.FKConverter{
+        "TenantID": seedling.ConvertFK(func(id int64) sql.NullInt64 {
+            return sql.NullInt64{Int64: id, Valid: true}
+        }),
+    },
+}
+```
 - Self/mutual references (e.g. `employees.manager_id → employees.id`, or `A ↔ B`) must be `Optional`: a *required* reference back to a blueprint already being expanded has no finite expansion and is rejected with `ErrCycleDetected`. A `HasMany` child bound back to the parent that created it is not such a reference: `Employee → Department → HasMany Employee` inserts the department's employees with their `DepartmentID` set to that department. Because that binding is structural, a `Use` or `Ref` on the child's back-reference (for example `Ref("employees", Use("department", d))`) is rejected with `ErrInvalidOption` instead of being ignored
 
 The execution model and graph expansion rules are documented in [ARCHITECTURE.md](../ARCHITECTURE.md).
@@ -280,7 +318,26 @@ When you use `database/sql`, [`WithTx`](https://pkg.go.dev/github.com/mhiro2/see
 
 [`seedling-gen`](../cmd/seedling-gen) generates model and blueprint definitions from multiple input sources.
 
-Generated blueprints now include deterministic `Defaults` for common scalar fields such as strings, numbers, booleans, byte slices, and `time.Time`. Primary keys (including the untagged `ID` field GORM treats as the key by convention), relation FK fields, and unsupported custom types stay untouched so relation resolution and application-specific constraints remain explicit. Defaults for fields promoted from an embedded `gorm.Model` are written through the embedded struct (`Model: gorm.Model{CreatedAt: ...}`), and the `time` import is added only when generated code actually references it.
+Generated blueprints include `Defaults` for common scalar fields such as strings, numbers, booleans, byte slices, and `time.Time`, shaped by the constraints each adapter can read:
+
+- `sql` and `sqlc`: `UNIQUE` (inline, `UNIQUE (col)`, or a single-column `CREATE UNIQUE INDEX`, including `ASC` / `DESC` / `COLLATE`), `ENUM(...)`, `CREATE TYPE ... AS ENUM`, `CHECK (col IN (...))`, `VARCHAR(n)` / `CHAR(n)`, and `UUID` / `JSON` / `JSONB` column types. Several enum and `CHECK` lists on one column are intersected
+- `atlas`: unique `index` blocks over one column and `varchar(n)` / `char(n)` sizes
+- `gorm`: the `unique` and `size:n` tags
+- `ent`: none; only `time.Time` fields take `scope.Now()`
+
+| Column | Generated default |
+|---|---|
+| unique string | `scope.Unique("user-email")`, or `scope.UniqueN("user-email", n)` for a `VARCHAR(n)` column |
+| unique integer or float | `int64(scope.Seq("user-number"))` |
+| enum or `CHECK (col IN (...))` | the first allowed value, or the allowed values in turn for a unique column; for a sqlc enum type, `db.UserStatus("draft")` (a nullable `NullUserStatus` is left unset) |
+| `VARCHAR(n)` / `CHAR(n)` | a label cut to `n` characters |
+| unique `time.Time` | `scope.Now()` plus one second per record |
+| `UUID` stored as `string` | `scope.UUID()` |
+| `JSON` / `JSONB` stored as `string`, `[]byte`, or `json.RawMessage` | `{}` |
+| `time.Time` | `scope.Now()` |
+| other strings, numbers, booleans | `"user-name"`, `1`, `true` |
+
+`scope` is the [`*seedling.Scope`](#unique-and-reproducible-values-with-scope) the generated `Defaults` receive, so unique values keep counting across every insert of a test. Uniqueness covers rows created in that scope; the generator does not query existing rows, and composite unique constraints, arbitrary `CHECK` expressions, and unique booleans or JSON documents are not solved. Primary keys (including the untagged `ID` field GORM treats as the key by convention), relation FK fields, and unsupported custom types stay untouched so relation resolution and application-specific constraints remain explicit. Defaults for fields promoted from an embedded `gorm.Model` are written through the embedded struct (`Model: gorm.Model{CreatedAt: scope.Now(), ...}`).
 
 Install the CLI:
 
@@ -323,6 +380,7 @@ The generated file starts with `// Code generated by seedling-gen. DO NOT EDIT.`
 - model structs (`sql` and `atlas` only)
 - a `Blueprints` struct with one `seedling.Blueprint[T]` field per model, returned by `NewBlueprints()`
 - `Name`, `Table`, primary keys, `BelongsTo` relations, and starter `Defaults`
+- `Convert` entries on `BelongsTo` relations whose FK field wraps the referenced key in a nullable type: `sql.NullInt64` / `NullInt32` / `NullInt16` / `NullByte` / `NullString`, `sql.Null[T]` for a predeclared `T`, `pgtype.Int8` / `Int4` / `Int2` / `Text` / `UUID`, and `uuid.NullUUID` (`sqlc` and `gorm`). An integer key is widened only when every value fits, so an `int32` key may fill an `sql.NullInt64` but a `uint` or `int64` key never fills an `sql.NullInt16`. Other mismatches, such as a named ID type, are left for the hand-written file to set with `seedling.ConvertFK`; `Plan.Validate` and the insert preflight report them before any row is written
 - an `Optional` `HasMany` relation on each parent for every `BelongsTo` that points at it, named after the plural child blueprint (`users`), or qualified by the relation name when it differs from the parent (`assignee_tasks`). These never expand by default; create children from the parent side with `Ref("users", seedling.Count(3))`
 - `Insert` / `Delete` callbacks where the adapter can derive them
 - `Register(reg) error` and `MustRegister(reg)`, which register every blueprint and report all failures together
@@ -340,9 +398,9 @@ func NewRegistry() *seedling.Registry {
     }
 
     generatedDefaults := blueprints.User.Defaults
-    blueprints.User.Defaults = func() User {
-        u := generatedDefaults()
-        u.Email = "alice@example.com"
+    blueprints.User.Defaults = func(s *seedling.Scope) User {
+        u := generatedDefaults(s)
+        u.Email = s.Unique("user") + "@example.com"
         return u
     }
 
@@ -429,7 +487,7 @@ When `--out` is specified, the output is written atomically via a temporary file
 
 The `ent` subcommand requires the package at `--import-path` to exist and compile. Run Ent code generation before `seedling-gen ent`; this lets seedling-gen use the exact generated names even when the project configures custom acronyms with entc. Generated mixin fields are included in the blueprint and its Insert callback so required mixin values are not silently omitted.
 
-Treat generated `Defaults` as ergonomic starters, not full fake-data generation. If a test needs unique values or domain-specific shapes, wrap them in the hand-written file or override them per test with `Set`, `With`, or `Generate`.
+Treat generated `Defaults` as ergonomic starters, not full fake-data generation. They follow the single-column constraints their adapter reads (see above); for other constraints and domain-specific shapes, wrap them in the hand-written file, drawing from the `Scope` they receive, or override them per test with `Set`, `With`, or `Generate`.
 
 ## Faker Locales
 

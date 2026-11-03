@@ -33,10 +33,10 @@ func NewRegistry() *seedling.Registry {
 		return v, nil
 	}
 	generatedUserDefaults := blueprints.User.Defaults
-	blueprints.User.Defaults = func() User {
-		user := generatedUserDefaults()
+	blueprints.User.Defaults = func(s *seedling.Scope) User {
+		user := generatedUserDefaults(s)
 		user.Name = "test-user"
-		user.Email = "test@example.com"
+		user.Email = s.Unique("user") + "@example.com"
 		return user
 	}
 

@@ -65,11 +65,12 @@ seedling handles FK ordering, graph expansion, and cleanup so your tests stay fo
 
 - 🪶 Zero runtime dependencies in the core module; optional DB helpers live in companion packages
 - 🔗 Automatic FK resolution with topological insert ordering and minimal graph expansion
-- 🌿 First-class relation kinds: `BelongsTo`, `HasMany`, `ManyToMany`, plus composite keys
+- 🌿 First-class relation kinds: `BelongsTo`, `HasMany`, `ManyToMany`, plus composite keys and explicit FK conversion into `sql.NullInt64`, `pgtype.Int8`, or named ID types
 - 🔧 Per-test overrides via `Set`, `Use`, and `Ref`, including the count and per-record options of `HasMany` / `ManyToMany` children
 - 🧱 Generated typed builders (`f.Task().Title("review").Assignee(f.User().Name("alice"))`) that turn field and relation mistakes into compile errors
 - ♻️ `WithTx` for auto-rollback transactions -- no manual cleanup
 - 🔌 Works with sqlc, `database/sql`, pgx, GORM, ent, or any other DB handle you own
+- 🔢 A per-test generation `Scope` passed to `Defaults`: named sequences, unique values, seeded randomness, and a fixed clock shared by every insert in the test
 - 🎲 Deterministic fake data via [`seedling/faker`](https://pkg.go.dev/github.com/mhiro2/seedling/faker) with multi-locale support (en, ja, zh, ko, de, fr)
 
 For advanced features such as `InsertMany`, batch sharing, explicit sharing across relation paths with `Scenario`, `Only`, `When`, and dry runs, see the [Guide](./docs/guide.md).
@@ -119,7 +120,7 @@ The shortest path is two steps: generate blueprints from your schema, then call 
 
    Other input sources are supported (sqlc, GORM, ent, Atlas) -- see the [Guide](./docs/guide.md#cli) for the full list.
 
-   This generates struct types and a `Blueprints` struct (built by `NewBlueprints()`) holding one blueprint per table, with deterministic `Defaults` for common scalar fields, relations, `Register` / `MustRegister` methods, and typed builders returned by `NewFixtures(reg)`. The file is rewritten on every run, so keep your DB logic in a separate hand-written file of the same package:
+   This generates struct types and a `Blueprints` struct (built by `NewBlueprints()`) holding one blueprint per table, with constraint-aware `Defaults` for common scalar fields (unique columns draw from the test's scope, enums take an allowed value, lengths are respected), relations, `Register` / `MustRegister` methods, and typed builders returned by `NewFixtures(reg)`. The file is rewritten on every run, so keep your DB logic in a separate hand-written file of the same package:
 
    ```go
    // blueprints.go (hand-written)
@@ -140,7 +141,7 @@ The shortest path is two steps: generate blueprints from your schema, then call 
 
    Plain DDL does not say how rows are written, so `sql` and `atlas` leave `Insert` unset and registration fails until you set it. The sqlc, GORM, and ent adapters generate `Insert` where they can. Re-run the same command after a schema change; your hand-written file needs no repair, and adding `--check` in CI fails when the generated file is stale.
 
-   Generated relations retain the referenced columns, so foreign keys targeting unique non-primary columns use `RefField`/`RefFields` instead of being treated as primary-key references. Relations are still named after the referenced table, so recording those columns does not rename an existing relation; a name derived from the FK columns is used only to separate two foreign keys that would otherwise collide. Generated `Defaults` intentionally skip primary keys, relation FK fields, and unsupported custom types. They are meant to make the first insert usable with zero setup, not to satisfy every unique or business constraint automatically.
+   Generated relations retain the referenced columns, so foreign keys targeting unique non-primary columns use `RefField`/`RefFields` instead of being treated as primary-key references. Relations are still named after the referenced table, so recording those columns does not rename an existing relation; a name derived from the FK columns is used only to separate two foreign keys that would otherwise collide. A nullable FK that sqlc or GORM types as `sql.NullInt64`, `sql.Null[T]`, `pgtype.Int8`, or a similar wrapper gets a generated `Convert` entry, so the parent key is stored with `Valid: true`. Generated `Defaults` follow single-column constraints from the schema — `UNIQUE` columns get `scope.Unique(...)` / `scope.UniqueN(...)` / `scope.Seq(...)` values that stay distinct across every insert of a test, enum and `CHECK (col IN (...))` columns take an allowed value, `VARCHAR(n)` values fit, and `UUID` / `JSON` columns get valid values — and skip primary keys, relation FK fields, and unsupported custom types. They make inserts usable with zero setup, not a solver for composite or business constraints.
 
    The snippets below assume the generated package is named `testutil`.
    For a runnable minimal version of this flow, see [examples/quickstart](./examples/quickstart).

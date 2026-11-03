@@ -11,7 +11,7 @@ Use this skill when a Go project wants seedling blueprint scaffolding.
 
 - Go model structs for tables (`sql` and `atlas` only)
 - a `Blueprints` struct with one `seedling.Blueprint[T]` field per model, built by `NewBlueprints()`
-- deterministic `Defaults` for common scalar fields
+- constraint-aware `Defaults` for common scalar fields (unique, enum / `CHECK IN`, length, UUID, JSON; fullest for `sql` / `sqlc`, partial for `atlas` / `gorm`, none for `ent`)
 - relation definitions such as `seedling.BelongsTo`
 - `Insert` / `Delete` callbacks only where the adapter can derive them (GORM, ent, sqlc with matching queries)
 - `Register(reg) error` / `MustRegister(reg)` methods that register every blueprint
@@ -62,7 +62,7 @@ Choose exactly one input source. Prefer the strongest source of truth already us
 3. Run `seedling-gen` with one subcommand.
 4. If the schema mapping is uncertain, run the same command with `--explain` first to inspect parsed tables, keys, and inferred relations. Use `--json` when the output needs to be consumed by tooling.
 5. Review generated relation names, optional relations, and composite key handling.
-6. Review generated `Defaults` values and confirm they do not conflict with unique or business constraints.
+6. Review generated `Defaults` values and confirm they satisfy constraints the generator cannot read (composite unique keys, other `CHECK` expressions, business rules).
 7. Write or update the hand-written file that sets missing `Insert` / `Delete` callbacks, wraps `Defaults`, adds `Traits`, and calls `MustRegister`. Do not edit the generated file.
 8. Run formatting and tests in the target repository.
 
@@ -125,15 +125,16 @@ seedling-gen atlas \
 - The `ent` import path must resolve to compilable entc output. `seedling-gen` reads exact field, mixin, setter, lifecycle, and ID signatures so custom acronyms are preserved and missing or incompatible generated signatures are rejected.
 - Every `BelongsTo` also produces an `Optional` `HasMany` relation on the parent (`users`, or `assignee_tasks` when the relation name differs from the parent). It never expands by default; tests opt in with `Ref("users", seedling.Count(n))`.
 - The generated file also declares `NewFixtures(reg)` and an immutable `XBuilder` per model: typed field setters (predeclared types except `any`, plus `time`, `database/sql`, `encoding/json` types outside the `gorm` adapter; others through `With`), `Rel(TargetBuilder)` / `UseRel(Target)` / `LinkRel(seedling.Node[Target])` per belongs-to, `Children(builders...)` per generated has-many, plus `With`, `Apply`, `Trait`, `AfterInsert`, `WithOptions`, `Insert`, `InsertE`, `InsertMany`, `Build`, and `Add`. A model whose `XBuilder` name collides with another declaration is rejected.
-- Generated `Defaults` fill common scalar fields deterministically, but skip primary keys (including GORM's untagged `ID` convention), relation foreign keys, and unsupported custom types. Fields promoted from an embedded `gorm.Model` are set through the embedded struct literal.
-- Customize through the `Blueprints` fields in hand-written code: assign `Insert` / `Delete`, wrap the generated `Defaults` (`base := b.User.Defaults; b.User.Defaults = func() User { u := base(); u.Name = "alice"; return u }`), set `Traits`, or `append` to `Relations`. Adding columns or relations and regenerating then needs no repair to that code.
+- Generated `Defaults` take a `*seedling.Scope` and fill common scalar fields from the schema's single-column constraints: unique columns use `scope.Unique` / `scope.UniqueN` / `scope.Seq` (distinct across every insert of a test), enum and `CHECK (col IN (...))` columns use the first allowed value, `VARCHAR(n)` values fit, UUID strings use `scope.UUID()`, JSON columns get `{}`, and `time.Time` uses `scope.Now()`. They skip primary keys (including GORM's untagged `ID` convention), relation foreign keys, and unsupported custom types. Fields promoted from an embedded `gorm.Model` are set through the embedded struct literal.
+- Customize through the `Blueprints` fields in hand-written code: assign `Insert` / `Delete`, wrap the generated `Defaults` (`base := b.User.Defaults; b.User.Defaults = func(s *seedling.Scope) User { u := base(s); u.Email = s.Unique("user") + "@example.com"; return u }`), set `Traits`, or `append` to `Relations`. Adding columns or relations and regenerating then needs no repair to that code.
 
 ## Troubleshooting
 
 - **GORM model parse failure** — Ensure `--import-path` points to the full Go import path of the models package. If unexported fields or custom types cause issues, check that the package compiles independently with `go build`.
+- **FK type mismatch (`sql.NullInt64`, `pgtype.Int8`, named ID types)** — Generated `BelongsTo` relations already carry a `Convert` entry for known nullable wrappers. For anything else (for example `int64` → `UserID`), set `Relation.Convert` in hand-written code with `seedling.ConvertFK(func(id int64) UserID { return UserID(id) })`; `Plan.Validate` reports the remaining mismatches with a hint.
 - **FK or relation not detected** — `seedling-gen` infers relations from foreign key constraints. If the schema lacks explicit FK definitions (common in MySQL or older DDL), append the missing `Relation` entries to the blueprint's `Relations` in hand-written code.
 - **Composite key mismatch** — Verify that `LocalFields`, `RefFields`, and `RemoteFields` in the generated `Relation` list their columns in matching schema order.
-- **Generated defaults violate constraints** — Override generated `Defaults` when the schema expects unique values, enumerated business values, or non-scalar custom types that the generator intentionally leaves untouched.
+- **Generated defaults violate constraints** — The generator reads single-column `UNIQUE`, enum / `CHECK (col IN (...))`, and length constraints. Wrap the generated `Defaults` for composite unique keys, other `CHECK` expressions, rules the schema does not state, or non-scalar custom types, drawing unique values from the `Scope` they receive.
 - **ent edge not mapped** — A singular edge (`Unique` or `Required`) needs `.Field(...)` on whichever schema holds the FK column, and the named field must also appear in that schema's `Fields()`. The opposite side of a one-to-one needs nothing, since ent does not allow `.Field(...)` there. M2M edges via join tables require manual `ManyToManyRelation` definitions.
 - **ent generated signature mismatch** — Run Ent generation again and ensure `--import-path` names that generated package. seedling-gen stops when schema fields, builder setters, lifecycle methods, or ID types differ from the compiled Ent output.
 

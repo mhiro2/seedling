@@ -19,6 +19,15 @@ type normalizedField struct {
 	IsPK         bool
 	IsRelationFK bool
 	IsOptional   bool
+	// SQLType is the normalized column type, such as "UUID" or "JSONB", when
+	// the adapter reads a schema; it lets defaults produce valid values for
+	// types Go represents as plain strings.
+	SQLType string
+	// EnumValues, MaxLength, and Unique carry the column constraints that
+	// generated defaults respect.
+	EnumValues []string
+	MaxLength  int
+	Unique     bool
 	// Embedded names the embedded struct that promotes this field. Promoted
 	// fields cannot be keyed directly in a composite literal, so defaults for
 	// them are nested under the embedded struct's own literal.
@@ -42,6 +51,9 @@ type normalizedRelation struct {
 	RefFields    []string
 	RefBlueprint string
 	Optional     bool
+	// Converters convert referenced values that the FK fields cannot take
+	// by assignment, such as an int64 key into an sql.NullInt64 field.
+	Converters []normalizedConverter
 }
 
 type normalizedMutationHook struct {
@@ -61,6 +73,13 @@ type normalizedModel struct {
 	Relations     []normalizedRelation
 	InsertHook    *normalizedMutationHook
 	DeleteHook    *normalizedMutationHook
+	// Imports lists the import specs the model's generated code needs
+	// beyond the model package, such as for FK converter types.
+	Imports []string
+	// SourceImports maps the package qualifiers of the file declaring the
+	// model type to their import paths; nil when the adapter does not read
+	// Go source.
+	SourceImports map[string]string
 }
 
 const normalizedStructTemplate = `
@@ -101,13 +120,13 @@ func NewBlueprints() Blueprints {
 {{- else if $model.PKFields}}
 			PKField: {{quote (index $model.PKFields 0)}},
 {{- end}}
-			Defaults: func() {{$model.TypeExpr}} {
+			Defaults: func({{scopeVar}} *seedling.Scope) {{$model.TypeExpr}} {
 				return {{ defaultLiteral $model }}
 			},
 {{- if $model.Relations}}
 			Relations: []seedling.Relation{
 {{- range $model.Relations}}
-				{Name: {{quote .Name}}, Kind: seedling.{{if .HasMany}}HasMany{{else}}BelongsTo{{end}}, {{- if isCompositeRelation .}} LocalFields: []string{ {{- range $i, $field := .LocalFields}}{{if $i}}, {{end}}{{quote $field}}{{end}} }, {{- else}} LocalField: {{quote .LocalField}}, {{- end}}{{- if .RefFields}}{{- if isCompositeReference .}} RefFields: []string{ {{- range $i, $field := .RefFields}}{{if $i}}, {{end}}{{quote $field}}{{end}} }, {{- else}} RefField: {{quote .RefField}}, {{- end}}{{- end}} RefBlueprint: {{quote .RefBlueprint}}{{- if .Optional}}, Optional: true{{- end}}},
+				{Name: {{quote .Name}}, Kind: seedling.{{if .HasMany}}HasMany{{else}}BelongsTo{{end}}, {{- if isCompositeRelation .}} LocalFields: []string{ {{- range $i, $field := .LocalFields}}{{if $i}}, {{end}}{{quote $field}}{{end}} }, {{- else}} LocalField: {{quote .LocalField}}, {{- end}}{{- if .RefFields}}{{- if isCompositeReference .}} RefFields: []string{ {{- range $i, $field := .RefFields}}{{if $i}}, {{end}}{{quote $field}}{{end}} }, {{- else}} RefField: {{quote .RefField}}, {{- end}}{{- end}} RefBlueprint: {{quote .RefBlueprint}}{{- if .Optional}}, Optional: true{{- end}}{{- if .Converters}}, Convert: map[string]seedling.FKConverter{ {{- range $i, $c := .Converters}}{{if $i}}, {{end}}{{quote $c.Field}}: {{$c.Expr}}{{end}} }{{- end}}},
 {{- end}}
 			},
 {{- end}}
@@ -167,6 +186,9 @@ func generateNormalizedCode(w io.Writer, kind, pkg string, imports []string, mod
 
 	imports = append(imports, `"errors"`)
 	imports = append(imports, builderImports...)
+	for _, model := range models {
+		imports = append(imports, model.Imports...)
+	}
 	if len(builders) > 0 {
 		imports = append(imports, `"testing"`)
 	}
@@ -176,6 +198,8 @@ func generateNormalizedCode(w io.Writer, kind, pkg string, imports []string, mod
 	if normalizedModelsNeedTimeImport(models, emitStructs) {
 		imports = append(imports, `"time"`)
 	}
+	scopeVar := chooseScopeVar(imports)
+	imports = append(imports, normalizedDefaultImports(models)...)
 	if err := validateImportNames(imports); err != nil {
 		return fmt.Errorf("%s imports: %w", kind, err)
 	}
@@ -200,9 +224,12 @@ func generateNormalizedCode(w io.Writer, kind, pkg string, imports []string, mod
 		"isCompositeReference": func(rel normalizedRelation) bool {
 			return len(rel.RefFields) > 1
 		},
-		"defaultLiteral": buildDefaultLiteral,
-		"indent":         indentBlock,
-		"quote":          strconv.Quote,
+		"defaultLiteral": func(model normalizedModel) string {
+			return buildDefaultLiteral(model, scopeVar)
+		},
+		"scopeVar": func() string { return scopeVar },
+		"indent":   indentBlock,
+		"quote":    strconv.Quote,
 	})
 	if err != nil {
 		return fmt.Errorf("render %s blueprints: %w", kind, err)
@@ -356,6 +383,11 @@ func validateNormalizedModels(models []normalizedModel, emitStructs bool) error 
 			relationNames[relation.Name] = struct{}{}
 			if len(relation.RefFields) > 0 && len(relation.RefFields) != len(relation.LocalFields) {
 				return fmt.Errorf("model %q relation %q: %d local fields do not match %d referenced fields", name, relation.Name, len(relation.LocalFields), len(relation.RefFields))
+			}
+			for _, converter := range relation.Converters {
+				if err := validateGoExpr("FK converter", converter.Expr); err != nil {
+					return fmt.Errorf("model %q relation %q: %w", name, relation.Name, err)
+				}
 			}
 		}
 	}
@@ -533,6 +565,10 @@ func normalizeTableModels(tables []Table) []normalizedModel {
 				IsPK:         column.IsPK,
 				IsRelationFK: column.IsFK,
 				IsOptional:   !column.NotNull,
+				SQLType:      column.SQLType,
+				EnumValues:   column.EnumValues,
+				MaxLength:    column.MaxLength,
+				Unique:       column.Unique,
 			})
 		}
 
@@ -742,6 +778,7 @@ func normalizeSqlcModels(tables []Table, sqlcInfo *SqlcInfo) ([]normalizedModel,
 			PKFields:      pkFields,
 			Fields:        normalizedSqlcFields(table, fieldsByColumn),
 			Relations:     relations,
+			SourceImports: sqlcModel.Imports,
 		}
 
 		if query := binding.insert; query != nil {
@@ -780,7 +817,7 @@ func normalizeSqlcModels(tables []Table, sqlcInfo *SqlcInfo) ([]normalizedModel,
 
 		models = append(models, model)
 	}
-	return models, nil
+	return withFKConverters(models), nil
 }
 
 func normalizeGormModels(models []GormModel, alias string) []normalizedModel {
@@ -854,6 +891,8 @@ func normalizeGormModels(models []GormModel, alias string) []normalizedModel {
 				IsRelationFK: isRelationFK,
 				IsOptional:   !field.NotNull,
 				Embedded:     field.Embedded,
+				MaxLength:    field.MaxLength,
+				Unique:       field.Unique,
 			})
 		}
 
@@ -872,9 +911,10 @@ func normalizeGormModels(models []GormModel, alias string) []normalizedModel {
 			DeleteHook: &normalizedMutationHook{
 				Body: "return dbtx.(*gorm.DB).WithContext(ctx).Delete(&v).Error",
 			},
+			SourceImports: model.Imports,
 		})
 	}
-	return normalized
+	return withFKConverters(normalized)
 }
 
 func splitCommaSeparatedFields(value string) []string {
@@ -1012,6 +1052,10 @@ func normalizedSqlcFields(table Table, fieldsByColumn map[string]SqlcField) []no
 			IsPK:         column.IsPK,
 			IsRelationFK: column.IsFK,
 			IsOptional:   !column.NotNull,
+			SQLType:      column.SQLType,
+			EnumValues:   column.EnumValues,
+			MaxLength:    column.MaxLength,
+			Unique:       column.Unique,
 		})
 	}
 	return fields
@@ -1157,110 +1201,12 @@ func normalizeTableRelations(table Table) []normalizedRelation {
 	return relations
 }
 
-func buildDefaultLiteral(model normalizedModel) string {
-	prefix, ok := strings.CutSuffix(model.ZeroValueExpr, "{}")
-	if !ok {
-		return model.ZeroValueExpr
-	}
-
-	// Promoted fields are grouped under their embedded struct, which takes the
-	// position of its first defaulted field.
-	type literalEntry struct {
-		embedded *embeddedStruct
-		parts    []string
-	}
-	var entries []*literalEntry
-	embeddedEntries := make(map[embeddedStruct]*literalEntry)
-	for _, field := range model.Fields {
-		expr := defaultFieldExpr(model.BlueprintID, field)
-		if expr == "" {
-			continue
-		}
-		assignment := field.GoName + ": " + expr
-		if field.Embedded == nil {
-			entries = append(entries, &literalEntry{parts: []string{assignment}})
-			continue
-		}
-		entry, ok := embeddedEntries[*field.Embedded]
-		if !ok {
-			entry = &literalEntry{embedded: field.Embedded}
-			embeddedEntries[*field.Embedded] = entry
-			entries = append(entries, entry)
-		}
-		entry.parts = append(entry.parts, assignment)
-	}
-	if len(entries) == 0 {
-		return model.ZeroValueExpr
-	}
-
-	assignments := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if entry.embedded == nil {
-			assignments = append(assignments, entry.parts[0])
-			continue
-		}
-		assignments = append(assignments, entry.embedded.FieldName+": "+entry.embedded.TypeExpr+"{"+strings.Join(entry.parts, ", ")+"}")
-	}
-	return prefix + "{" + strings.Join(assignments, ", ") + "}"
-}
-
-// timeDefaultExpr is the generated default for time.Time fields.
-const timeDefaultExpr = "time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)"
-
-func defaultFieldExpr(blueprintID string, field normalizedField) string {
-	if field.IsPK || field.IsRelationFK {
-		return ""
-	}
-
-	label := blueprintID + "-" + toSnakeCase(field.GoName)
-
-	fieldType := field.GoType
-	if field.DefaultType != "" {
-		fieldType = field.DefaultType
-	}
-
-	switch fieldType {
-	case "string":
-		return strconv.Quote(label)
-	case "bool":
-		return "true"
-	case "int", "int8", "int16", "int32", "int64",
-		"uint", "uint8", "uint16", "uint32", "uint64",
-		"float32", "float64":
-		return "1"
-	case "[]byte":
-		return "[]byte(" + strconv.Quote(label) + ")"
-	case "time.Time":
-		return timeDefaultExpr
-	default:
-		return ""
-	}
-}
-
 // normalizedModelsNeedContextImport reports whether any generated Insert or
 // Delete callback takes a context.
 func normalizedModelsNeedContextImport(models []normalizedModel) bool {
 	return slices.ContainsFunc(models, func(model normalizedModel) bool {
 		return model.InsertHook != nil || model.DeleteHook != nil
 	})
-}
-
-// normalizedModelsNeedTimeImport reports whether the generated file references
-// the time package: through emitted struct field types, or through a default
-// that is actually rendered. A time.Time field skipped by the defaults (a key or
-// relation field) on an existing model type needs no import.
-func normalizedModelsNeedTimeImport(models []normalizedModel, emitStructs bool) bool {
-	for _, model := range models {
-		for _, field := range model.Fields {
-			if emitStructs && field.GoType == "time.Time" {
-				return true
-			}
-			if defaultFieldExpr(model.BlueprintID, field) == timeDefaultExpr {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 type sqlcParamField struct {

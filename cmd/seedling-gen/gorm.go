@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -18,6 +19,9 @@ type GormModel struct {
 	Name   string
 	Table  string
 	Fields []GormField
+	// Imports maps the package qualifiers of the model's file to their
+	// import paths.
+	Imports map[string]string
 }
 
 // GormField represents a field in a GORM model.
@@ -31,6 +35,8 @@ type GormField struct {
 	FKRefModel string
 	Relation   *GormRelation
 	Embedded   *embeddedStruct // set for fields promoted from an embedded struct
+	MaxLength  int             // size tag
+	Unique     bool            // unique tag
 }
 
 // GormRelation represents a GORM relationship extracted from struct tags.
@@ -73,9 +79,11 @@ func ParseGormDir(dir string) ([]GormModel, error) {
 
 	// Collect all struct types and their table name methods.
 	structTypes := make(map[string]*ast.StructType)
+	structImports := make(map[string]map[string]string)
 	tableNames := make(map[string]string) // struct name -> table name from TableName() method
 
 	for _, file := range files {
+		imports := fileImports(file)
 		for _, decl := range file.Decls {
 			switch d := decl.(type) {
 			case *ast.GenDecl:
@@ -86,6 +94,7 @@ func ParseGormDir(dir string) ([]GormModel, error) {
 					ts := spec.(*ast.TypeSpec)
 					if st, ok := ts.Type.(*ast.StructType); ok {
 						structTypes[ts.Name.Name] = st
+						structImports[ts.Name.Name] = imports
 					}
 				}
 			case *ast.FuncDecl:
@@ -112,6 +121,7 @@ func ParseGormDir(dir string) ([]GormModel, error) {
 	models := make([]GormModel, 0, len(names))
 	for _, name := range names {
 		model := parseGormStruct(name, structTypes[name], structTypes)
+		model.Imports = structImports[name]
 		if table, ok := tableNames[name]; ok {
 			model.Table = table
 		}
@@ -163,6 +173,12 @@ func parseGormStruct(name string, st *ast.StructType, allStructs map[string]*ast
 		}
 		if _, ok := tagParts["not null"]; ok {
 			gf.NotNull = true
+		}
+		if _, ok := tagParts["unique"]; ok {
+			gf.Unique = true
+		}
+		if size, err := strconv.Atoi(tagParts["size"]); err == nil && size > 0 {
+			gf.MaxLength = size
 		}
 
 		// Detect relationships.

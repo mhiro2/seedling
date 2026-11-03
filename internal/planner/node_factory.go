@@ -23,7 +23,7 @@ func newBlueprintNode(bp *BlueprintDef, nodeID string, opts *OptionSet) (*graph.
 	}
 
 	node := newGraphNode(bp, nodeID, value, false)
-	if err := applyOpts(node, opts); err != nil {
+	if err := applyOpts(node, opts, bp.NewRand); err != nil {
 		return nil, err
 	}
 	return node, nil

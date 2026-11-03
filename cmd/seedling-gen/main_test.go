@@ -689,7 +689,7 @@ CREATE TABLE users (
 		{name: "bool default", substr: `Active: true`},
 		{name: "numeric default", substr: `Score: 1`},
 		{name: "bytes default", substr: `Avatar: []byte("user-avatar")`},
-		{name: "time default", substr: `CreatedAt: time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)`},
+		{name: "time default", substr: `CreatedAt: scope.Now()`},
 		{name: "relation key skipped", substr: `CompanyID: 1`, missing: true},
 	}
 

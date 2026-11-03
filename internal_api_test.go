@@ -24,7 +24,7 @@ func TestRegistryAdapter_LookupByName(t *testing.T) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() internalCompany {
+		Defaults: func(*Scope) internalCompany {
 			return internalCompany{Name: "test-company"}
 		},
 		Insert: func(_ context.Context, _ DBTX, v internalCompany) (internalCompany, error) {
@@ -36,7 +36,7 @@ func TestRegistryAdapter_LookupByName(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	adapter := newRegistryAdapter(reg)
+	adapter := newRegistryAdapter(reg, nil)
 
 	// Act
 	def, err := adapter.LookupByName("company")
@@ -57,7 +57,7 @@ func TestRegistryAdapter_LookupByName(t *testing.T) {
 
 func TestRegistryAdapter_LookupByName_Missing(t *testing.T) {
 	// Arrange
-	adapter := newRegistryAdapter(NewRegistry())
+	adapter := newRegistryAdapter(NewRegistry(), nil)
 
 	// Act
 	def, err := adapter.LookupByName("missing")
@@ -501,7 +501,7 @@ func TestRegistryAdapter_LookupByType(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	adapter := newRegistryAdapter(reg)
+	adapter := newRegistryAdapter(reg, nil)
 
 	// Act
 	def, err := adapter.LookupByType(reflect.TypeFor[internalCompany]())
@@ -563,7 +563,7 @@ func TestPlanInsertE_RootTypeMismatch(t *testing.T) {
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() internalCompany {
+		Defaults: func(*Scope) internalCompany {
 			return internalCompany{Name: "test-company"}
 		},
 		Insert: func(_ context.Context, _ DBTX, v internalCompany) (internalCompany, error) {

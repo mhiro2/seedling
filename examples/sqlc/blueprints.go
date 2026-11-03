@@ -28,7 +28,7 @@ func RegisterBlueprints(reg *seedling.Registry) {
 		Name:    "organization",
 		Table:   "organizations",
 		PKField: "ID",
-		Defaults: func() Organization {
+		Defaults: func(*seedling.Scope) Organization {
 			return Organization{Name: "test-org"}
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v Organization) (Organization, error) {
@@ -42,7 +42,7 @@ func RegisterBlueprints(reg *seedling.Registry) {
 		Name:    "member",
 		Table:   "members",
 		PKField: "ID",
-		Defaults: func() Member {
+		Defaults: func(*seedling.Scope) Member {
 			return Member{Name: "test-member", Email: "member@example.com"}
 		},
 		Relations: []seedling.Relation{

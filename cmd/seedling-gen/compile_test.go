@@ -414,8 +414,8 @@ func NewRegistry() *seedling.Registry {
 	blueprints.User.Insert = insertWithID(func(u *User, id int) { u.ID = id })
 
 	generatedUserDefaults := blueprints.User.Defaults
-	blueprints.User.Defaults = func() User {
-		user := generatedUserDefaults()
+	blueprints.User.Defaults = func(s *seedling.Scope) User {
+		user := generatedUserDefaults(s)
 		user.Name = "alice"
 		return user
 	}

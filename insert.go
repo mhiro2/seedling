@@ -21,7 +21,7 @@ func InsertOne[T any](tb testing.TB, db DBTX, opts ...Option) Result[T] {
 // dependencies automatically resolved. Fails the test on error.
 func (s Session[T]) InsertOne(tb testing.TB, db DBTX, opts ...Option) Result[T] {
 	tb.Helper()
-	result, err := s.InsertOneE(tb.Context(), db, opts...)
+	result, err := s.forTest(tb).InsertOneE(tb.Context(), db, opts...)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func InsertMany[T any](tb testing.TB, db DBTX, n int, opts ...Option) []T {
 // are identical across records. Fails the test on error.
 func (s Session[T]) InsertMany(tb testing.TB, db DBTX, n int, opts ...Option) []T {
 	tb.Helper()
-	result, err := s.InsertManyE(tb.Context(), db, n, opts...)
+	result, err := s.forTest(tb).InsertManyE(tb.Context(), db, n, opts...)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -104,7 +104,8 @@ func (s Session[T]) InsertManyE(ctx context.Context, db DBTX, n int, opts ...Opt
 		internalOpts[i] = toOptionSet(prepared)
 	}
 
-	adapter := newRegistryAdapter(s.registry)
+	// InScope is a root option, so every record resolves the same one.
+	adapter := newRegistryAdapter(s.registry, resolveScope(collected[0].scope, s.scope))
 	plan, err := planner.PlanMany(adapter, rootType, internalOpts)
 	if err != nil {
 		return zero, fmt.Errorf("build plan: %w", err)

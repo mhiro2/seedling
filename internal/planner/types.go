@@ -5,6 +5,7 @@ import (
 	"math/rand/v2"
 	"reflect"
 
+	"github.com/mhiro2/seedling/internal/field"
 	"github.com/mhiro2/seedling/internal/graph"
 )
 
@@ -24,6 +25,7 @@ type BlueprintDef struct {
 	PKFields  []string
 	Relations []RelationDef
 	Defaults  func() any
+	NewRand   func() *rand.Rand // source for Generate options without WithRand; nil uses a fixed seed
 	Insert    func(ctx context.Context, db, v any) (any, error)
 	Delete    func(ctx context.Context, db, v any) error
 	ModelType reflect.Type
@@ -39,8 +41,9 @@ type RelationDef struct {
 	ThroughBlueprint string
 	RemoteFields     []string
 	Required         bool
-	Count            int            // For has_many/many_to_many: number of records to create; zero (including unset) creates none
-	When             func(any) bool // Optional predicate: expand only when true
+	Count            int                         // For has_many/many_to_many: number of records to create; zero (including unset) creates none
+	When             func(any) bool              // Optional predicate: expand only when true
+	Convert          map[string]*field.Converter // child FK field name → converter for its referenced parent value
 }
 
 // Registry is the interface the planner uses to look up blueprints.

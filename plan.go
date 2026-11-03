@@ -43,7 +43,7 @@ func (s Session[T]) BuildE(opts ...Option) (*Plan[T], error) {
 		return nil, err
 	}
 
-	adapter := newRegistryAdapter(s.registry)
+	adapter := newRegistryAdapter(s.registry, resolveScope(collected.scope, s.scope))
 	optSet := toOptionSet(collected)
 
 	result, err := planner.Plan(adapter, rootType, optSet)
@@ -72,7 +72,7 @@ func Build[T any](tb testing.TB, opts ...Option) *Plan[T] {
 // Fails the test on error.
 func (s Session[T]) Build(tb testing.TB, opts ...Option) *Plan[T] {
 	tb.Helper()
-	plan, err := s.BuildE(opts...)
+	plan, err := s.forTest(tb).BuildE(opts...)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func (p *Plan[T]) InsertE(ctx context.Context, db DBTX) (Result[T], error) {
 		}
 	}
 
-	adapter := newRegistryAdapter(p.registry)
+	adapter := newRegistryAdapter(p.registry, nil)
 	g := p.graph.Clone()
 	effectiveDB := p.resolveDB(db)
 	execResult, err := executor.Execute(ctx, effectiveDB, g, adapter, p.toExecutorLogFn())

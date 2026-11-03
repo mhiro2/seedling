@@ -19,7 +19,7 @@ func RegisterBlueprints(reg *seedling.Registry) {
 		Name:    "user",
 		Table:   "users",
 		PKField: "ID",
-		Defaults: func() User {
+		Defaults: func(*seedling.Scope) User {
 			return User{
 				Name:   "test-user",
 				Email:  "test@example.com",

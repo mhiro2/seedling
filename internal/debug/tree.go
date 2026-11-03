@@ -194,6 +194,10 @@ func DryRunString(g *graph.Graph) string {
 				parentTable = edge.Parent.BlueprintName
 			}
 			for _, binding := range edge.Bindings {
+				if binding.Convert != nil {
+					fmt.Fprintf(&b, "        SET %s ← %s(%s.%s)\n", binding.ChildField, binding.Convert.To, parentTable, binding.ParentField)
+					continue
+				}
 				fmt.Fprintf(&b, "        SET %s ← %s.%s\n", binding.ChildField, parentTable, binding.ParentField)
 			}
 		}

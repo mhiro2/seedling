@@ -61,7 +61,7 @@ func RegisterBasic(tb testing.TB, reg *seedling.Registry, inserters BasicInserte
 		Name:    "company",
 		Table:   "companies",
 		PKField: "ID",
-		Defaults: func() Company {
+		Defaults: func(*seedling.Scope) Company {
 			return Company{Name: "test-company"}
 		},
 		Insert: inserters.Company,
@@ -71,7 +71,7 @@ func RegisterBasic(tb testing.TB, reg *seedling.Registry, inserters BasicInserte
 		Name:    "user",
 		Table:   "users",
 		PKField: "ID",
-		Defaults: func() User {
+		Defaults: func(*seedling.Scope) User {
 			return User{Name: "test-user"}
 		},
 		Relations: []seedling.Relation{
@@ -84,7 +84,7 @@ func RegisterBasic(tb testing.TB, reg *seedling.Registry, inserters BasicInserte
 		Name:    "project",
 		Table:   "projects",
 		PKField: "ID",
-		Defaults: func() Project {
+		Defaults: func(*seedling.Scope) Project {
 			return Project{Name: "test-project"}
 		},
 		Relations: []seedling.Relation{
@@ -97,7 +97,7 @@ func RegisterBasic(tb testing.TB, reg *seedling.Registry, inserters BasicInserte
 		Name:    "task",
 		Table:   "tasks",
 		PKField: "ID",
-		Defaults: func() Task {
+		Defaults: func(*seedling.Scope) Task {
 			return Task{Title: "test-task", Status: "open"}
 		},
 		Relations: []seedling.Relation{
@@ -136,7 +136,7 @@ func RegisterHasMany(tb testing.TB, reg *seedling.Registry, inserters HasManyIns
 		Name:    "department",
 		Table:   "departments",
 		PKField: "ID",
-		Defaults: func() Department {
+		Defaults: func(*seedling.Scope) Department {
 			return Department{Name: "engineering"}
 		},
 		Relations: []seedling.Relation{
@@ -149,7 +149,7 @@ func RegisterHasMany(tb testing.TB, reg *seedling.Registry, inserters HasManyIns
 		Name:    "employee",
 		Table:   "employees",
 		PKField: "ID",
-		Defaults: func() Employee {
+		Defaults: func(*seedling.Scope) Employee {
 			return Employee{Name: "employee"}
 		},
 		Relations: []seedling.Relation{
@@ -192,7 +192,7 @@ func RegisterCompositePK(tb testing.TB, reg *seedling.Registry, inserters Compos
 		Name:     "region",
 		Table:    "regions",
 		PKFields: []string{"Code", "Number"},
-		Defaults: func() Region {
+		Defaults: func(*seedling.Scope) Region {
 			return Region{Name: "tokyo"}
 		},
 		Insert: inserters.Region,
@@ -202,7 +202,7 @@ func RegisterCompositePK(tb testing.TB, reg *seedling.Registry, inserters Compos
 		Name:    "deployment",
 		Table:   "deployments",
 		PKField: "ID",
-		Defaults: func() Deployment {
+		Defaults: func(*seedling.Scope) Deployment {
 			return Deployment{Name: "deployment"}
 		},
 		Relations: []seedling.Relation{
@@ -249,7 +249,7 @@ func RegisterManyToMany(tb testing.TB, reg *seedling.Registry, inserters ManyToM
 		Name:    "article",
 		Table:   "articles",
 		PKField: "ID",
-		Defaults: func() Article {
+		Defaults: func(*seedling.Scope) Article {
 			return Article{Title: "seedling"}
 		},
 		Relations: []seedling.Relation{
@@ -270,7 +270,7 @@ func RegisterManyToMany(tb testing.TB, reg *seedling.Registry, inserters ManyToM
 		Name:    "tag",
 		Table:   "tags",
 		PKField: "ID",
-		Defaults: func() Tag {
+		Defaults: func(*seedling.Scope) Tag {
 			return Tag{Name: "tag"}
 		},
 		Insert: inserters.Tag,
@@ -280,7 +280,7 @@ func RegisterManyToMany(tb testing.TB, reg *seedling.Registry, inserters ManyToM
 		Name:     "article_tag",
 		Table:    "article_tags",
 		PKFields: []string{"ArticleID", "TagID"},
-		Defaults: func() ArticleTag {
+		Defaults: func(*seedling.Scope) ArticleTag {
 			return ArticleTag{}
 		},
 		Relations: []seedling.Relation{

@@ -26,6 +26,15 @@ type Column struct {
 	FKRefColumns []string
 	NotNull      bool
 
+	// EnumValues lists the values the column accepts, read from an ENUM
+	// type or a CHECK (column IN (...)) constraint.
+	EnumValues []string
+	// MaxLength is the declared maximum length of a string column, or zero.
+	MaxLength int
+	// Unique marks a column that a single-column unique constraint or index
+	// covers.
+	Unique bool
+
 	// descendingKey marks an inline PRIMARY KEY DESC, which in SQLite is not an
 	// alias for the rowid even on an INTEGER column.
 	descendingKey bool
@@ -82,6 +91,7 @@ func ParseSchemaWithDialect(sql, dialect string) ([]Table, error) {
 		}
 		tables = append(tables, t)
 	}
+	applyUniqueIndexes(tables, sql, masked)
 	return tables, nil
 }
 
@@ -170,21 +180,28 @@ func findMatchingParen(masked string, openIdx int) int {
 	return -1
 }
 
-func extractEnumTypes(sql, masked string) map[string]struct{} {
+// extractEnumTypes maps each CREATE TYPE ... AS ENUM type to its values. A
+// type whose value list cannot be read maps to nil, which still marks it as
+// an enum.
+func extractEnumTypes(sql, masked string) map[string][]string {
 	locs := createEnumRE.FindAllStringSubmatchIndex(masked, -1)
 	if len(locs) == 0 {
 		return nil
 	}
 
-	enumTypes := make(map[string]struct{}, len(locs))
+	enumTypes := make(map[string][]string, len(locs))
 	for _, loc := range locs {
-		enumTypes[normalizeIdent(sql[loc[2]:loc[3]])] = struct{}{}
+		var values []string
+		if end := findMatchingParen(masked, loc[1]-1); end != -1 {
+			values, _ = parseStringLiterals(sql[loc[1]:end], false)
+		}
+		enumTypes[normalizeIdent(sql[loc[2]:loc[3]])] = values
 	}
 
 	return enumTypes
 }
 
-func parseColumns(block createTableBlock, enumTypes map[string]struct{}, d sqlDialect) ([]Column, []ForeignKey) {
+func parseColumns(block createTableBlock, enumTypes map[string][]string, d sqlDialect) ([]Column, []ForeignKey) {
 	items := splitSQLItems(block.Body)
 	columns := make([]Column, 0, len(items))
 	foreignKeys := make([]ForeignKey, 0, len(items))
@@ -201,7 +218,7 @@ func parseColumns(block createTableBlock, enumTypes map[string]struct{}, d sqlDi
 			continue
 		}
 
-		col, ok := parseColumn(item, enumTypes)
+		col, ok := parseColumn(item, enumTypes, d.backslashEscapes)
 		if !ok {
 			continue
 		}
@@ -221,6 +238,9 @@ func parseColumns(block createTableBlock, enumTypes map[string]struct{}, d sqlDi
 		if fk, ok := applyTableConstraint(columns, columnIndex, constraint); ok {
 			foreignKeys = append(foreignKeys, fk)
 		}
+	}
+	for _, item := range items {
+		applyCheckIn(columns, columnIndex, item, d.backslashEscapes)
 	}
 
 	// Nullability is settled only once every constraint is known, because a
@@ -267,7 +287,7 @@ func columnsNotNull(columns []Column, columnIndex map[string]int, names []string
 	return true
 }
 
-func parseColumn(item sqlText, enumTypes map[string]struct{}) (Column, bool) {
+func parseColumn(item sqlText, enumTypes map[string][]string, backslash bool) (Column, bool) {
 	nameToken, rest, ok := splitLeadingIdent(item.Text)
 	if !ok {
 		return Column{}, false
@@ -295,6 +315,13 @@ func parseColumn(item sqlText, enumTypes map[string]struct{}) (Column, bool) {
 
 		descendingKey: descendingKeyRE.MatchString(upper),
 	}
+	if values, ok := enumTypes[strings.ToLower(sqlType)]; ok {
+		col.EnumValues = values
+	}
+	if afterName := strings.Index(item.Text, nameToken) + len(nameToken); afterName >= len(nameToken) {
+		applyColumnTypeArgs(&col, item.slice(afterName, len(item.Text)), backslash)
+	}
+	col.Unique = !col.IsPK && columnUniqueRE.MatchString(item.Masked)
 
 	if loc := inlineRefRE.FindStringSubmatchIndex(item.Masked); loc != nil {
 		col.IsFK = true
@@ -311,6 +338,12 @@ func applyTableConstraint(columns []Column, columnIndex map[string]int, constrai
 	// Constraint keywords are matched in the masked text, so a CHECK body like
 	// 'PRIMARY KEY (id)' is not mistaken for a real constraint. Captured
 	// identifiers are sliced from the original to keep their exact spelling.
+	leading := len(constraint.Masked) - len(strings.TrimLeft(constraint.Masked, " \t\r\n"))
+	trimmed := constraint.slice(leading, len(constraint.Masked))
+	if loc := uniqueColumnsRE.FindStringSubmatchIndex(trimmed.Masked); loc != nil {
+		markUniqueColumns(columns, columnIndex, indexColumnNames(trimmed.Text[loc[2]:loc[3]]))
+	}
+
 	if loc := tablePKRE.FindStringSubmatchIndex(constraint.Masked); loc != nil {
 		for _, colName := range splitIdentifierList(constraint.Text[loc[2]:loc[3]]) {
 			if idx, ok := columnIndex[colName]; ok {
@@ -449,8 +482,8 @@ func normalizeSQLType(sqlType string) string {
 	return strings.ToUpper(sqlType)
 }
 
-func sqlTypeToGoType(sqlType string, enumTypes ...map[string]struct{}) string {
-	var knownEnums map[string]struct{}
+func sqlTypeToGoType(sqlType string, enumTypes ...map[string][]string) string {
+	var knownEnums map[string][]string
 	if len(enumTypes) > 0 {
 		knownEnums = enumTypes[0]
 	}

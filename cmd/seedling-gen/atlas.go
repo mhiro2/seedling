@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -20,6 +21,9 @@ var (
 	atlasFK_RE    = regexp.MustCompile(`(?mis)(?:^|[^\w-])foreign_key\s+"([^"]*)"\s*\{([^}]+)\}`)
 	atlasFKColsRE = regexp.MustCompile(`(?mi)(?:^|[^\w-])columns\s*=\s*\[([^\]]+)\]`)
 	atlasFKRefRE  = regexp.MustCompile(`(?mi)(?:^|[^\w-])ref_columns\s*=\s*\[([^\]]+)\]`)
+	atlasIndexRE  = regexp.MustCompile(`(?mis)(?:^|[^\w-])index\s+"[^"]*"\s*\{([^}]+)\}`)
+	atlasUniqueRE = regexp.MustCompile(`(?mi)(?:^|[^\w-])unique\s*=\s*true`)
+	atlasSizeRE   = regexp.MustCompile(`(?i)^(?:varchar|char|character|nvarchar|nchar)\s*\(\s*(\d+)\s*\)`)
 )
 
 // ParseAtlasHCL parses an Atlas HCL schema file and returns []Table.
@@ -122,6 +126,15 @@ func parseAtlasTable(block atlasTableBlock) (Table, error) {
 		}
 	}
 
+	// A single-column unique index makes that column unique.
+	for _, match := range atlasIndexRE.FindAllStringSubmatch(block.Masked, -1) {
+		cols := atlasFKColsRE.FindStringSubmatch(match[1])
+		if cols == nil || !atlasUniqueRE.MatchString(match[1]) {
+			continue
+		}
+		markUniqueColumns(t.Columns, columnIndex, splitAtlasColumnRefs(cols[1]))
+	}
+
 	// Parse foreign keys.
 	for _, loc := range atlasFK_RE.FindAllStringSubmatchIndex(block.Masked, -1) {
 		fkName := block.Body[loc[2]:loc[3]]
@@ -212,6 +225,9 @@ func parseAtlasColumn(cb atlasColumnBlock) Column {
 		sqlType := normalizeAtlasType(m[1])
 		col.SQLType = sqlType
 		col.GoType = sqlTypeToGoType(sqlType)
+		if size := atlasSizeRE.FindStringSubmatch(m[1]); size != nil {
+			col.MaxLength, _ = strconv.Atoi(size[1])
+		}
 	}
 
 	// Extract null.

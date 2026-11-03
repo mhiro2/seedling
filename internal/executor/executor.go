@@ -194,7 +194,7 @@ func validateFKBindings(node *graph.Node) error {
 		parent := edge.Parent
 		parentType := reflect.TypeOf(parent.Value)
 		for _, binding := range edge.Bindings {
-			if err := field.CanBind(parentType, binding.ParentField, node.Value, binding.ChildField); err != nil {
+			if err := field.CanBind(parentType, binding.ParentField, node.Value, binding.ChildField, binding.Convert); err != nil {
 				return fmt.Errorf("bind parent %q field %q to node %q field %q: %w",
 					parent.ID, binding.ParentField, node.ID, binding.ChildField, err)
 			}
@@ -329,7 +329,7 @@ func assignFKs(node *graph.Node) error {
 	for _, edge := range deps {
 		parent := edge.Parent
 		for _, binding := range edge.Bindings {
-			if err := field.Copy(parent.Value, binding.ParentField, target, binding.ChildField); err != nil {
+			if err := field.Copy(parent.Value, binding.ParentField, target, binding.ChildField, binding.Convert); err != nil {
 				return fmt.Errorf("bind parent %q field %q to node %q field %q: %w",
 					parent.ID, binding.ParentField, node.ID, binding.ChildField, err)
 			}

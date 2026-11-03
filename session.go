@@ -16,6 +16,7 @@ type TxBeginner interface {
 type Session[T any] struct {
 	registry *Registry
 	db       DBTX
+	scope    *Scope
 }
 
 // NewSession returns a typed session backed by the provided registry.
@@ -53,6 +54,24 @@ func NewTestSession[T any](tb testing.TB, reg *Registry, db TxBeginner, txOption
 // Plan.InsertE overrides it.
 func (s Session[T]) WithDB(db DBTX) Session[T] {
 	s.db = db
+	return s
+}
+
+// WithScope returns a copy of the session that plans records in scope, for
+// the testing APIs as well as the error-returning ones. An [InScope] option
+// overrides it.
+func (s Session[T]) WithScope(scope *Scope) Session[T] {
+	s.scope = scope
+	return s
+}
+
+// forTest returns the session the testing APIs use for tb: one planning in
+// the test's scope unless a scope is already bound.
+func (s Session[T]) forTest(tb testing.TB) Session[T] {
+	tb.Helper()
+	if s.scope == nil {
+		s.scope = TestScope(tb)
+	}
 	return s
 }
 

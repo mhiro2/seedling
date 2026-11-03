@@ -23,7 +23,7 @@ func TestBuildDefaultLiteral_FillsSupportedScalarFields(t *testing.T) {
 	}
 
 	// Act
-	got := buildDefaultLiteral(model)
+	got := buildDefaultLiteral(model, "scope")
 
 	// Assert
 	tests := []struct {
@@ -35,7 +35,7 @@ func TestBuildDefaultLiteral_FillsSupportedScalarFields(t *testing.T) {
 		{name: "bool field", substr: `Active: true`},
 		{name: "float field", substr: `Score: 1`},
 		{name: "byte slice field", substr: `Blob: []byte("user-blob")`},
-		{name: "time field", substr: `CreatedAt: time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)`},
+		{name: "time field", substr: `CreatedAt: scope.Now()`},
 		{name: "primary key skipped", substr: `ID:`, missing: true},
 		{name: "relation foreign key skipped", substr: `CompanyID:`, missing: true},
 		{name: "unsupported type skipped", substr: `Token:`, missing: true},
@@ -66,7 +66,7 @@ func TestBuildDefaultLiteral_FallsBackToZeroValueWhenNothingIsFillable(t *testin
 	}
 
 	// Act
-	got := buildDefaultLiteral(model)
+	got := buildDefaultLiteral(model, "scope")
 
 	// Assert
 	if got != "&ent.Company{}" {
@@ -89,11 +89,11 @@ func TestNormalizedModelsNeedTimeImport(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "with time default",
+			name: "time default drawn from the scope",
 			models: []normalizedModel{
 				{Fields: []normalizedField{{GoName: "CreatedAt", GoType: "time.Time"}}},
 			},
-			want: true,
+			want: false,
 		},
 		{
 			name: "time key on existing model type",
@@ -125,5 +125,60 @@ func TestNormalizedModelsNeedTimeImport(t *testing.T) {
 				t.Fatalf("got %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestDefaultFieldExpr_RespectsColumnConstraints(t *testing.T) {
+	sqlcModel := normalizedModel{
+		BlueprintID:   "user",
+		TypeExpr:      "db.User",
+		SourceImports: map[string]string{"json": "encoding/json"},
+	}
+	tests := []struct {
+		name        string
+		field       normalizedField
+		want        string
+		wantImports []string
+	}{
+		{name: "enum string", field: normalizedField{GoName: "Status", GoType: "string", EnumValues: []string{"draft", "active"}}, want: `"draft"`},
+		{name: "enum named type", field: normalizedField{GoName: "Status", GoType: "UserStatus", EnumValues: []string{"draft"}}, want: `db.UserStatus("draft")`},
+		{name: "enum of unknown package", field: normalizedField{GoName: "Status", GoType: "other.Status", EnumValues: []string{"draft"}}, want: ``},
+		{name: "unique string", field: normalizedField{GoName: "Email", GoType: "string", Unique: true}, want: `scope.Unique("user-email")`},
+		{name: "unique length-limited string", field: normalizedField{GoName: "Email", GoType: "string", Unique: true, MaxLength: 16}, want: `scope.UniqueN("user-email", 16)`},
+		{name: "unique enum", field: normalizedField{GoName: "Status", GoType: "string", Unique: true, EnumValues: []string{"a", "b"}}, want: `[]string{"a", "b"}[(scope.Seq("user-status")-1)%2]`},
+		{name: "nullable sqlc enum", field: normalizedField{GoName: "Status", GoType: "NullUserStatus", EnumValues: []string{"draft"}}, want: ``},
+		{name: "unique time", field: normalizedField{GoName: "At", GoType: "time.Time", Unique: true}, want: `scope.Now().Add(time.Duration(scope.Seq("user-at")) * time.Second)`, wantImports: []string{`"time"`}},
+		{name: "unique bytes", field: normalizedField{GoName: "Token", GoType: "[]byte", Unique: true}, want: `[]byte(scope.Unique("user-token"))`},
+		{name: "unique int", field: normalizedField{GoName: "Number", GoType: "int", Unique: true}, want: `scope.Seq("user-number")`},
+		{name: "unique int64", field: normalizedField{GoName: "Number", GoType: "int64", Unique: true}, want: `int64(scope.Seq("user-number"))`},
+		{name: "length-limited string", field: normalizedField{GoName: "Nickname", GoType: "string", MaxLength: 6}, want: `"user-n"`},
+		{name: "uuid string", field: normalizedField{GoName: "Token", GoType: "string", SQLType: "UUID"}, want: `scope.UUID()`},
+		{name: "uuid typed", field: normalizedField{GoName: "Token", GoType: "uuid.UUID", SQLType: "UUID"}, want: ``},
+		{name: "json string", field: normalizedField{GoName: "Meta", GoType: "string", SQLType: "JSONB"}, want: `"{}"`},
+		{name: "json bytes", field: normalizedField{GoName: "Meta", GoType: "[]byte", SQLType: "JSON"}, want: `[]byte("{}")`},
+		{name: "json raw message", field: normalizedField{GoName: "Meta", GoType: "json.RawMessage", SQLType: "JSONB"}, want: `json.RawMessage("{}")`, wantImports: []string{`"encoding/json"`}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Act
+			got, imports := defaultFieldExpr(sqlcModel, tt.field, "scope")
+
+			// Assert
+			if got != tt.want {
+				t.Fatalf("expr = %s, want %s", got, tt.want)
+			}
+			if strings.Join(imports, ",") != strings.Join(tt.wantImports, ",") {
+				t.Fatalf("imports = %v, want %v", imports, tt.wantImports)
+			}
+		})
+	}
+}
+
+func TestChooseScopeVar_AvoidsImportedNames(t *testing.T) {
+	if got := chooseScopeVar([]string{`"github.com/mhiro2/seedling"`}); got != "scope" {
+		t.Fatalf("got %q, want scope", got)
+	}
+	if got := chooseScopeVar([]string{`"example.com/scope"`}); got != "seedlingScope" {
+		t.Fatalf("got %q, want seedlingScope", got)
 	}
 }

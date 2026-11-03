@@ -1,5 +1,11 @@
 package seedling
 
+import (
+	"reflect"
+
+	"github.com/mhiro2/seedling/internal/field"
+)
+
 // Relation describes a dependency between two blueprints.
 type Relation struct {
 	// Name is the non-empty identifier used with Use() and Ref() (e.g.
@@ -79,6 +85,57 @@ type Relation struct {
 	//	    return v.(Task).Status == "assigned"
 	//	},
 	When func(v any) bool
+
+	// Convert maps an FK field name to the converter that turns the referenced
+	// parent value into that field's type. Use it when the parent value cannot
+	// be assigned to the FK field directly, such as an int64 key stored in a
+	// sql.NullInt64 or pgtype.Int8 column, or in a named ID type. A field
+	// without a converter must accept the parent value by assignment, or as a
+	// pointer to it.
+	//
+	// Keys name the fields that receive the parent value: LocalFields for
+	// BelongsTo and HasMany, and LocalFields or RemoteFields for ManyToMany.
+	// Converters run after the parent is inserted, on the key it returned, so
+	// a zero key still becomes a valid (non-NULL) value:
+	//
+	//	Convert: map[string]seedling.FKConverter{
+	//	    "ManagerID": seedling.ConvertFK(func(id int64) sql.NullInt64 {
+	//	        return sql.NullInt64{Int64: id, Valid: true}
+	//	    }),
+	//	},
+	//
+	// A has-many child created through a matching BelongsTo of its own takes
+	// its FK from that relation, including that relation's converters.
+	Convert map[string]FKConverter
+}
+
+// FKConverter converts a referenced parent value into the value stored in a
+// child FK field. Build one with [ConvertFK] and attach it to a relation with
+// [Relation.Convert]. The zero value is invalid.
+type FKConverter struct {
+	conv *field.Converter
+}
+
+// ConvertFK returns an [FKConverter] that passes the parent value through fn.
+// The parent field must be assignable to From, and To must be assignable to
+// the FK field (or to the element of a pointer FK field). Both are checked
+// before any record is inserted.
+//
+//	seedling.ConvertFK(func(id int64) UserID { return UserID(id) })
+func ConvertFK[From, To any](fn func(From) To) FKConverter {
+	if fn == nil {
+		return FKConverter{}
+	}
+	return FKConverter{conv: &field.Converter{
+		From: reflect.TypeFor[From](),
+		To:   reflect.TypeFor[To](),
+		Fn: func(v reflect.Value) reflect.Value {
+			var in From
+			reflect.ValueOf(&in).Elem().Set(v)
+			out := fn(in)
+			return reflect.ValueOf(&out).Elem()
+		},
+	}}
 }
 
 // WhenFunc creates a type-safe predicate for use in [Relation.When].

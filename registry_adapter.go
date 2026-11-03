@@ -9,15 +9,20 @@ import (
 // registryAdapter adapts a Registry to the planner.Registry interface.
 // It caches converted BlueprintDef values to avoid repeated allocations
 // during a single planning/insert operation.
+//
+// The scope is the one Defaults and Generate draw from while planning; it is
+// unused by execution and cleanup, which never build new values.
 type registryAdapter struct {
 	reg    *Registry
+	scope  *Scope
 	byName map[string]*planner.BlueprintDef
 	byType map[reflect.Type]*planner.BlueprintDef
 }
 
-func newRegistryAdapter(reg *Registry) *registryAdapter {
+func newRegistryAdapter(reg *Registry, scope *Scope) *registryAdapter {
 	return &registryAdapter{
 		reg:    resolveRegistry(reg),
+		scope:  resolveScope(scope),
 		byName: make(map[string]*planner.BlueprintDef),
 		byType: make(map[reflect.Type]*planner.BlueprintDef),
 	}
@@ -31,7 +36,7 @@ func (a *registryAdapter) LookupByName(name string) (*planner.BlueprintDef, erro
 	if err != nil {
 		return nil, err
 	}
-	bd := toBlueprintDef(def)
+	bd := toBlueprintDef(def, a.scope)
 	a.byName[name] = bd
 	return bd, nil
 }
@@ -44,12 +49,12 @@ func (a *registryAdapter) LookupByType(t reflect.Type) (*planner.BlueprintDef, e
 	if err != nil {
 		return nil, err
 	}
-	bd := toBlueprintDef(def)
+	bd := toBlueprintDef(def, a.scope)
 	a.byType[t] = bd
 	return bd, nil
 }
 
-func toBlueprintDef(def *blueprintDef) *planner.BlueprintDef {
+func toBlueprintDef(def *blueprintDef, scope *Scope) *planner.BlueprintDef {
 	rels := make([]planner.RelationDef, len(def.relations))
 	for i, r := range def.relations {
 		rels[i] = planner.RelationDef{
@@ -63,6 +68,7 @@ func toBlueprintDef(def *blueprintDef) *planner.BlueprintDef {
 			Required:         r.required,
 			Count:            r.count,
 			When:             r.when,
+			Convert:          r.convert,
 		}
 	}
 	return &planner.BlueprintDef{
@@ -70,7 +76,8 @@ func toBlueprintDef(def *blueprintDef) *planner.BlueprintDef {
 		Table:     def.table,
 		PKFields:  cloneStrings(def.pkFields),
 		Relations: rels,
-		Defaults:  def.defaults,
+		Defaults:  func() any { return def.defaults(scope) },
+		NewRand:   scope.Rand,
 		Insert:    def.insert,
 		Delete:    def.delete,
 		ModelType: def.modelType,

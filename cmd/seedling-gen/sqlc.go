@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -15,6 +16,10 @@ import (
 type SqlcModel struct {
 	Name   string
 	Fields []SqlcField
+	// Imports maps the package qualifiers of the file declaring the model
+	// to their import paths, so field types such as pgtype.Int8 can be
+	// traced to their package.
+	Imports map[string]string
 }
 
 // SqlcField represents a field in a sqlc-generated struct.
@@ -93,8 +98,10 @@ func ParseSqlcDir(dir string) (*SqlcInfo, error) {
 	}
 
 	structTypes := make(map[string]*ast.StructType)
+	structImports := make(map[string]map[string]string)
 
 	for _, file := range files {
+		imports := fileImports(file)
 		for _, decl := range file.Decls {
 			genDecl, ok := decl.(*ast.GenDecl)
 			if !ok || genDecl.Tok != token.TYPE {
@@ -104,6 +111,7 @@ func ParseSqlcDir(dir string) (*SqlcInfo, error) {
 				typeSpec := spec.(*ast.TypeSpec)
 				if st, ok := typeSpec.Type.(*ast.StructType); ok {
 					structTypes[typeSpec.Name.Name] = st
+					structImports[typeSpec.Name.Name] = imports
 				}
 			}
 		}
@@ -121,7 +129,7 @@ func ParseSqlcDir(dir string) (*SqlcInfo, error) {
 		if strings.HasSuffix(name, "Params") || name == "Queries" {
 			continue
 		}
-		model := SqlcModel{Name: name}
+		model := SqlcModel{Name: name, Imports: structImports[name]}
 		for _, field := range structTypes[name].Fields.List {
 			if len(field.Names) == 0 {
 				continue
@@ -275,6 +283,34 @@ func sqlcNamedType(expr ast.Expr) (string, bool) {
 	return typeName, false
 }
 
+// fileImports maps the package qualifiers a file binds to their import paths.
+func fileImports(file *ast.File) map[string]string {
+	imports := make(map[string]string, len(file.Imports))
+	for _, imp := range file.Imports {
+		path, err := strconv.Unquote(imp.Path.Value)
+		if err != nil {
+			continue
+		}
+		name := importPathPackageName(path)
+		if imp.Name != nil {
+			name = imp.Name.Name
+		}
+		imports[name] = path
+	}
+	return imports
+}
+
+// importPathPackageName guesses the package name an unaliased import binds:
+// the last path element, skipping a trailing major version such as /v5.
+func importPathPackageName(path string) string {
+	elems := strings.Split(path, "/")
+	name := elems[len(elems)-1]
+	if len(elems) > 1 && len(name) > 1 && name[0] == 'v' && strings.Trim(name[1:], "0123456789") == "" {
+		name = elems[len(elems)-2]
+	}
+	return name
+}
+
 func isQueriesReceiver(recv *ast.FieldList) bool {
 	if len(recv.List) != 1 {
 		return false
@@ -298,6 +334,8 @@ func exprToString(expr ast.Expr) string {
 		return exprToString(t.X) + "." + t.Sel.Name
 	case *ast.StarExpr:
 		return "*" + exprToString(t.X)
+	case *ast.IndexExpr:
+		return exprToString(t.X) + "[" + exprToString(t.Index) + "]"
 	case *ast.ArrayType:
 		if t.Len == nil {
 			return "[]" + exprToString(t.Elt)

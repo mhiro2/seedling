@@ -56,7 +56,7 @@ func newPointerRegistry(tb testing.TB) (*seedling.Registry, *pointerState) {
 		Name:    "pointer_user",
 		Table:   "pointer_users",
 		PKField: "ID",
-		Defaults: func() *pointerUser {
+		Defaults: func(*seedling.Scope) *pointerUser {
 			return &pointerUser{}
 		},
 		Relations: []seedling.Relation{
@@ -334,7 +334,7 @@ func TestPointerBlueprint_NilDefaultsReturnsErrorAtBuild(t *testing.T) {
 	reg := seedling.NewRegistry()
 	err := seedling.RegisterTo(reg, seedling.Blueprint[*pointerCompany]{
 		Name: "nil_defaults",
-		Defaults: func() *pointerCompany {
+		Defaults: func(*seedling.Scope) *pointerCompany {
 			return nil
 		},
 		Insert: func(_ context.Context, _ seedling.DBTX, value *pointerCompany) (*pointerCompany, error) {
@@ -359,7 +359,7 @@ func TestPointerBlueprint_NilInsertResultReturnsError(t *testing.T) {
 	reg := seedling.NewRegistry()
 	seedling.MustRegisterTo(reg, seedling.Blueprint[*pointerCompany]{
 		Name: "nil_insert",
-		Defaults: func() *pointerCompany {
+		Defaults: func(*seedling.Scope) *pointerCompany {
 			return &pointerCompany{}
 		},
 		Insert: func(_ context.Context, _ seedling.DBTX, _ *pointerCompany) (*pointerCompany, error) {
@@ -454,7 +454,7 @@ func TestPointerBlueprint_PartialResultCleanupUsesInsertedValues(t *testing.T) {
 		Name:    "pointer_user",
 		Table:   "pointer_users",
 		PKField: "ID",
-		Defaults: func() *pointerUser {
+		Defaults: func(*seedling.Scope) *pointerUser {
 			return &pointerUser{}
 		},
 		Relations: []seedling.Relation{

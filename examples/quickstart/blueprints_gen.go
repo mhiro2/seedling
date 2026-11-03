@@ -39,7 +39,7 @@ func NewBlueprints() Blueprints {
 			Name:    "company",
 			Table:   "companies",
 			PKField: "ID",
-			Defaults: func() Company {
+			Defaults: func(scope *seedling.Scope) Company {
 				return Company{Name: "company-name"}
 			},
 			Relations: []seedling.Relation{
@@ -51,7 +51,7 @@ func NewBlueprints() Blueprints {
 			Name:    "user",
 			Table:   "users",
 			PKField: "ID",
-			Defaults: func() User {
+			Defaults: func(scope *seedling.Scope) User {
 				return User{Name: "user-name", Email: "user-email"}
 			},
 			Relations: []seedling.Relation{

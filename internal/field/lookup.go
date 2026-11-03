@@ -76,7 +76,7 @@ func CanCopyType(source, destination reflect.Type) bool {
 }
 
 // CanBind reports whether Copy could later move srcName out of a srcType value
-// into dstName on dst.
+// into dstName on dst, through conv when it is non-nil.
 //
 // The source is checked by type alone. The value that will supply it is the
 // output of its own Insert callback, so an embedded pointer that is still nil
@@ -87,7 +87,7 @@ func CanCopyType(source, destination reflect.Type) bool {
 // pointer there is allocated on assignment when it is exported, and reported
 // now when it is not, before any Insert callback has had a chance to write to
 // the database.
-func CanBind(srcType reflect.Type, srcName string, dst any, dstName string) error {
+func CanBind(srcType reflect.Type, srcName string, dst any, dstName string, conv *Converter) error {
 	srcStruct, err := structTypeFor(srcType, "source")
 	if err != nil {
 		return err
@@ -108,8 +108,8 @@ func CanBind(srcType reflect.Type, srcName string, dst any, dstName string) erro
 	if err := checkFieldPath(dstElem, dstEntry.Index); err != nil {
 		return fmt.Errorf("set field %q: %w: %w", dstName, errx.ErrInvalidOption, err)
 	}
-	if !CanCopyType(srcEntry.Type, dstEntry.Type) {
-		return fmt.Errorf("set field %q: %w", dstName, errx.TypeMismatch(dstName, dstEntry.Type.String(), srcEntry.Type.String()))
+	if !CanBindType(srcEntry.Type, dstEntry.Type, conv) {
+		return bindTypeError(dstName, srcEntry.Type, dstEntry.Type, conv)
 	}
 	return nil
 }
@@ -160,11 +160,12 @@ func exportedFieldEntry(rt reflect.Type, name, verb string) (fieldIndexEntry, er
 }
 
 // Copy reads srcName from src (struct or *struct) and assigns the value to
-// dstName on dstPtr (must be *struct). It avoids the boxing round-trip that
+// dstName on dstPtr (must be *struct), passing it through conv first when conv
+// is non-nil. It avoids the boxing round-trip that
 // using GetField + SetField would incur, and reuses the cached field index
 // from lookupFieldIndex so the hot path performs no FieldByName lookups after
 // the first call for a given (type, name) pair.
-func Copy(src any, srcName string, dstPtr any, dstName string) error {
+func Copy(src any, srcName string, dstPtr any, dstName string, conv *Converter) error {
 	srcVal := reflect.ValueOf(src)
 	if srcVal.Kind() == reflect.Pointer {
 		srcVal = srcVal.Elem()
@@ -210,6 +211,9 @@ func Copy(src any, srcName string, dstPtr any, dstName string) error {
 	if !dstField.CanSet() {
 		return fmt.Errorf("%w: field %q is unexported", errx.ErrFieldNotFound, dstName)
 	}
+	if !CanBindType(srcField.Type(), dstField.Type(), conv) {
+		return bindTypeError(dstName, srcField.Type(), dstField.Type(), conv)
+	}
 	// The destination always receives storage of its own. Sharing a parent's
 	// pointer, slice, or map would let the child's Insert rewrite the parent's
 	// key, both in the returned result and in the value cleanup deletes.
@@ -221,14 +225,14 @@ func Copy(src any, srcName string, dstPtr any, dstName string) error {
 			value = reflect.ValueOf(clone.Value(srcField.Interface()))
 		}
 	}
+	if conv != nil {
+		value = conv.convert(value)
+	}
 	if dstField.Kind() == reflect.Pointer && value.Type().AssignableTo(dstField.Type().Elem()) {
 		wrapped := reflect.New(dstField.Type().Elem())
 		wrapped.Elem().Set(value)
 		dstField.Set(wrapped)
 		return nil
-	}
-	if !CanCopyType(srcField.Type(), dstField.Type()) {
-		return fmt.Errorf("set field %q: %w", dstName, errx.TypeMismatch(dstName, dstField.Type().String(), srcField.Type().String()))
 	}
 
 	dstField.Set(value)
