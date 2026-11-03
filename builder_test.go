@@ -485,7 +485,8 @@ func TestBuilder_InsertMany(t *testing.T) {
 	// Act
 	companies := seedling.ForSession(sess).
 		Set("Name", "batch").
-		InsertMany(t, nil, 3)
+		InsertMany(t, nil, 3).
+		Roots()
 
 	// Assert
 	if len(companies) != 3 {

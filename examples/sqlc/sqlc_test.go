@@ -54,7 +54,7 @@ func TestInsertMany_Members(t *testing.T) {
 		seedling.Seq("Name", func(i int) string {
 			return fmt.Sprintf("member-%d", i)
 		}),
-	)
+	).Roots()
 
 	if len(members) != 3 {
 		t.Fatalf("expected 3 members, got %d", len(members))

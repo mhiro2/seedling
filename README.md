@@ -68,7 +68,8 @@ seedling handles FK ordering, graph expansion, and cleanup so your tests stay fo
 - 🌿 First-class relation kinds: `BelongsTo`, `HasMany`, `ManyToMany`, plus composite keys and explicit FK conversion into `sql.NullInt64`, `pgtype.Int8`, or named ID types
 - 🔧 Per-test overrides via `Set`, `Use`, and `Ref`, including the count and per-record options of `HasMany` / `ManyToMany` children
 - 🧱 Generated typed builders (`f.Task().Title("review").Assignee(f.User().Name("alice"))`) that turn field and relation mistakes into compile errors
-- ♻️ `WithTx` for auto-rollback transactions -- no manual cleanup
+- ♻️ `WithTx` for auto-rollback transactions, or `AutoCleanup` to delete a test's committed rows when it ends
+- 🧪 `CheckRegistry` inserts every blueprint and trait against the real database, so a migration that breaks a fixture fails in one place
 - 🔌 Works with sqlc, `database/sql`, pgx, GORM, ent, or any other DB handle you own
 - 🔢 A per-test generation `Scope` passed to `Defaults`: named sequences, unique values, seeded randomness, and a fixed clock shared by every insert in the test
 - 🎲 Deterministic fake data via [`seedling/faker`](https://pkg.go.dev/github.com/mhiro2/seedling/faker) with multi-locale support (en, ja, zh, ko, de, fr)
@@ -118,7 +119,7 @@ The shortest path is two steps: generate blueprints from your schema, then call 
    seedling-gen sql --pkg testutil --out blueprints_gen.go schema.sql
    ```
 
-   Other input sources are supported (sqlc, GORM, ent, Atlas) -- see the [Guide](./docs/guide.md#cli) for the full list.
+   Other input sources are supported (sqlc, GORM, ent, Atlas) -- see the [Guide](./docs/guide.md#cli) for the full list. A migration directory works too: `ALTER` / `DROP` / `RENAME` statements are applied in order, and a change the parser cannot follow is reported with its file and line ([details](./docs/guide.md#migrations-and-the-current-schema)).
 
    This generates struct types and a `Blueprints` struct (built by `NewBlueprints()`) holding one blueprint per table, with constraint-aware `Defaults` for common scalar fields (unique columns draw from the test's scope, enums take an allowed value, lengths are respected), relations, `Register` / `MustRegister` methods, and typed builders returned by `NewFixtures(reg)`. The file is rewritten on every run, so keep your DB logic in a separate hand-written file of the same package:
 
@@ -240,6 +241,8 @@ result := plan.Insert(t, db)
 _ = result
 ```
 
+`plan.Snapshot()` returns the same plan as data — each record's table, relation path, and why it was planned, plus per-table insert counts — so a test can assert that a fixture still creates the records it should. `seedling.MaxNodes(n)` stops planning once a graph would exceed `n` records; `BuildMany` plans a batch the way `InsertMany` inserts it. See [Plan snapshots and node limits](./docs/guide.md#plan-snapshots-and-node-limits).
+
 ### Trace inserts at runtime
 
 `WithInsertLog` reports each insert step (table, primary key, FK assignments) as it happens:
@@ -255,7 +258,15 @@ _ = result
 
 ### Clean up when transactions are not an option
 
-If you cannot use `WithTx`, call `Result.Cleanup` to delete inserted rows in reverse dependency order:
+If you cannot use `WithTx` — for example, an HTTP server under test reads the database over its own connection — call `AutoCleanup` once. Every insert of the test is recorded, including one that fails partway, and deleted in reverse order when the test ends:
+
+```go
+seedling.AutoCleanup(t, db)
+user := seedling.NewSession[testutil.User](reg).InsertOne(t, db).Root()
+_ = user
+```
+
+To clean up a single result yourself, call `Result.Cleanup`:
 
 ```go
 result := seedling.NewSession[testutil.User](reg).InsertOne(t, db)
@@ -264,7 +275,19 @@ t.Cleanup(func() { result.Cleanup(t, db) })
 
 `Cleanup` uses a bounded context that remains active during `t.Cleanup`, even after the test context is canceled. Its budget follows the test binary's own deadline; pass `seedling.WithCleanupTimeout` to cap it explicitly when tearing down a large graph against a slow database.
 
-Every blueprint in the inserted graph (the root and every auto-inserted parent) needs a `Delete` callback. All callbacks are checked up front, so if any is missing `Cleanup` fails with `ErrDeleteNotDefined` before deleting anything. `seedling-gen` emits `Delete` for `gorm` and `ent`, and for `sqlc` when a unique `Delete<Table>` query exists; the `sql` and `atlas` subcommands leave it for you to write.
+Every blueprint in the inserted graph (the root and every auto-inserted parent) needs a `Delete` callback. All callbacks are checked up front, so if any is missing `Cleanup` fails with `ErrDeleteNotDefined` before deleting anything, and an insert under `AutoCleanup` fails before inserting anything. `seedling-gen` emits `Delete` for `gorm` and `ent`, and for `sqlc` when a unique `Delete<Table>` query exists; the `sql` and `atlas` subcommands leave it for you to write.
+
+### Check every fixture after a migration
+
+`CheckRegistry` runs every blueprint with its defaults and with each trait through your `Insert` callbacks, one subtest per case, and reports the blueprint, trait, and relation path of anything that fails:
+
+```go
+func TestFixtures(t *testing.T) {
+    seedling.CheckRegistry(t, reg, func(t *testing.T) seedling.DBTX { return seedling.WithTx(t, db) })
+}
+```
+
+See [Checking every blueprint against the database](./docs/guide.md#checking-every-blueprint-against-the-database) for trait combinations, repeated inserts, and expected failures.
 
 The [Guide](./docs/guide.md#debugging-and-cleanup) lists the full set of debugging APIs, including `BatchResult.NodeAt` for `InsertMany` graphs.
 

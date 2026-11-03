@@ -33,6 +33,11 @@ func FuzzParseSchemaWithDialect(f *testing.F) {
 	f.Add("-- header\nCREATE TABLE users (\n  id INT, -- inline\n  /* block */ name TEXT\n);", "auto")
 	f.Add("CREATE TABLE users (\n  id INT,\n  -- comment-like inside identifier:\n  \"col--name\" TEXT\n);", "postgres")
 
+	// Migration statements that change earlier tables.
+	f.Add("CREATE TABLE a (id INT PRIMARY KEY);\nCREATE TABLE b (id INT, a_id INT REFERENCES a(id));\nALTER TABLE b RENAME COLUMN a_id TO x, DROP CONSTRAINT b_a_id_fkey;\nALTER TABLE a RENAME TO c;\nDROP TABLE c;", "postgres")
+	f.Add("CREATE TABLE `a` (`id` INT);\nALTER TABLE `a` ADD COLUMN (`b` INT, `c` INT) , MODIFY `b` VARCHAR(3) NOT NULL FIRST, CHANGE `c` `d` INT AFTER `id`, DROP FOREIGN KEY `a_ibfk_1`;\nRENAME TABLE `a` TO `z`;", "mysql")
+	f.Add("CREATE TYPE s AS ENUM ('a');\nALTER TYPE s ADD VALUE 'b' BEFORE 'a';\nALTER TYPE s RENAME TO t;\nCREATE TABLE x (s t CHECK (s IN ('a')));\nALTER TABLE x ALTER COLUMN s TYPE s USING s::text;\n-- +goose Down\nDROP TABLE x;", "postgres")
+
 	f.Fuzz(func(t *testing.T, sql, dialect string) {
 		// Act
 		tables, err := ParseSchemaWithDialect(sql, dialect)

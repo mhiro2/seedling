@@ -136,7 +136,7 @@ func (b *Builder[T]) InsertE(ctx context.Context, db DBTX) (Result[T], error) {
 // InsertMany creates and inserts n records. Shared belongs-to dependencies are
 // inserted once when their resolved options are identical across records. Fails
 // the test on error.
-func (b *Builder[T]) InsertMany(tb testing.TB, db DBTX, n int) []T {
+func (b *Builder[T]) InsertMany(tb testing.TB, db DBTX, n int) BatchResult[T] {
 	tb.Helper()
 	return b.session.InsertMany(tb, db, n, b.opts...)
 }
@@ -146,6 +146,18 @@ func (b *Builder[T]) InsertMany(tb testing.TB, db DBTX, n int) []T {
 // are identical across records.
 func (b *Builder[T]) InsertManyE(ctx context.Context, db DBTX, n int) (BatchResult[T], error) {
 	return b.session.InsertManyE(ctx, db, n, b.opts...)
+}
+
+// BuildMany constructs the plan of n records without inserting anything.
+// Fails the test on error.
+func (b *Builder[T]) BuildMany(tb testing.TB, n int) *BatchPlan[T] {
+	tb.Helper()
+	return b.session.BuildMany(tb, n, b.opts...)
+}
+
+// BuildManyE constructs the plan of n records without inserting anything.
+func (b *Builder[T]) BuildManyE(n int) (*BatchPlan[T], error) {
+	return b.session.BuildManyE(n, b.opts...)
 }
 
 // Build constructs a dependency plan without inserting anything. Fails the test on error.

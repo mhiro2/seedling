@@ -17,6 +17,7 @@ var (
 	ErrDeleteNotDefined   = errors.New("seedling: delete not defined")
 	ErrDuplicateBlueprint = errors.New("seedling: duplicate blueprint")
 	ErrInvalidOption      = errors.New("seedling: invalid option")
+	ErrTooManyNodes       = errors.New("seedling: plan exceeds its node limit")
 )
 
 func BlueprintNotFound(name string) error {
@@ -27,9 +28,10 @@ func TypeMismatch(field, expected, got string) error {
 	return fmt.Errorf("%w: field %q expects %s but got %s", ErrTypeMismatch, field, expected, got)
 }
 
-func InsertFailed(blueprint string, err error) error {
+func InsertFailed(blueprint, path string, err error) error {
 	return &InsertFailedError{
 		blueprint: blueprint,
+		path:      path,
 		err:       err,
 	}
 }
@@ -43,6 +45,10 @@ func DeleteFailed(blueprint string, err error) error {
 
 func DeleteNotDefined(blueprint string) error {
 	return fmt.Errorf("%w: blueprint %q has no Delete function; define Blueprint.Delete to use Cleanup", ErrDeleteNotDefined, blueprint)
+}
+
+func TooManyNodes(limit int) error {
+	return fmt.Errorf("%w: MaxNodes(%d) allows at most %d planned records; raise the limit or narrow the relations the plan expands", ErrTooManyNodes, limit, limit)
 }
 
 func DuplicateBlueprint(name string) error {
@@ -126,14 +132,22 @@ func UseTypeMismatch(relation, expected, got string) error {
 //	}
 type InsertFailedError struct {
 	blueprint string
+	path      string
 	err       error
 }
 
 // Blueprint returns the name of the blueprint whose Insert callback failed.
 func (e *InsertFailedError) Blueprint() string { return e.blueprint }
 
+// Path returns the relation path from the root record to the record whose
+// Insert callback failed, such as task.project.company.
+func (e *InsertFailedError) Path() string { return e.path }
+
 func (e *InsertFailedError) Error() string {
-	return fmt.Sprintf("%s: blueprint %q: %v", ErrInsertFailed, e.blueprint, e.err)
+	if e.path == "" || e.path == e.blueprint {
+		return fmt.Sprintf("%s: blueprint %q: %v", ErrInsertFailed, e.blueprint, e.err)
+	}
+	return fmt.Sprintf("%s: blueprint %q at %s: %v", ErrInsertFailed, e.blueprint, e.path, e.err)
 }
 
 func (e *InsertFailedError) Unwrap() []error {

@@ -63,6 +63,11 @@ func (g *Graph) Node(id string) *Node {
 	return g.nodes[id]
 }
 
+// Len returns the number of nodes in the graph.
+func (g *Graph) Len() int {
+	return len(g.nodes)
+}
+
 // Nodes returns all nodes in the graph.
 func (g *Graph) Nodes() []*Node {
 	out := make([]*Node, 0, len(g.nodes))

@@ -15,17 +15,17 @@ result := seedling.InsertOne[Task](t, db)
 task := result.Root()
 ```
 
-Use `InsertMany` when a test needs multiple records of the same type.
+Use `InsertMany` when a test needs multiple records of the same type. Like `InsertOne`, it returns the full result, a `BatchResult`:
 
 ```go
 users := seedling.InsertMany[User](t, db, 3,
     seedling.Seq("Name", func(i int) string {
         return fmt.Sprintf("user-%d", i)
     }),
-)
+).Roots()
 ```
 
-Use `InsertManyE` when you need the full batch result for debugging or cleanup.
+Use `InsertManyE` when an error path needs the partial result for cleanup.
 
 ```go
 result, err := seedling.InsertManyE[User](ctx, db, 3,
@@ -48,7 +48,7 @@ _ = ok
 
 `InsertManyE` and `Plan.InsertE` return successful nodes together with an execution error when insertion stops partway through. The partial result's cleanup methods delete only those successful nodes. A partial `BatchResult` counts and lists only completed roots through `Len` and `Roots`; `RootAt` and `NodeAt` keep the original request indices and report a missing result for roots that did not complete.
 
-When transaction rollback is unavailable, use `InsertOneE`, `Plan.InsertE`, or `InsertManyE` so an error path can call cleanup on the returned partial result. The `testing.TB` convenience wrappers (`InsertOne`, `Plan.Insert`, and `InsertMany`) still fail the test immediately and therefore do not expose partial results.
+When transaction rollback is unavailable, enable [`AutoCleanup`](#automatic-cleanup-without-transactions): the testing wrappers (`InsertOne`, `Plan.Insert`, and `InsertMany`) then record what they inserted, including a partial insert, before failing the test, and the records are deleted when the test ends. Without it, use `InsertOneE`, `Plan.InsertE`, or `InsertManyE` so an error path can call cleanup on the returned partial result.
 
 `InsertMany` batch-shares auto-created `BelongsTo` parents when each record resolves to the same static relation options.
 
@@ -83,6 +83,31 @@ result := plan.Insert(t, db)
 task := result.Root()
 _ = task
 ```
+
+`BuildMany` does the same for a batch, planning `n` records with the sharing and `Seq` expansion `InsertMany` would apply, and returns a `BatchPlan` whose `Insert` returns the `BatchResult`.
+
+#### Plan snapshots and node limits
+
+`Snapshot` on a `Plan`, `BatchPlan`, or `ScenarioPlan` returns a read-only `PlanSnapshot` for asserting how many and which records a fixture creates, so a test fails when a relation change makes the fixture grow:
+
+```go
+plan := seedling.Build[Task](t)
+snap := plan.Snapshot()
+if got := snap.Inserts(); got != 5 {
+    t.Fatalf("task fixture inserts %d records, want 5:\n%s", got, plan.DebugString())
+}
+_ = snap.InsertsByTable() // map[string]int, e.g. "companies": 2
+```
+
+Each `PlanNode` carries its blueprint, table, relation path from its root (`task.project.company`, `department.employees[1]`, `article.tags[0].through`), why it was planned (`ReasonRoot`, `ReasonBelongsTo`, `ReasonHasMany`, `ReasonManyToMany`, `ReasonThrough`), whether it was passed with `Use` (`Provided`), whether more than one record depends on it (`Shared`, such as a parent `InsertMany` shares or a `Scenario` record linked twice), and the IDs it depends on. `Len` counts every planned record; `Inserts`, `InsertsByBlueprint`, and `InsertsByTable` count Insert callback calls — seedling cannot see how many SQL statements a callback runs.
+
+`MaxNodes(n)` fails planning with `ErrTooManyNodes` once the plan would hold more than `n` records. It is checked while relations expand, so an unexpectedly large graph stops at the limit, and the error names the path of the record that crossed it. For `InsertMany` and `BuildMany` the limit covers the whole batch; a `Scenario` takes it from `Scenario.WithMaxNodes(n)`.
+
+```go
+seedling.InsertOne[Task](t, db, seedling.MaxNodes(5))
+```
+
+An Insert callback failure reports the same relation path through `InsertFailedError.Path()`.
 
 When a plan includes `AfterInsert` / `AfterInsertE`, remember that those callbacks are captured once at `Build` time. Reusing the same `Plan` also reuses any closure state captured by those callbacks, so rebuild the plan if each execution needs isolated callback state.
 
@@ -231,6 +256,30 @@ func TestUser(t *testing.T) {
 }
 ```
 
+### Automatic cleanup without transactions
+
+A test whose HTTP server or worker reads the database over its own connection cannot see rows in an uncommitted test transaction. Commit them instead, and let `AutoCleanup` delete them when the test finishes:
+
+```go
+func TestCreateComment(t *testing.T) {
+    seedling.AutoCleanup(t, db)
+
+    task := seedling.InsertOne[Task](t, db).Root()
+    users := seedling.InsertMany[User](t, db, 3).Roots()
+    // ... call the server, which reads task and users over its own connection
+}
+```
+
+After `AutoCleanup(t, db)`, every testing API for `t` and its subtests — `InsertOne`, `InsertMany`, `Build` / `Plan.Insert`, `BuildMany` / `BatchPlan.Insert`, `Scenario.Insert`, and their `Session`, `Builder`, and typed-builder forms — records what it inserts in the returned `CleanupTracker`. When `t` finishes, the tracker deletes through `db`, newest insert first and children before parents within each insert, so a record that `Use`s an earlier one is deleted before it.
+
+- Records are recorded as soon as their `Insert` returns, before a failing insert fails the test, so a partial insert is deleted as well
+- Records passed with `Use` belong to the caller and are never deleted
+- Every blueprint a plan inserts must define `Delete`; this is checked before anything is inserted, so a missing callback fails with `ErrDeleteNotDefined` instead of leaving rows behind
+- Subtest records are deleted when the test that called `AutoCleanup` finishes. Subtests are found by name, so avoid parallel sibling subtests whose own names contain `/`, such as `group/other` next to `group`. Calling `AutoCleanup` twice for one test fails the test
+- Inserts running concurrently are deleted in the reverse of the order they started, so a record that uses one created by an insert still in progress is deleted first
+- The error-returning APIs record only when given the tracker: `seedling.WithCleanup(tracker)` as an option, `Session.WithCleanup(tracker)`, or `Scenario.WithCleanup(tracker)`
+- `CleanupTracker.CleanupE(ctx)` deletes what has been recorded so far; the rows of an insert that could not be deleted stay recorded, and a later call resumes with them without deleting the others again; errors from separate inserts are joined. The automatic cleanup reports failures with `t.Errorf` and uses the same budget as `Result.Cleanup` (`seedling.WithCleanupTimeout` caps it)
+
 ## Common Options
 
 - `Set`: override one field by Go struct field name. Sets apply in the order written, so a later `Set` wins, including one that sets a field promoted from an embedded struct an earlier `Set` replaced
@@ -301,6 +350,32 @@ seedling does not generate SQL at runtime. Your blueprint owns the `Insert` and 
 
 When you use `database/sql`, [`WithTx`](https://pkg.go.dev/github.com/mhiro2/seedling#WithTx) is the easiest way to get a rollback-on-cleanup transaction. [`NewTestSession`](https://pkg.go.dev/github.com/mhiro2/seedling#NewTestSession) offers the same with registry binding and custom `sql.TxOptions`. For pgx, use [`seedlingpgx.WithTx`](https://pkg.go.dev/github.com/mhiro2/seedling/seedlingpgx#WithTx) or [`seedlingpgx.NewTestSession`](https://pkg.go.dev/github.com/mhiro2/seedling/seedlingpgx#NewTestSession).
 
+### Checking every blueprint against the database
+
+`CheckRegistry` inserts every registered blueprint through its own `Insert` callback — once with its defaults and once with each trait — so a fixture that a migration broke fails right away instead of in whichever test uses it next:
+
+```go
+func TestFixtures(t *testing.T) {
+    seedling.CheckRegistry(t, reg, func(t *testing.T) seedling.DBTX {
+        return seedling.WithTx(t, db) // one rolled-back transaction per case
+    },
+        seedling.CheckRepeat(2),                          // insert each case twice to catch repeated unique defaults
+        seedling.CheckTraits("user", "admin", "suspended"), // also check traits applied together
+        seedling.ExpectFailure("user", "invalid_email"),  // a trait for negative tests must still fail its Insert
+        seedling.SkipBlueprint("user_role"),               // a join blueprint used only under its relation
+    )
+}
+```
+
+Each case is a subtest named `blueprint/default`, `blueprint/trait`, or `blueprint/trait1+trait2`, so `go test -run 'TestFixtures/user/'` narrows it, and the database handle the function returns for that subtest isolates it. A failure names the blueprint, the traits, and the relation path of the record whose insert failed — the real database error included:
+
+```text
+--- FAIL: TestFixtures/task/default
+    blueprint "task" with defaults: ... insert failed: blueprint "company" at task.project.company: null value in column "region" violates not-null constraint
+```
+
+Because the check goes through the hand-written `Insert` and `Delete` callbacks and the real schema, it catches what neither the generator nor `Plan.Validate` can see: new `NOT NULL` or `CHECK` constraints, a `UNIQUE` column whose defaults repeat (with `CheckRepeat`), and callbacks that no longer match their tables. Cases are planned in the subtest's `TestScope`; when the code cannot use a transaction, call `seedling.AutoCleanup(t, db)` in the function and return `db`. Options that name an unknown blueprint or trait fail the check, so a typo never drops a case silently.
+
 ## Debugging And Cleanup
 
 - `Plan.DebugString`: inspect the dependency tree before inserts
@@ -312,7 +387,8 @@ When you use `database/sql`, [`WithTx`](https://pkg.go.dev/github.com/mhiro2/see
 - `BatchResult.DebugString`: inspect the full batch execution graph with primary-key values
 - `BatchResult.Node(name)`: searches across the full batch, so use it only when cross-root ambiguity is acceptable
 - `BatchResult.NodeAt(rootIndex, name)` / `NodesForRoot(rootIndex, name)`: inspect one root, its shared ancestors, and the records generated under those ancestors (such as their `HasMany` children) without mixing in sibling roots
-- `BatchResult.Cleanup` / `CleanupE`: delete rows inserted by `InsertManyE`; the same `Delete` requirement applies, and cleanup is fail-fast and stops at the first delete error
+- `BatchResult.Cleanup` / `CleanupE`: delete rows inserted by `InsertMany` or `InsertManyE`; the same `Delete` requirement applies, and cleanup is fail-fast and stops at the first delete error
+- `AutoCleanup` / `CleanupTracker`: record every insert of a test and delete them all when it ends, instead of cleaning up each result (see [Automatic cleanup without transactions](#automatic-cleanup-without-transactions))
 
 ## CLI
 
@@ -357,6 +433,9 @@ Examples:
 # SQL DDL
 seedling-gen sql --pkg blueprints schema.sql
 
+# Migrations: files and directories are applied in order (*.down.sql skipped)
+seedling-gen sql --pkg blueprints ./db/migrations
+
 # sqlc config: auto-resolves schema, output dir, and import path from sqlc.yaml
 seedling-gen sqlc --config sqlc.yaml --pkg blueprints
 
@@ -371,6 +450,30 @@ seedling-gen ent --dir ./ent/schema --import-path github.com/you/app/ent --pkg b
 
 # Atlas HCL: parses Atlas schema file
 seedling-gen atlas --pkg blueprints schema.hcl
+```
+
+### Migrations and the current schema
+
+The `sql` and `sqlc` adapters read the schema a migration history produces, not just its `CREATE TABLE` statements. Statements are applied in order across every file — the files of a directory in lexical order, skipping `*.down.sql`, as sqlc does — so later migrations change earlier tables:
+
+- `ALTER TABLE ... ADD [COLUMN]`, `DROP [COLUMN]`, `RENAME [COLUMN] ... TO`, `RENAME TO`, and `ALTER [COLUMN] ... SET / DROP NOT NULL` or `TYPE`
+- `ADD CONSTRAINT` / `DROP CONSTRAINT` for primary keys, foreign keys, `UNIQUE`, and `CHECK`, including the names PostgreSQL and MySQL generate for unnamed constraints (`users_company_id_fkey`, `users_ibfk_1`)
+- MySQL `MODIFY`, `CHANGE`, `ADD ... FIRST / AFTER`, `DROP FOREIGN KEY`, `DROP INDEX`, and `RENAME TABLE`
+- `DROP TABLE`, which also drops the foreign keys pointing at the table, `CREATE UNIQUE INDEX` / `DROP INDEX` / `ALTER INDEX ... RENAME TO`, and `ALTER TYPE ... ADD VALUE` / `RENAME VALUE` / `RENAME TO` and `DROP TYPE [CASCADE]` for enum types
+
+The down section of goose, sql-migrate, dbmate, and tern migrations is ignored. Actions that do not change columns, keys, or value constraints, such as `OWNER TO`, `SET DEFAULT`, or MySQL table options, are accepted and skipped. Anything else that could change the schema — an unknown `ALTER TABLE` action, an `ALTER TABLE` on a table no earlier statement created, or a `DROP CONSTRAINT` whose name cannot be resolved — stops generation with the file and line, rather than silently producing blueprints for a schema that no longer exists:
+
+```text
+Error: db/migrations/007_partition.up.sql:3: ALTER TABLE events: unsupported action "ATTACH PARTITION ..."
+```
+
+When a migration history is beyond what the parser follows, generate from the schema of a migrated database instead. The dump tools write plain DDL in the forms above, with keys added by `ALTER TABLE`:
+
+```bash
+pg_dump --schema-only --no-owner "$DATABASE_URL" > schema.sql   # PostgreSQL
+mysqldump --no-data --skip-comments app > schema.sql            # MySQL
+sqlite3 app.db .schema > schema.sql                             # SQLite
+seedling-gen sql --pkg blueprints schema.sql
 ```
 
 ### Generated and hand-written files

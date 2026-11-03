@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -17,6 +18,7 @@ type Session[T any] struct {
 	registry *Registry
 	db       DBTX
 	scope    *Scope
+	cleanup  *CleanupTracker
 }
 
 // NewSession returns a typed session backed by the provided registry.
@@ -35,7 +37,7 @@ func NewSession[T any](reg *Registry) Session[T] {
 func NewTestSession[T any](tb testing.TB, reg *Registry, db TxBeginner, txOptions *sql.TxOptions) Session[T] {
 	tb.Helper()
 
-	tx, err := db.BeginTx(tb.Context(), txOptions)
+	tx, err := beginTestTx(tb, db, txOptions)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -65,12 +67,24 @@ func (s Session[T]) WithScope(scope *Scope) Session[T] {
 	return s
 }
 
+// WithCleanup returns a copy of the session that records every insert in
+// tracker, for the testing APIs as well as the error-returning ones. A
+// [WithCleanup] option overrides it.
+func (s Session[T]) WithCleanup(tracker *CleanupTracker) Session[T] {
+	s.cleanup = tracker
+	return s
+}
+
 // forTest returns the session the testing APIs use for tb: one planning in
-// the test's scope unless a scope is already bound.
+// the test's scope unless a scope is already bound, and recording in the
+// tracker AutoCleanup enabled for the test unless one is already bound.
 func (s Session[T]) forTest(tb testing.TB) Session[T] {
 	tb.Helper()
 	if s.scope == nil {
 		s.scope = TestScope(tb)
+	}
+	if s.cleanup == nil {
+		s.cleanup = cleanupTrackerFor(tb)
 	}
 	return s
 }
@@ -99,7 +113,7 @@ func (s Session[T]) resolveDB(db DBTX) DBTX {
 func WithTx(tb testing.TB, db TxBeginner) *sql.Tx {
 	tb.Helper()
 
-	tx, err := db.BeginTx(tb.Context(), nil)
+	tx, err := beginTestTx(tb, db, nil)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -111,4 +125,18 @@ func WithTx(tb testing.TB, db TxBeginner) *sql.Tx {
 	})
 
 	return tx
+}
+
+// beginTestTx begins a transaction that outlives tb's context. database/sql
+// rolls a transaction back as soon as the context it began with is canceled,
+// and tb.Context() is canceled before cleanup functions run, so a transaction
+// begun with it would already be gone, mid-rollback, when the cleanup that
+// rolls it back, or one that still reads through it, runs.
+func beginTestTx(tb testing.TB, db TxBeginner, opts *sql.TxOptions) (*sql.Tx, error) {
+	tb.Helper()
+	tx, err := db.BeginTx(context.WithoutCancel(tb.Context()), opts)
+	if err != nil {
+		return nil, fmt.Errorf("seedling: begin test transaction: %w", err)
+	}
+	return tx, nil
 }

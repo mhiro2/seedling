@@ -27,6 +27,7 @@ type Plan[T any] struct {
 	registry     *Registry
 	db           DBTX
 	logFn        func(InsertLog)
+	cleanup      *CleanupTracker
 }
 
 // BuildE constructs a dependency plan for type T without inserting anything.
@@ -36,14 +37,19 @@ func BuildE[T any](opts ...Option) (*Plan[T], error) {
 
 // BuildE constructs a dependency plan for type T without inserting anything.
 func (s Session[T]) BuildE(opts ...Option) (*Plan[T], error) {
-	rootType := reflect.TypeFor[T]()
+	return buildPlan[T](s.registry, s.scope, s.db, s.cleanup, reflect.TypeFor[T](), opts)
+}
 
-	collected, err := resolveRootOptions(s.registry, rootType, opts, noSequenceIndex)
+// buildPlan builds the plan of a root record of rootType, whose values have
+// type T. The session's scope, DB, and tracker apply unless options override
+// them.
+func buildPlan[T any](reg *Registry, scope *Scope, db DBTX, cleanup *CleanupTracker, rootType reflect.Type, opts []Option) (*Plan[T], error) {
+	collected, err := resolveRootOptions(reg, rootType, opts, noSequenceIndex)
 	if err != nil {
 		return nil, err
 	}
 
-	adapter := newRegistryAdapter(s.registry, resolveScope(collected.scope, s.scope))
+	adapter := newRegistryAdapter(reg, resolveScope(collected.scope, scope))
 	optSet := toOptionSet(collected)
 
 	result, err := planner.Plan(adapter, rootType, optSet)
@@ -55,9 +61,10 @@ func (s Session[T]) BuildE(opts ...Option) (*Plan[T], error) {
 		graph:        result.Graph,
 		afterInserts: collected.afterInserts,
 		ctx:          collected.ctx,
-		registry:     s.registry,
-		db:           s.db,
+		registry:     reg,
+		db:           db,
 		logFn:        collected.logFn,
+		cleanup:      resolveCleanup(collected.cleanup, cleanup),
 	}, nil
 }
 
@@ -80,9 +87,11 @@ func (s Session[T]) Build(tb testing.TB, opts ...Option) *Plan[T] {
 }
 
 // Insert executes the plan and inserts all records. Fails the test on error.
+// Without a tracker bound at build time, it records in the one
+// [AutoCleanup] enabled for tb.
 func (p *Plan[T]) Insert(tb testing.TB, db DBTX) Result[T] {
 	tb.Helper()
-	result, err := p.InsertE(tb.Context(), db)
+	result, err := p.insertE(tb.Context(), db, resolveCleanup(p.cleanup, cleanupTrackerFor(tb)))
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -94,6 +103,10 @@ func (p *Plan[T]) Insert(tb testing.TB, db DBTX) Result[T] {
 // If execution fails after inserting dependencies, the returned Result contains
 // the successful nodes and can be passed to [Result.CleanupE].
 func (p *Plan[T]) InsertE(ctx context.Context, db DBTX) (Result[T], error) {
+	return p.insertE(ctx, db, p.cleanup)
+}
+
+func (p *Plan[T]) insertE(ctx context.Context, db DBTX, tracker *CleanupTracker) (Result[T], error) {
 	ctx = insertContext(ctx, p.ctx)
 	if p.graph != nil {
 		if root := p.graph.Root(); root != nil {
@@ -104,10 +117,16 @@ func (p *Plan[T]) InsertE(ctx context.Context, db DBTX) (Result[T], error) {
 		}
 	}
 
+	entry, err := tracker.begin(p.registry, p.graph)
+	if err != nil {
+		var zero Result[T]
+		return zero, err
+	}
 	adapter := newRegistryAdapter(p.registry, nil)
 	g := p.graph.Clone()
 	effectiveDB := p.resolveDB(db)
 	execResult, err := executor.Execute(ctx, effectiveDB, g, adapter, p.toExecutorLogFn())
+	entry.finish(p.registry, execResult)
 	result, resultErr := p.resultFromExecutor(execResult, err == nil)
 	if resultErr != nil {
 		return result, resultErr
@@ -178,6 +197,11 @@ func (p *Plan[T]) DebugString() string {
 // before actually executing inserts.
 func (p *Plan[T]) DryRunString() string {
 	return debug.DryRunString(p.graph)
+}
+
+// Snapshot returns a read-only description of every record the plan holds.
+func (p *Plan[T]) Snapshot() PlanSnapshot {
+	return newPlanSnapshot(p.graph)
 }
 
 func (p *Plan[T]) toExecutorLogFn() func(executor.LogEntry) {

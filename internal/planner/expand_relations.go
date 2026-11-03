@@ -120,7 +120,7 @@ func (e *expander) expandBelongsTo(
 ) error {
 	usedNode, ok, err := e.linkedBelongsToNode(rel, opts)
 	if err == nil && !ok {
-		usedNode, ok, err = e.providedBelongsToNode(rel, nodeID, opts)
+		usedNode, ok, err = e.providedBelongsToNode(rel, node, nodeID, opts)
 	}
 	if err != nil {
 		return err
@@ -140,7 +140,8 @@ func (e *expander) expandBelongsTo(
 	}
 
 	childPath := appendRelationPath(relationPath, rel.Name)
-	childNode, err := e.expandBlueprint(parentBP, e.belongsToNodeID(nodeID, childPath, rel, nestedRelationOpts(opts, rel.Name)), nestedRelationOpts(opts, rel.Name), nil, childPath)
+	origin := graph.Origin{Kind: graph.OriginBelongsTo, From: node, Relation: rel.Name}
+	childNode, err := e.expandBlueprint(parentBP, e.belongsToNodeID(nodeID, childPath, rel, nestedRelationOpts(opts, rel.Name)), nestedRelationOpts(opts, rel.Name), nil, childPath, origin)
 	if err != nil {
 		return err
 	}
@@ -170,13 +171,17 @@ func (e *expander) expandHasMany(
 		return fmt.Errorf("lookup has-many blueprint %q: %w", rel.RefBlueprint, err)
 	}
 
+	if err := e.reserve(parentNode, rel.Name, relationCount(rel, opts)); err != nil {
+		return err
+	}
 	elements := relationElements(rel, opts)
 	childBindings := hasManyBindings(childBP, parentNode, rel)
 	count := len(elements)
 
 	for i, elem := range elements {
 		childPath := appendRelationPath(relationPath, rel.Name)
-		childNode, err := e.expandBlueprint(childBP, relationNodeIdentity(parentNodeID, rel.Name, i, count), elem.Opts, childBindings, childPath)
+		origin := graph.Origin{Kind: graph.OriginHasMany, From: parentNode, Relation: rel.Name, Index: i, Indexed: true}
+		childNode, err := e.expandBlueprint(childBP, relationNodeIdentity(parentNodeID, rel.Name, i, count), elem.Opts, childBindings, childPath, origin)
 		if err != nil {
 			return err
 		}
@@ -240,24 +245,30 @@ func (e *expander) expandManyToMany(
 		return err
 	}
 
+	// Each element adds its related record and a join record.
+	if err := e.reserve(parentNode, rel.Name, 2*relationCount(rel, opts)); err != nil {
+		return err
+	}
 	elements := relationElements(rel, opts)
 	count := len(elements)
 
 	for i, elem := range elements {
 		childPath := appendRelationPath(relationPath, rel.Name)
 		childNodeID := relationNodeIdentity(parentNodeID, rel.Name, i, count)
+		origin := graph.Origin{Kind: graph.OriginManyToMany, From: parentNode, Relation: rel.Name, Index: i, Indexed: true}
 		var childNode *graph.Node
 		if elem.Use != nil {
-			childNode = e.addProvidedNode(childBP, childNodeID, elem.Use)
+			childNode, err = e.addProvidedNode(childBP, childNodeID, elem.Use, origin)
 		} else {
-			childNode, err = e.expandBlueprint(childBP, childNodeID, elem.Opts, nil, childPath)
-			if err != nil {
-				return err
-			}
+			childNode, err = e.expandBlueprint(childBP, childNodeID, elem.Opts, nil, childPath, origin)
+		}
+		if err != nil {
+			return err
 		}
 
 		joinBindings, parentBound, childBound := manyToManyBindings(joinBP, parentNode, childNode, rel)
-		joinNode, err := e.expandBlueprint(joinBP, joinNodeIdentity(childNodeID, rel.ThroughBlueprint), elem.Through, joinBindings, appendJoinPath(childPath, rel.ThroughBlueprint))
+		joinOrigin := graph.Origin{Kind: graph.OriginThrough, From: childNode, Relation: rel.Name}
+		joinNode, err := e.expandBlueprint(joinBP, joinNodeIdentity(childNodeID, rel.ThroughBlueprint), elem.Through, joinBindings, appendJoinPath(childPath, rel.ThroughBlueprint), joinOrigin)
 		if err != nil {
 			return err
 		}
@@ -393,6 +404,17 @@ func relationElements(rel RelationDef, opts *OptionSet) []ElementOptions {
 		}
 	}
 	return make([]ElementOptions, rel.Count)
+}
+
+// relationCount returns the number of records relationElements expands,
+// without allocating them.
+func relationCount(rel RelationDef, opts *OptionSet) int {
+	if opts != nil {
+		if elements, ok := opts.Collections[rel.Name]; ok {
+			return len(elements)
+		}
+	}
+	return rel.Count
 }
 
 func (e *expander) belongsToNodeID(parentNodeID nodeIdentity, path relationPath, rel RelationDef, opts *OptionSet) nodeIdentity {

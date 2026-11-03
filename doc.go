@@ -121,11 +121,15 @@
 // [Build] returns a plan for inspection or validation before execution.
 // Reusing a [Plan] reuses its [AfterInsert] callbacks too, so state captured by
 // those closures carries across executions.
+// [BuildMany] does the same for a batch. [Plan.Snapshot] describes every
+// planned record — its table, relation path, and why it was planned — so a
+// test can assert how many records a fixture creates, and [MaxNodes] stops
+// planning a graph that grows past a limit.
 // [InsertOne] returns a [Result] so you can access the root record and any
-// related inserted nodes. [InsertManyE] returns a [BatchResult] with the batch
-// roots plus cleanup/debug helpers for the full execution graph, including
-// root-scoped lookup helpers such as [BatchResult.NodeAt] and
-// [BatchResult.NodesForRoot].
+// related inserted nodes. [InsertMany] and [InsertManyE] return a
+// [BatchResult] with the batch roots plus cleanup/debug helpers for the full
+// execution graph, including root-scoped lookup helpers such as
+// [BatchResult.NodeAt] and [BatchResult.NodesForRoot].
 //
 // [Session]
 //
@@ -194,7 +198,7 @@
 //	    seedling.Seq("Email", func(i int) string {
 //	        return fmt.Sprintf("user-%d@example.com", i)
 //	    }),
-//	)
+//	).Roots()
 //	_ = users
 //
 // Or inspect / clean up the full batch execution with [InsertManyE]:
@@ -262,21 +266,22 @@
 // overrides an earlier one. Field values are applied in fixed stages
 // regardless of that order: blueprint Defaults, then [Generate], then [Set],
 // then [With]. [WithContext], [AfterInsert], [AfterInsertE], [WithInsertLog],
-// and [Only] apply only to the root record and return [ErrInvalidOption] under
-// [Ref].
+// [Only], and [MaxNodes] apply only to the root record and return
+// [ErrInvalidOption] under [Ref].
 //
 // # Related APIs
 //
 // Frequently used APIs:
 //
 //   - [InsertOne], [InsertOneE], [InsertMany], [InsertManyE]
-//   - [Build], [BuildE]
+//   - [Build], [BuildE], [BuildMany], [BuildManyE], [MaxNodes]
 //   - [Set], [Use], [Ref], [Omit], [When], [With], [Only]
 //   - [BlueprintTrait], [InlineTrait]
 //   - [Seq], [Generate], [WithRand], [WithSeed]
 //   - [WithContext], [WithInsertLog]
-//   - [Plan.Validate], [Plan.DebugString], [Plan.DryRunString]
-//   - [WithTx], [NewTestSession]
+//   - [Plan.Validate], [Plan.DebugString], [Plan.DryRunString], [Plan.Snapshot]
+//   - [WithTx], [NewTestSession], [AutoCleanup], [WithCleanup]
+//   - [CheckRegistry], [CheckRepeat], [CheckTraits], [ExpectFailure], [SkipBlueprint], [SkipTrait]
 //   - [Result.Root], [Result.DebugString], [Result.Cleanup], [Result.CleanupE]
 //   - [BatchResult.Roots], [BatchResult.RootAt], [BatchResult.NodeAt], [BatchResult.NodesForRoot]
 //   - [BatchResult.DebugString], [BatchResult.Cleanup], [BatchResult.CleanupE]

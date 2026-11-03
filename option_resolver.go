@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/mhiro2/seedling/internal/errx"
 	"github.com/mhiro2/seedling/internal/planner"
 )
 
@@ -37,6 +38,8 @@ type optionSet struct {
 	logFn        func(InsertLog)                    // optional insert log callback
 	scope        *Scope                             // InScope option: scope Defaults draw from
 	only         map[string]bool                    // Only option: nil = insert all, non-nil = insert only specified relations
+	maxNodes     int                                // MaxNodes option: zero = unlimited
+	cleanup      *CleanupTracker                    // WithCleanup option: tracker that records the insert
 }
 
 type withFn func(value any) (any, error)
@@ -114,6 +117,7 @@ type optionResolver struct {
 	scenario      *Scenario  // scenario the root record is added to; nil outside Add
 	scenarioIndex int        // index of the root record in scenario
 	active        []traitKey // traits being expanded, across Ref boundaries
+	maxNodes      int        // MaxNodes of the root options, known once they resolve
 }
 
 // traitKey identifies a trait on a specific blueprint while it is being expanded.
@@ -140,6 +144,7 @@ func resolveOptions(r *optionResolver, opts []Option) (*optionSet, error) {
 	if err := r.resolve(opts, root); err != nil {
 		return nil, fmt.Errorf("build plan: %w", err)
 	}
+	r.maxNodes = root.maxNodes
 	if err := r.resolveCollections(root); err != nil {
 		return nil, fmt.Errorf("build plan: %w", err)
 	}
@@ -287,6 +292,15 @@ func (r *optionResolver) resolveElements(t *collectionTarget) error {
 	}
 	if count == 0 && slices.ContainsFunc(t.refs, func(ref deferredRef) bool { return len(ref.opts) > 0 }) {
 		return fmt.Errorf("%w: relation %q creates no records, so its options apply to nothing; pass Count(n) to Ref", ErrInvalidOption, t.rel.name)
+	}
+	// Reject a collection that alone exceeds MaxNodes before resolving the
+	// options of every element. Each many-to-many element adds a join record.
+	nodes := count
+	if t.joinBP != nil {
+		nodes *= 2
+	}
+	if r.maxNodes > 0 && nodes >= r.maxNodes {
+		return fmt.Errorf("relation %q creates %d records: %w", t.rel.name, nodes, errx.TooManyNodes(r.maxNodes))
 	}
 
 	saved := r.active
@@ -436,5 +450,6 @@ func toOptionSet(os *optionSet) *planner.OptionSet {
 		GenFns:      genFns,
 		Rand:        os.rand,
 		Only:        os.only,
+		MaxNodes:    os.maxNodes,
 	}
 }

@@ -45,7 +45,7 @@ func TestInsertFailed(t *testing.T) {
 	cause := fmt.Errorf("connection refused")
 
 	// Act
-	err := InsertFailed("users", cause)
+	err := InsertFailed("users", "", cause)
 
 	// Assert
 	if !errors.Is(err, ErrInsertFailed) {
@@ -343,7 +343,7 @@ func TestSentinelsAreDistinguishable(t *testing.T) {
 		},
 		{
 			name:     "InsertFailed",
-			err:      InsertFailed("x", fmt.Errorf("cause")),
+			err:      InsertFailed("x", "", fmt.Errorf("cause")),
 			sentinel: ErrInsertFailed,
 			others:   []error{ErrBlueprintNotFound, ErrRelationNotFound, ErrFieldNotFound, ErrTypeMismatch, ErrDuplicateBlueprint, ErrCycleDetected, ErrInvalidOption},
 		},

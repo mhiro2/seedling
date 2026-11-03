@@ -46,7 +46,7 @@ func newGraphNode(bp *BlueprintDef, nodeID string, value any, isProvided bool) *
 	}
 }
 
-func (e *expander) providedBelongsToNode(rel RelationDef, nodeID nodeIdentity, opts *OptionSet) (*graph.Node, bool, error) {
+func (e *expander) providedBelongsToNode(rel RelationDef, from *graph.Node, nodeID nodeIdentity, opts *OptionSet) (*graph.Node, bool, error) {
 	useVal, ok := usedRelationValue(opts, rel.Name)
 	if !ok {
 		return nil, false, nil
@@ -64,7 +64,12 @@ func (e *expander) providedBelongsToNode(rel RelationDef, nodeID nodeIdentity, o
 		return nil, false, fmt.Errorf("lookup blueprint %q for use %q: %w", rel.RefBlueprint, rel.Name, err)
 	}
 
-	return e.addProvidedNode(parentBP, relationNodeIdentity(nodeID, rel.Name, 0, 1), useVal), true, nil
+	origin := graph.Origin{Kind: graph.OriginBelongsTo, From: from, Relation: rel.Name}
+	node, err := e.addProvidedNode(parentBP, relationNodeIdentity(nodeID, rel.Name, 0, 1), useVal, origin)
+	if err != nil {
+		return nil, false, err
+	}
+	return node, true, nil
 }
 
 // linkedBelongsToNode returns the root a Link binds the relation to.
@@ -88,12 +93,14 @@ func (e *expander) linkedBelongsToNode(rel RelationDef, opts *OptionSet) (*graph
 
 // addProvidedNode adds a node for an existing record that the executor binds
 // but never inserts.
-func (e *expander) addProvidedNode(bp *BlueprintDef, nodeID nodeIdentity, value any) *graph.Node {
+func (e *expander) addProvidedNode(bp *BlueprintDef, nodeID nodeIdentity, value any, origin graph.Origin) (*graph.Node, error) {
 	// Normalize the provided value to the blueprint's exact model type.
 	node := newProvidedNode(bp, nodeID.String(), normalizeUseValue(bp.ModelType, value))
-	e.graph.AddNode(node)
-	e.visited[nodeID] = node
-	return node
+	node.Origin = origin
+	if err := e.addNode(nodeID, node); err != nil {
+		return nil, err
+	}
+	return node, nil
 }
 
 // normalizeUseValue converts between a struct and its direct pointer so a

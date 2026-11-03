@@ -177,7 +177,7 @@ func remainingDeadline(tb testing.TB) time.Duration {
 // inserts, and mutations to Root() or a NodeAs result of a pointer blueprint,
 // do not change which rows cleanup removes.
 func (r Result[T]) CleanupE(ctx context.Context, db DBTX) error {
-	return cleanupResultGraph(ctx, r.graph, r.deleteFns, r.cleanupValues, db)
+	return cleanupResultGraph(ctx, r.graph, r.deleteFns, r.cleanupValues, nil, db)
 }
 
 // snapshotDeleteFns captures the delete functions from the registry for all
@@ -231,10 +231,6 @@ func (r BatchResult[T]) Len() int {
 // Roots returns the inserted root records.
 func (r BatchResult[T]) Roots() []T {
 	return slices.Clone(r.roots)
-}
-
-func (r BatchResult[T]) rootsView() []T {
-	return r.roots
 }
 
 // RootAt returns the successfully inserted root record at its original request
@@ -330,7 +326,7 @@ func (r BatchResult[T]) Cleanup(tb testing.TB, db DBTX, opts ...CleanupOption) {
 // CleanupE deletes all records that were inserted by seedling in reverse dependency order.
 // CleanupE is fail-fast: it stops at the first delete error and returns it.
 func (r BatchResult[T]) CleanupE(ctx context.Context, db DBTX) error {
-	return cleanupResultGraph(ctx, r.graph, r.deleteFns, r.cleanupValues, db)
+	return cleanupResultGraph(ctx, r.graph, r.deleteFns, r.cleanupValues, nil, db)
 }
 
 // Name returns the blueprint name of this node.
@@ -533,7 +529,11 @@ func (r BatchResult[T]) rootNodeID(rootIndex int) (string, bool) {
 	return r.rootIDs[rootIndex], true
 }
 
-func cleanupResultGraph(ctx context.Context, g *graph.Graph, deleteFns map[string]deleteFn, values map[string]any, db DBTX) error {
+// cleanupResultGraph deletes the inserted nodes of g, children first. With a
+// non-nil deleted set, nodes in it are skipped and each node deleted is added,
+// so a cleanup that stops at an error can be resumed without deleting a record
+// twice.
+func cleanupResultGraph(ctx context.Context, g *graph.Graph, deleteFns map[string]deleteFn, values map[string]any, deleted map[string]bool, db DBTX) error {
 	if g == nil {
 		return nil
 	}
@@ -548,7 +548,7 @@ func cleanupResultGraph(ctx context.Context, g *graph.Graph, deleteFns map[strin
 	// already-deleted children behind as a half-finished cleanup.
 	targets := make([]*graph.Node, 0, len(order))
 	for _, node := range slices.Backward(order) {
-		if node.IsProvided {
+		if node.IsProvided || deleted[node.ID] {
 			continue
 		}
 		if df, ok := deleteFns[node.BlueprintName]; !ok || df.fn == nil {
@@ -565,6 +565,9 @@ func cleanupResultGraph(ctx context.Context, g *graph.Graph, deleteFns map[strin
 		}
 		if err := df.fn(ctx, db, value); err != nil {
 			return fmt.Errorf("cleanup blueprint %q: %w", node.BlueprintName, errx.DeleteFailed(node.BlueprintName, err))
+		}
+		if deleted != nil {
+			deleted[node.ID] = true
 		}
 	}
 

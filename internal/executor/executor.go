@@ -118,15 +118,15 @@ func Execute(ctx context.Context, db any, g *graph.Graph, lookup BlueprintLookup
 			bp := blueprints[node.ID]
 			inserted, err := bp.Insert(ctx, db, node.Value)
 			if err != nil {
-				return finalizeResult(result, g, false), fmt.Errorf("insert node %q: %w", node.ID, errx.InsertFailed(node.BlueprintName, err))
+				return finalizeResult(result, g, false), fmt.Errorf("insert node %q: %w", node.ID, errx.InsertFailed(node.BlueprintName, node.Path(), err))
 			}
 			if isNilValue(inserted) {
 				err := errors.New("insert returned a nil value")
-				return finalizeResult(result, g, false), fmt.Errorf("insert node %q: %w", node.ID, errx.InsertFailed(node.BlueprintName, err))
+				return finalizeResult(result, g, false), fmt.Errorf("insert node %q: %w", node.ID, errx.InsertFailed(node.BlueprintName, node.Path(), err))
 			}
 			if bp.ModelType != nil && reflect.TypeOf(inserted) != bp.ModelType {
 				err := fmt.Errorf("%w: insert returned %T, want %s", errx.ErrTypeMismatch, inserted, bp.ModelType)
-				return finalizeResult(result, g, false), fmt.Errorf("insert node %q: %w", node.ID, errx.InsertFailed(node.BlueprintName, err))
+				return finalizeResult(result, g, false), fmt.Errorf("insert node %q: %w", node.ID, errx.InsertFailed(node.BlueprintName, node.Path(), err))
 			}
 			node.Value = inserted
 			result.Inserted[node.ID] = clone.Value(inserted)

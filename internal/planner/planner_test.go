@@ -1205,7 +1205,7 @@ func TestPlanRoots_LinksBindEarlierRoots(t *testing.T) {
 	}
 
 	// Act
-	result, err := planner.PlanRoots(reg, roots)
+	result, err := planner.PlanRoots(reg, roots, 0)
 	// Assert
 	if err != nil {
 		t.Fatal(err)
@@ -1230,7 +1230,7 @@ func TestPlanRoots_LinkMustReferToEarlierRoot(t *testing.T) {
 	}
 
 	// Act
-	_, err := planner.PlanRoots(reg, roots)
+	_, err := planner.PlanRoots(reg, roots, 0)
 	// Assert
 	if !errors.Is(err, errx.ErrInvalidOption) {
 		t.Fatalf("got %v, want %v", err, errx.ErrInvalidOption)

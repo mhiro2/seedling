@@ -18,15 +18,17 @@ func Plan(reg Registry, rootType reflect.Type, opts *OptionSet) (*PlanResult, er
 	}
 
 	g := graph.New()
-	visited := make(map[nodeIdentity]*graph.Node)
-
-	var only map[string]bool
+	exp := &expander{
+		reg:     reg,
+		graph:   g,
+		visited: make(map[nodeIdentity]*graph.Node),
+	}
 	if opts != nil {
-		only = opts.Only
+		exp.only = opts.Only
+		exp.maxNodes = opts.MaxNodes
 	}
 
-	_, err = expand(reg, bp, rootNodeIdentity(bp.Name), opts, g, visited, nil, only)
-	if err != nil {
+	if _, err := exp.expandBlueprint(bp, rootNodeIdentity(bp.Name), opts, nil, "", graph.Origin{Kind: graph.OriginRoot}); err != nil {
 		return nil, err
 	}
 
@@ -34,6 +36,7 @@ func Plan(reg Registry, rootType reflect.Type, opts *OptionSet) (*PlanResult, er
 }
 
 // PlanMany builds a dependency graph for multiple roots of the same type.
+// MaxNodes of the first option set limits the whole graph.
 func PlanMany(reg Registry, rootType reflect.Type, opts []*OptionSet) (*PlanManyResult, error) {
 	bp, err := reg.LookupByType(rootType)
 	if err != nil {
@@ -56,13 +59,15 @@ func PlanMany(reg Registry, rootType reflect.Type, opts []*OptionSet) (*PlanMany
 		rootIDs = append(rootIDs, rootID.String())
 
 		exp := &expander{
-			reg:     reg,
-			graph:   g,
-			visited: visited,
-			share:   shared,
-			only:    opt.Only,
+			reg:      reg,
+			graph:    g,
+			visited:  visited,
+			share:    shared,
+			only:     opt.Only,
+			maxNodes: opts[0].MaxNodes,
 		}
-		if _, err := exp.expandBlueprint(bp, rootID, opt, nil, ""); err != nil {
+		origin := graph.Origin{Kind: graph.OriginRoot, Index: i, Indexed: true}
+		if _, err := exp.expandBlueprint(bp, rootID, opt, nil, "", origin); err != nil {
 			return nil, err
 		}
 	}
@@ -76,8 +81,9 @@ func PlanMany(reg Registry, rootType reflect.Type, opts []*OptionSet) (*PlanMany
 // PlanRoots builds one dependency graph for roots of any blueprint. Roots are
 // planned in order and never share nodes implicitly; a root's Links bind its
 // belongs-to relations to roots planned before it. The graph has no single
-// root, so RootIDs identifies each root's node in order.
-func PlanRoots(reg Registry, roots []Root) (*PlanManyResult, error) {
+// root, so RootIDs identifies each root's node in order. A positive maxNodes
+// limits the number of nodes in the graph.
+func PlanRoots(reg Registry, roots []Root, maxNodes int) (*PlanManyResult, error) {
 	g := graph.New()
 	visited := make(map[nodeIdentity]*graph.Node)
 	rootIDs := make([]string, 0, len(roots))
@@ -98,13 +104,15 @@ func PlanRoots(reg Registry, roots []Root) (*PlanManyResult, error) {
 		}
 		rootID := batchRootNodeIdentity(i)
 		exp := &expander{
-			reg:     reg,
-			graph:   g,
-			visited: visited,
-			roots:   rootNodes,
-			only:    only,
+			reg:      reg,
+			graph:    g,
+			visited:  visited,
+			roots:    rootNodes,
+			only:     only,
+			maxNodes: maxNodes,
 		}
-		node, err := exp.expandBlueprint(bp, rootID, root.Opts, nil, "")
+		origin := graph.Origin{Kind: graph.OriginRoot, Index: i, Indexed: true}
+		node, err := exp.expandBlueprint(bp, rootID, root.Opts, nil, "", origin)
 		if err != nil {
 			return nil, fmt.Errorf("expand root[%d]: %w", i, err)
 		}

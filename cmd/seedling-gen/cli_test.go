@@ -308,7 +308,7 @@ func TestRun_SQLRequiresSchemaPath(t *testing.T) {
 	if s := stdout.String(); s != "" {
 		t.Errorf("got %v, want empty string", s)
 	}
-	if !strings.Contains(stderr.String(), "Usage: seedling-gen sql [flags] <schema.sql>") {
+	if !strings.Contains(stderr.String(), "Usage: seedling-gen sql [flags] <schema.sql | migrations-dir>...") {
 		t.Errorf("stderr does not contain sql usage")
 	}
 }
@@ -586,4 +586,57 @@ func findColumn(t *testing.T, table Table, name string) Column {
 
 	t.Fatalf("column %q not found", name)
 	return Column{}
+}
+
+func TestRun_SQLAppliesMigrationDirectory(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	migrations := map[string]string{
+		"001_users.up.sql":    "CREATE TABLE users (id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL);",
+		"001_users.down.sql":  "DROP TABLE users;",
+		"002_posts.up.sql":    "CREATE TABLE posts (id BIGSERIAL PRIMARY KEY, author BIGINT NOT NULL);",
+		"003_post_fk.up.sql":  "ALTER TABLE posts RENAME COLUMN author TO user_id;\nALTER TABLE posts ADD CONSTRAINT posts_user_fk FOREIGN KEY (user_id) REFERENCES users(id);",
+		"004_rename.up.sql":   "ALTER TABLE users RENAME COLUMN name TO display_name;",
+		"004_rename.down.sql": "ALTER TABLE users RENAME COLUMN display_name TO name;",
+	}
+	for name, sql := range migrations {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(sql), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var stdout, stderr bytes.Buffer
+
+	// Act
+	exitCode := run([]string{"sql", "-pkg", "fixtures", dir}, &stdout, &stderr)
+
+	// Assert
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", exitCode, stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{"DisplayName string", "UserID", `RefBlueprint: "user"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("generated code does not contain %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Author") {
+		t.Errorf("generated code still has the renamed column:\n%s", out)
+	}
+}
+
+func TestRun_SQLReportsUnsupportedMigration(t *testing.T) {
+	// Arrange
+	path := writeSchemaFile(t, "CREATE TABLE users (id INT PRIMARY KEY);\nALTER TABLE users ALTER COLUMN id SET MAGIC;\n")
+	var stdout, stderr bytes.Buffer
+
+	// Act
+	exitCode := run([]string{"sql", "-pkg", "fixtures", path}, &stdout, &stderr)
+
+	// Assert
+	if exitCode != 1 {
+		t.Fatalf("exit code = %d, want 1", exitCode)
+	}
+	if want := path + `:2: ALTER TABLE users: ALTER COLUMN id: unsupported action "SET MAGIC"`; !strings.Contains(stderr.String(), want) {
+		t.Fatalf("stderr = %q, want it to contain %q", stderr.String(), want)
+	}
 }

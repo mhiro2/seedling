@@ -23,16 +23,24 @@ user := result.Root()
 ### Insert many records
 
 ```go
-roots := seedling.InsertMany[User](t, db, 5)
-```
-
-Returns `[]User`. For richer access use `InsertManyE`, which returns `BatchResult[T]`:
-
-```go
-batch, err := seedling.InsertManyE[User](ctx, db, 5)
+batch := seedling.InsertMany[User](t, db, 5)
 batch.Roots()          // []User
 batch.MustRootAt(0)    // User at index 0
 ```
+
+`InsertMany` returns `BatchResult[T]`, like `InsertManyE`. Use `BuildMany` to plan a batch without inserting it.
+
+### Guard fixture size
+
+```go
+plan := seedling.Build[Task](t)
+if got := plan.Snapshot().Inserts(); got != 5 {
+    t.Fatalf("task fixture inserts %d records, want 5:\n%s", got, plan.DebugString())
+}
+seedling.InsertOne[Task](t, db, seedling.MaxNodes(10)) // fails with ErrTooManyNodes past 10 records
+```
+
+`Snapshot` lists every planned record with its table, relation path, reason, and whether it is shared or passed with `Use`.
 
 ### Cleanup
 
@@ -48,6 +56,15 @@ t.Cleanup(func() { result.Cleanup(t, db) })
 `Cleanup` / `CleanupE` require a `Delete` callback on every blueprint in the inserted graph (root and all auto-inserted parents; `Use`'d records are exempt). All callbacks are checked before any row is removed, so a missing one fails with `ErrDeleteNotDefined` without deleting anything. `seedling-gen` emits `Delete` for `gorm` and `ent` always, and for `sqlc` only when the queries define a unique `Delete<Table>` / `Delete<Model>` query; `sql` and `atlas` output has no `Delete`, so write it by hand before relying on `Cleanup`.
 
 When using transaction rollback (recommended), explicit cleanup is unnecessary.
+
+When the code under test reads the database over its own connection (HTTP servers, workers) and the test must commit, use `AutoCleanup` instead of cleaning up each result:
+
+```go
+seedling.AutoCleanup(t, db)
+task := seedling.InsertOne[Task](t, db).Root()
+```
+
+Every testing API for `t` and its subtests is recorded, including partial inserts that fail the test, and deleted newest first when `t` finishes. `Use`'d records are never deleted, and a blueprint without `Delete` fails before anything is inserted. Pass the returned tracker with `seedling.WithCleanup(tracker)` (or `Session.WithCleanup` / `Scenario.WithCleanup`) to record error-returning inserts too.
 
 ## Customization options
 
@@ -246,6 +263,18 @@ seedling.InsertOne[Task](t, db,
     }),
 )
 ```
+
+## Check every fixture against the database
+
+```go
+func TestFixtures(t *testing.T) {
+    seedling.CheckRegistry(t, reg, func(t *testing.T) seedling.DBTX {
+        return seedling.WithTx(t, db)
+    }, seedling.CheckRepeat(2))
+}
+```
+
+Inserts every blueprint with its defaults and each trait as subtests (`user/default`, `user/admin`), reporting the blueprint, trait, and relation path of a failing insert. Add `CheckTraits` for combinations, `ExpectFailure` for traits meant to fail, and `SkipBlueprint` / `SkipTrait` to leave cases out.
 
 ## Plan — inspect before inserting
 

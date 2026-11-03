@@ -46,7 +46,7 @@ type builderHasMany struct {
 // field and relation methods must not shadow.
 var builderMethods = []string{
 	"With", "WithOptions", "Trait", "Apply", "AfterInsert",
-	"Insert", "InsertE", "InsertMany", "Build", "Add",
+	"Insert", "InsertE", "InsertMany", "Build", "BuildMany", "Add",
 }
 
 // builderTypeImports maps the package qualifiers a setter parameter type may
@@ -347,7 +347,7 @@ func (b {{$b.Builder}}) InsertE(ctx context.Context, db seedling.DBTX) (seedling
 }
 
 // InsertMany inserts n records configured alike. Fails the test on error.
-func (b {{$b.Builder}}) InsertMany(tb testing.TB, db seedling.DBTX, n int) []{{$b.TypeExpr}} {
+func (b {{$b.Builder}}) InsertMany(tb testing.TB, db seedling.DBTX, n int) seedling.BatchResult[{{$b.TypeExpr}}] {
 	tb.Helper()
 	return seedling.NewSession[{{$b.TypeExpr}}](b.reg).InsertMany(tb, db, n, b.opts...)
 }
@@ -356,6 +356,13 @@ func (b {{$b.Builder}}) InsertMany(tb testing.TB, db seedling.DBTX, n int) []{{$
 func (b {{$b.Builder}}) Build(tb testing.TB) *seedling.Plan[{{$b.TypeExpr}}] {
 	tb.Helper()
 	return seedling.NewSession[{{$b.TypeExpr}}](b.reg).Build(tb, b.opts...)
+}
+
+// BuildMany plans n records configured alike without inserting them. Fails
+// the test on error.
+func (b {{$b.Builder}}) BuildMany(tb testing.TB, n int) *seedling.BatchPlan[{{$b.TypeExpr}}] {
+	tb.Helper()
+	return seedling.NewSession[{{$b.TypeExpr}}](b.reg).BuildMany(tb, n, b.opts...)
 }
 
 // Add adds the record to a scenario and returns its handle.

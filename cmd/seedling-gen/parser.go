@@ -38,6 +38,8 @@ type Column struct {
 	// descendingKey marks an inline PRIMARY KEY DESC, which in SQLite is not an
 	// alias for the rowid even on an INTEGER column.
 	descendingKey bool
+	// enumType is the enum type of the column while the schema is parsed.
+	enumType *enumType
 }
 
 // ForeignKey represents a table-level or inline foreign key constraint.
@@ -57,44 +59,6 @@ type Table struct {
 	ForeignKeys []ForeignKey
 }
 
-// ParseSchema parses SQL schema text and returns a slice of Tables.
-func ParseSchema(sql string) ([]Table, error) {
-	return ParseSchemaWithDialect(sql, "auto")
-}
-
-// ParseSchemaWithDialect parses SQL schema text for the given dialect.
-// The dialect selects the lexical rules for string literals: PostgreSQL
-// dollar quotes and E'...' escape strings, and MySQL backslash escapes.
-func ParseSchemaWithDialect(sql, dialect string) ([]Table, error) {
-	d, err := newSQLDialect(dialect)
-	if err != nil {
-		return nil, err
-	}
-	sql, masked := d.mask(sql)
-
-	var tables []Table
-	enumTypes := extractEnumTypes(sql, masked)
-
-	blocks, err := extractCreateTableBlocks(sql, masked)
-	if err != nil {
-		return nil, err
-	}
-	for _, block := range blocks {
-		tableName := normalizeIdent(block.Name)
-		columns, foreignKeys := parseColumns(block, enumTypes, d)
-		t := Table{
-			Name:        tableName,
-			GoName:      toGoStructName(tableName),
-			BlueprintID: singularize(tableName),
-			Columns:     columns,
-			ForeignKeys: foreignKeys,
-		}
-		tables = append(tables, t)
-	}
-	applyUniqueIndexes(tables, sql, masked)
-	return tables, nil
-}
-
 // sqlText pairs a slice of the schema, with comments blanked, and the same
 // slice of its masked form. Structure and keywords are found in Masked, where
 // string literals and quoted identifiers can no longer look like SQL. Names
@@ -106,60 +70,6 @@ type sqlText struct {
 
 func (t sqlText) slice(from, to int) sqlText {
 	return sqlText{Text: t.Text[from:to], Masked: t.Masked[from:to]}
-}
-
-type createTableBlock struct {
-	Name         string
-	Body         sqlText
-	WithoutRowID bool // SQLite WITHOUT ROWID table option
-}
-
-var (
-	withoutRowIDRE  = regexp.MustCompile(`(?i)\bWITHOUT\s+ROWID\b`)
-	descendingKeyRE = regexp.MustCompile(`(?i)\bPRIMARY\s+KEY\s+DESC\b`)
-)
-
-func extractCreateTableBlocks(sql, masked string) ([]createTableBlock, error) {
-	var blocks []createTableBlock
-	searchFrom := 0
-
-	for {
-		loc := createTableStartRE.FindStringSubmatchIndex(masked[searchFrom:])
-		if loc == nil {
-			return blocks, nil
-		}
-
-		matchStart := searchFrom + loc[0]
-		bodyStart := searchFrom + loc[1]
-		nameStart := searchFrom + loc[2]
-		nameEnd := searchFrom + loc[3]
-
-		tableName := sql[nameStart:nameEnd]
-		bodyEnd := findMatchingParen(masked, bodyStart-1)
-		if bodyEnd == -1 {
-			return nil, fmt.Errorf("parse CREATE TABLE %s: unclosed parenthesis", tableName)
-		}
-
-		stmtEnd := strings.IndexByte(masked[bodyEnd:], ';')
-		options := masked[bodyEnd+1:]
-		if stmtEnd != -1 {
-			options = masked[bodyEnd+1 : bodyEnd+stmtEnd]
-		}
-		blocks = append(blocks, createTableBlock{
-			Name:         tableName,
-			Body:         sqlText{Text: sql[bodyStart:bodyEnd], Masked: masked[bodyStart:bodyEnd]},
-			WithoutRowID: withoutRowIDRE.MatchString(options),
-		})
-
-		if stmtEnd == -1 {
-			searchFrom = bodyEnd
-		} else {
-			searchFrom = bodyEnd + stmtEnd + 1
-		}
-		if searchFrom <= matchStart {
-			searchFrom = bodyEnd + 1
-		}
-	}
 }
 
 // findMatchingParen returns the index of the parenthesis closing the one at
@@ -178,113 +88,6 @@ func findMatchingParen(masked string, openIdx int) int {
 		}
 	}
 	return -1
-}
-
-// extractEnumTypes maps each CREATE TYPE ... AS ENUM type to its values. A
-// type whose value list cannot be read maps to nil, which still marks it as
-// an enum.
-func extractEnumTypes(sql, masked string) map[string][]string {
-	locs := createEnumRE.FindAllStringSubmatchIndex(masked, -1)
-	if len(locs) == 0 {
-		return nil
-	}
-
-	enumTypes := make(map[string][]string, len(locs))
-	for _, loc := range locs {
-		var values []string
-		if end := findMatchingParen(masked, loc[1]-1); end != -1 {
-			values, _ = parseStringLiterals(sql[loc[1]:end], false)
-		}
-		enumTypes[normalizeIdent(sql[loc[2]:loc[3]])] = values
-	}
-
-	return enumTypes
-}
-
-func parseColumns(block createTableBlock, enumTypes map[string][]string, d sqlDialect) ([]Column, []ForeignKey) {
-	items := splitSQLItems(block.Body)
-	columns := make([]Column, 0, len(items))
-	foreignKeys := make([]ForeignKey, 0, len(items))
-	columnIndex := make(map[string]int, len(items))
-	tableConstraints := make([]sqlText, 0, len(items))
-
-	for _, item := range items {
-		if strings.TrimSpace(item.Masked) == "" {
-			continue
-		}
-
-		if isTableConstraint(item.Masked) {
-			tableConstraints = append(tableConstraints, item)
-			continue
-		}
-
-		col, ok := parseColumn(item, enumTypes, d.backslashEscapes)
-		if !ok {
-			continue
-		}
-
-		columnIndex[col.Name] = len(columns)
-		columns = append(columns, col)
-		if col.IsFK {
-			foreignKeys = append(foreignKeys, ForeignKey{
-				Columns:    []string{col.Name},
-				RefTable:   col.FKRefTable,
-				RefColumns: append([]string(nil), col.FKRefColumns...),
-			})
-		}
-	}
-
-	for _, constraint := range tableConstraints {
-		if fk, ok := applyTableConstraint(columns, columnIndex, constraint); ok {
-			foreignKeys = append(foreignKeys, fk)
-		}
-	}
-	for _, item := range items {
-		applyCheckIn(columns, columnIndex, item, d.backslashEscapes)
-	}
-
-	// Nullability is settled only once every constraint is known, because a
-	// table-level PRIMARY KEY can make a column NOT NULL after its foreign key
-	// was read.
-	markPrimaryKeysNotNull(columns, block.WithoutRowID, d)
-	for i := range foreignKeys {
-		foreignKeys[i].NotNull = columnsNotNull(columns, columnIndex, foreignKeys[i].Columns)
-	}
-
-	return columns, foreignKeys
-}
-
-// markPrimaryKeysNotNull applies the NOT NULL that a primary key implies. In
-// SQLite a key column may hold NULL unless it is the INTEGER PRIMARY KEY rowid
-// alias (not declared DESC inline) or the table is WITHOUT ROWID; every other
-// dialect follows standard SQL.
-func markPrimaryKeysNotNull(columns []Column, withoutRowID bool, d sqlDialect) {
-	var keys []int
-	for i, col := range columns {
-		if col.IsPK {
-			keys = append(keys, i)
-		}
-	}
-	if d.sqliteKeys && !withoutRowID {
-		if len(keys) == 1 && columns[keys[0]].SQLType == "INTEGER" && !columns[keys[0]].descendingKey {
-			columns[keys[0]].NotNull = true
-		}
-		return
-	}
-	for _, i := range keys {
-		columns[i].NotNull = true
-	}
-}
-
-// columnsNotNull reports whether every named column is NOT NULL, and so
-// whether a foreign key over them always references a parent.
-func columnsNotNull(columns []Column, columnIndex map[string]int, names []string) bool {
-	for _, name := range names {
-		if idx, ok := columnIndex[name]; ok && !columns[idx].NotNull {
-			return false
-		}
-	}
-	return true
 }
 
 func parseColumn(item sqlText, enumTypes map[string][]string, backslash bool) (Column, bool) {
@@ -332,43 +135,6 @@ func parseColumn(item sqlText, enumTypes map[string][]string, backslash bool) (C
 	}
 
 	return col, true
-}
-
-func applyTableConstraint(columns []Column, columnIndex map[string]int, constraint sqlText) (ForeignKey, bool) {
-	// Constraint keywords are matched in the masked text, so a CHECK body like
-	// 'PRIMARY KEY (id)' is not mistaken for a real constraint. Captured
-	// identifiers are sliced from the original to keep their exact spelling.
-	leading := len(constraint.Masked) - len(strings.TrimLeft(constraint.Masked, " \t\r\n"))
-	trimmed := constraint.slice(leading, len(constraint.Masked))
-	if loc := uniqueColumnsRE.FindStringSubmatchIndex(trimmed.Masked); loc != nil {
-		markUniqueColumns(columns, columnIndex, indexColumnNames(trimmed.Text[loc[2]:loc[3]]))
-	}
-
-	if loc := tablePKRE.FindStringSubmatchIndex(constraint.Masked); loc != nil {
-		for _, colName := range splitIdentifierList(constraint.Text[loc[2]:loc[3]]) {
-			if idx, ok := columnIndex[colName]; ok {
-				columns[idx].IsPK = true
-			}
-		}
-	}
-
-	if loc := tableFKRE.FindStringSubmatchIndex(constraint.Masked); loc != nil {
-		refTable := normalizeIdent(constraint.Text[loc[4]:loc[5]])
-		cols := splitIdentifierList(constraint.Text[loc[2]:loc[3]])
-		var refColumns []string
-		if loc[6] >= 0 {
-			refColumns = splitIdentifierList(constraint.Text[loc[6]:loc[7]])
-		}
-		for _, colName := range cols {
-			if idx, ok := columnIndex[colName]; ok {
-				columns[idx].IsFK = true
-				columns[idx].FKRefTable = refTable
-			}
-		}
-		return ForeignKey{Columns: cols, RefTable: refTable, RefColumns: refColumns}, true
-	}
-
-	return ForeignKey{}, false
 }
 
 func isTableConstraint(item string) bool {

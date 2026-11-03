@@ -501,3 +501,43 @@ func TestClone_SetFieldsAndPKFields(t *testing.T) {
 		t.Fatal("PKFields not independent after clone")
 	}
 }
+
+func TestNodePath_FollowsOrigins(t *testing.T) {
+	// Arrange
+	g := graph.New()
+	article := &graph.Node{ID: "article", BlueprintName: "article", Origin: graph.Origin{Kind: graph.OriginRoot}}
+	tag := &graph.Node{ID: "article.tags[1]", BlueprintName: "tag", Origin: graph.Origin{Kind: graph.OriginManyToMany, From: article, Relation: "tags", Index: 1, Indexed: true}}
+	join := &graph.Node{ID: "article.tags[1].%join:article_tag", BlueprintName: "article_tag", Origin: graph.Origin{Kind: graph.OriginThrough, From: tag, Relation: "tags"}}
+	author := &graph.Node{ID: "article.tags[1].author", BlueprintName: "user", Origin: graph.Origin{Kind: graph.OriginBelongsTo, From: tag, Relation: "author"}}
+	for _, n := range []*graph.Node{article, tag, join, author} {
+		g.AddNode(n)
+	}
+	g.AddEdge(article, join, "ArticleID")
+
+	// Act
+	cloned := g.Clone()
+
+	// Assert
+	for _, tt := range []struct {
+		id   string
+		want string
+	}{
+		{id: article.ID, want: "article"},
+		{id: tag.ID, want: "article.tags[1]"},
+		{id: join.ID, want: "article.tags[1].through"},
+		{id: author.ID, want: "article.tags[1].author"},
+	} {
+		if got := g.Node(tt.id).Path(); got != tt.want {
+			t.Errorf("Path(%s) = %q, want %q", tt.id, got, tt.want)
+		}
+		if got := cloned.Node(tt.id).Path(); got != tt.want {
+			t.Errorf("cloned Path(%s) = %q, want %q", tt.id, got, tt.want)
+		}
+	}
+	if cloned.Node(tag.ID).Origin.From != cloned.Node(article.ID) {
+		t.Error("clone kept an origin pointing into the original graph")
+	}
+	if g.Len() != 4 || cloned.Len() != 4 {
+		t.Errorf("Len() = %d / %d, want 4", g.Len(), cloned.Len())
+	}
+}

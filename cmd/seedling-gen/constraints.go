@@ -14,7 +14,7 @@ var (
 	// uniqueColumnsRE matches a table-level UNIQUE (columns) constraint.
 	uniqueColumnsRE = regexp.MustCompile(`(?i)^(?:CONSTRAINT\s+\S+\s+)?UNIQUE(?:\s+(?:KEY|INDEX)(?:\s+[^\s(]+)?)?\s*\(([^()]+)\)`)
 	// createUniqueIndexRE matches CREATE UNIQUE INDEX ... ON table (columns).
-	createUniqueIndexRE = regexp.MustCompile(`(?is)CREATE\s+UNIQUE\s+INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(?:[^\s(]+\s+)?ON\s+(?:ONLY\s+)?([^\s(]+)\s*(?:USING\s+\w+\s*)?\(([^()]*)\)`)
+	createUniqueIndexRE = regexp.MustCompile(`(?is)CREATE\s+UNIQUE\s+INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(?:([^\s(]+)\s+)?ON\s+(?:ONLY\s+)?([^\s(]+)\s*(?:USING\s+\w+\s*)?\(([^()]*)\)`)
 	// columnUniqueRE matches an inline UNIQUE column constraint.
 	columnUniqueRE = regexp.MustCompile(`(?i)\bUNIQUE\b`)
 	// typeArgsRE matches a column type and its parenthesized arguments, such
@@ -138,20 +138,6 @@ func applyColumnTypeArgs(col *Column, afterName sqlText, backslash bool) {
 	}
 }
 
-// applyCheckIn records the values of CHECK (column IN (...)) constraints in
-// text on the columns they restrict.
-func applyCheckIn(columns []Column, columnIndex map[string]int, text sqlText, backslash bool) {
-	for _, loc := range checkInRE.FindAllStringSubmatchIndex(text.Masked, -1) {
-		idx, ok := columnIndex[normalizeIdent(text.Text[loc[2]:loc[3]])]
-		if !ok {
-			continue
-		}
-		if values, ok := parseStringLiterals(text.Text[loc[4]:loc[5]], backslash); ok {
-			restrictEnum(&columns[idx], values)
-		}
-	}
-}
-
 // markUniqueColumns marks the single column of a unique constraint as unique.
 // A composite unique constraint does not make any one column unique, so it is
 // ignored.
@@ -174,25 +160,4 @@ func indexColumnNames(list string) []string {
 		}
 	}
 	return names
-}
-
-// applyUniqueIndexes marks the columns of single-column CREATE UNIQUE INDEX
-// statements as unique.
-func applyUniqueIndexes(tables []Table, sql, masked string) {
-	tableIndex := make(map[string]int, len(tables))
-	for i, table := range tables {
-		tableIndex[table.Name] = i
-	}
-	for _, loc := range createUniqueIndexRE.FindAllStringSubmatchIndex(masked, -1) {
-		ti, ok := tableIndex[normalizeIdent(sql[loc[2]:loc[3]])]
-		if !ok {
-			continue
-		}
-		table := &tables[ti]
-		columnIndex := make(map[string]int, len(table.Columns))
-		for i, col := range table.Columns {
-			columnIndex[col.Name] = i
-		}
-		markUniqueColumns(table.Columns, columnIndex, indexColumnNames(sql[loc[4]:loc[5]]))
-	}
 }

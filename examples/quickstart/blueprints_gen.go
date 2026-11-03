@@ -170,7 +170,7 @@ func (b CompanyBuilder) InsertE(ctx context.Context, db seedling.DBTX) (seedling
 }
 
 // InsertMany inserts n records configured alike. Fails the test on error.
-func (b CompanyBuilder) InsertMany(tb testing.TB, db seedling.DBTX, n int) []Company {
+func (b CompanyBuilder) InsertMany(tb testing.TB, db seedling.DBTX, n int) seedling.BatchResult[Company] {
 	tb.Helper()
 	return seedling.NewSession[Company](b.reg).InsertMany(tb, db, n, b.opts...)
 }
@@ -179,6 +179,13 @@ func (b CompanyBuilder) InsertMany(tb testing.TB, db seedling.DBTX, n int) []Com
 func (b CompanyBuilder) Build(tb testing.TB) *seedling.Plan[Company] {
 	tb.Helper()
 	return seedling.NewSession[Company](b.reg).Build(tb, b.opts...)
+}
+
+// BuildMany plans n records configured alike without inserting them. Fails
+// the test on error.
+func (b CompanyBuilder) BuildMany(tb testing.TB, n int) *seedling.BatchPlan[Company] {
+	tb.Helper()
+	return seedling.NewSession[Company](b.reg).BuildMany(tb, n, b.opts...)
 }
 
 // Add adds the record to a scenario and returns its handle.
@@ -275,7 +282,7 @@ func (b UserBuilder) InsertE(ctx context.Context, db seedling.DBTX) (seedling.Re
 }
 
 // InsertMany inserts n records configured alike. Fails the test on error.
-func (b UserBuilder) InsertMany(tb testing.TB, db seedling.DBTX, n int) []User {
+func (b UserBuilder) InsertMany(tb testing.TB, db seedling.DBTX, n int) seedling.BatchResult[User] {
 	tb.Helper()
 	return seedling.NewSession[User](b.reg).InsertMany(tb, db, n, b.opts...)
 }
@@ -284,6 +291,13 @@ func (b UserBuilder) InsertMany(tb testing.TB, db seedling.DBTX, n int) []User {
 func (b UserBuilder) Build(tb testing.TB) *seedling.Plan[User] {
 	tb.Helper()
 	return seedling.NewSession[User](b.reg).Build(tb, b.opts...)
+}
+
+// BuildMany plans n records configured alike without inserting them. Fails
+// the test on error.
+func (b UserBuilder) BuildMany(tb testing.TB, n int) *seedling.BatchPlan[User] {
+	tb.Helper()
+	return seedling.NewSession[User](b.reg).BuildMany(tb, n, b.opts...)
 }
 
 // Add adds the record to a scenario and returns its handle.

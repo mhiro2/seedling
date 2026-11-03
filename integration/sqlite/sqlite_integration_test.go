@@ -103,7 +103,7 @@ func TestSQLiteInsertManySeq_PersistsGeneratedNames(t *testing.T) {
 		seedling.Seq("Name", func(i int) string {
 			return fmt.Sprintf("company-%d", i)
 		}),
-	)
+	).Roots()
 
 	// Assert
 	if len(companies) != 3 {
@@ -380,5 +380,28 @@ func assertInsertFailed(t *testing.T, err error, blueprint string) {
 	}
 	if got := insertErr.Blueprint(); got != blueprint {
 		t.Fatalf("got failed blueprint %q, want %q", got, blueprint)
+	}
+}
+
+func TestSQLiteCheckRegistry_InsertsEveryBlueprint(t *testing.T) {
+	// Arrange
+	h := testutil.NewHarness(t)
+	db := h.DB
+
+	// Act
+	seedling.CheckRegistry(t, h.Registry, func(t *testing.T) seedling.DBTX {
+		t.Helper()
+		return seedling.WithTx(t, db)
+	}, seedling.CheckRepeat(2))
+
+	// Assert
+	for _, table := range []string{"companies", "users", "projects", "tasks"} {
+		var count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil {
+			t.Fatalf("count rows in %s: %v", table, err)
+		}
+		if count != 0 {
+			t.Fatalf("checked inserts were not rolled back from %s: %d rows", table, count)
+		}
 	}
 }
