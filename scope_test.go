@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -406,5 +407,26 @@ func TestTestScope_RecordsCreatedDuringCleanupDoNotRepeatValues(t *testing.T) {
 	}
 	if bodyEmail == cleanupEmail {
 		t.Fatalf("cleanup reused the test's unique email %q", bodyEmail)
+	}
+}
+
+func TestScope_UUID(t *testing.T) {
+	// Arrange
+	scope := seedling.NewScope(seedling.ScopeConfig{Seed: 3})
+	pattern := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+
+	// Act
+	first, second := scope.UUID(), scope.UUID()
+	replayed := seedling.NewScope(seedling.ScopeConfig{Seed: 3}).UUID()
+
+	// Assert
+	if !pattern.MatchString(first) || !pattern.MatchString(second) {
+		t.Fatalf("UUIDs %q, %q are not canonical version 4 UUIDs", first, second)
+	}
+	if first == second {
+		t.Fatalf("two draws returned the same UUID %q", first)
+	}
+	if replayed != first {
+		t.Fatalf("same seed returned %q, want %q", replayed, first)
 	}
 }
