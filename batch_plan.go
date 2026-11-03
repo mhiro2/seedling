@@ -132,7 +132,8 @@ func (p *BatchPlan[T]) insertE(ctx context.Context, db DBTX, tracker *CleanupTra
 	if len(p.rootIDs) == 0 {
 		return emptyBatchResult[T](), nil
 	}
-	if err := tracker.check(p.registry, p.graph); err != nil {
+	entry, err := tracker.begin(p.registry, p.graph)
+	if err != nil {
 		var zero BatchResult[T]
 		return zero, err
 	}
@@ -146,7 +147,7 @@ func (p *BatchPlan[T]) insertE(ctx context.Context, db DBTX, tracker *CleanupTra
 		effectiveDB = p.db
 	}
 	execResult, err := executor.Execute(ctx, effectiveDB, p.graph.Clone(), newRegistryAdapter(p.registry, nil), toExecutorLogFn(p.logFn))
-	tracker.record(p.registry, execResult)
+	entry.finish(p.registry, execResult)
 	result, resultErr := batchResultFromExecutor[T](p.registry, p.rootIDs, execResult, err == nil)
 	if resultErr != nil {
 		return result, resultErr

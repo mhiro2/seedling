@@ -112,7 +112,8 @@ func (p *Plan[T]) insertE(ctx context.Context, db DBTX, tracker *CleanupTracker)
 		}
 	}
 
-	if err := tracker.check(p.registry, p.graph); err != nil {
+	entry, err := tracker.begin(p.registry, p.graph)
+	if err != nil {
 		var zero Result[T]
 		return zero, err
 	}
@@ -120,7 +121,7 @@ func (p *Plan[T]) insertE(ctx context.Context, db DBTX, tracker *CleanupTracker)
 	g := p.graph.Clone()
 	effectiveDB := p.resolveDB(db)
 	execResult, err := executor.Execute(ctx, effectiveDB, g, adapter, p.toExecutorLogFn())
-	tracker.record(p.registry, execResult)
+	entry.finish(p.registry, execResult)
 	result, resultErr := p.resultFromExecutor(execResult, err == nil)
 	if resultErr != nil {
 		return result, resultErr

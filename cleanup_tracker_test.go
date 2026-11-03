@@ -281,3 +281,111 @@ func TestWithCleanup_Placement(t *testing.T) {
 		}
 	}
 }
+
+func TestCleanupTracker_ResumesWithoutDeletingTwice(t *testing.T) {
+	// Arrange
+	failCompany := true
+	var deleted []string
+	ids := seedlingtest.NewIDSequence()
+	reg := seedling.NewRegistry()
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
+		Name: "company", PKField: "ID",
+		Insert: func(_ context.Context, _ seedling.DBTX, v Company) (Company, error) { v.ID = ids.Next(); return v, nil },
+		Delete: func(_ context.Context, _ seedling.DBTX, v Company) error {
+			if failCompany {
+				return errors.New("locked")
+			}
+			deleted = append(deleted, "company")
+			return nil
+		},
+	})
+	seedling.MustRegisterTo(reg, seedling.Blueprint[User]{
+		Name: "user", PKField: "ID",
+		Relations: []seedling.Relation{{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"}},
+		Insert:    func(_ context.Context, _ seedling.DBTX, v User) (User, error) { v.ID = ids.Next(); return v, nil },
+		Delete: func(context.Context, seedling.DBTX, User) error {
+			deleted = append(deleted, "user")
+			return nil
+		},
+	})
+	tracker := seedling.AutoCleanup(t, nil)
+	if _, err := seedling.NewSession[User](reg).WithCleanup(tracker).InsertOneE(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	first := tracker.CleanupE(context.Background())
+	pending := tracker.Len()
+	failCompany = false
+	second := tracker.CleanupE(context.Background())
+
+	// Assert
+	if first == nil || second != nil {
+		t.Fatalf("errs = %v / %v, want the first cleanup to fail and the retry to succeed", first, second)
+	}
+	if pending != 1 {
+		t.Fatalf("Len() after the failure = %d, want only the company", pending)
+	}
+	if !slices.Equal(deleted, []string{"user", "company"}) {
+		t.Fatalf("deleted = %v, want the user once and then the company", deleted)
+	}
+}
+
+func TestCleanupTracker_OrdersConcurrentInsertsByStart(t *testing.T) {
+	// Arrange: the first insert starts, blocks inside its Insert, and finishes
+	// after a second insert that depends on the record the first one made.
+	var deleted []string
+	ids := seedlingtest.NewIDSequence()
+	inserted, release := make(chan Company), make(chan struct{})
+	reg := seedling.NewRegistry()
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
+		Name: "company", PKField: "ID",
+		Insert: func(_ context.Context, _ seedling.DBTX, v Company) (Company, error) { v.ID = ids.Next(); return v, nil },
+		Delete: func(_ context.Context, _ seedling.DBTX, v Company) error {
+			deleted = append(deleted, fmt.Sprintf("company:%d", v.ID))
+			return nil
+		},
+	})
+	seedling.MustRegisterTo(reg, seedling.Blueprint[Project]{
+		Name: "project", PKField: "ID",
+		Relations: []seedling.Relation{{Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "company"}},
+		Insert: func(_ context.Context, _ seedling.DBTX, v Project) (Project, error) {
+			v.ID = ids.Next()
+			if v.Name == "slow" {
+				inserted <- Company{ID: v.CompanyID}
+				<-release
+			}
+			return v, nil
+		},
+		Delete: func(_ context.Context, _ seedling.DBTX, v Project) error {
+			deleted = append(deleted, fmt.Sprintf("project:%d", v.ID))
+			return nil
+		},
+	})
+	tracker := seedling.AutoCleanup(t, nil)
+	sess := seedling.NewSession[Project](reg).WithCleanup(tracker)
+
+	// Act
+	done := make(chan error)
+	go func() {
+		_, err := sess.InsertOneE(context.Background(), nil, seedling.Set("Name", "slow"))
+		done <- err
+	}()
+	company := <-inserted
+	fast, err := sess.InsertOneE(context.Background(), nil, seedling.Use("company", company))
+	close(release)
+	if err != nil || <-done != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+	if err := tracker.CleanupE(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	if got := deleted[0]; got != fmt.Sprintf("project:%d", fast.Root().ID) {
+		t.Fatalf("deleted = %v, want the later insert's project first", deleted)
+	}
+	if got := deleted[len(deleted)-1]; got != fmt.Sprintf("company:%d", company.ID) {
+		t.Fatalf("deleted = %v, want the shared company last", deleted)
+	}
+}

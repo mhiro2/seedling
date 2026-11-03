@@ -286,11 +286,12 @@ func (p *ScenarioPlan) insertE(ctx context.Context, db DBTX, tracker *CleanupTra
 		ctx = context.Background()
 	}
 	reg := p.scenario.registry
-	if err := tracker.check(reg, p.graph); err != nil {
+	entry, err := tracker.begin(reg, p.graph)
+	if err != nil {
 		return ScenarioResult{}, err
 	}
 	execResult, err := executor.Execute(ctx, db, p.graph.Clone(), newRegistryAdapter(reg, nil), nil)
-	tracker.record(reg, execResult)
+	entry.finish(reg, execResult)
 	if execResult == nil {
 		return ScenarioResult{}, fmt.Errorf("%w: executor returned a nil result", ErrInvalidOption)
 	}
@@ -398,5 +399,5 @@ func (r ScenarioResult) Cleanup(tb testing.TB, db DBTX, opts ...CleanupOption) {
 // CleanupE deletes all records that were inserted in reverse dependency order.
 // CleanupE is fail-fast: it stops at the first delete error and returns it.
 func (r ScenarioResult) CleanupE(ctx context.Context, db DBTX) error {
-	return cleanupResultGraph(ctx, r.graph, r.deleteFns, r.cleanupValues, db)
+	return cleanupResultGraph(ctx, r.graph, r.deleteFns, r.cleanupValues, nil, db)
 }

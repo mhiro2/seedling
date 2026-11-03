@@ -275,9 +275,10 @@ After `AutoCleanup(t, db)`, every testing API for `t` and its subtests — `Inse
 - Records are recorded as soon as their `Insert` returns, before a failing insert fails the test, so a partial insert is deleted as well
 - Records passed with `Use` belong to the caller and are never deleted
 - Every blueprint a plan inserts must define `Delete`; this is checked before anything is inserted, so a missing callback fails with `ErrDeleteNotDefined` instead of leaving rows behind
-- Subtest records are deleted when the test that called `AutoCleanup` finishes. Calling it twice for one test fails the test
+- Subtest records are deleted when the test that called `AutoCleanup` finishes. Subtests are found by name, so avoid parallel sibling subtests whose own names contain `/`, such as `group/other` next to `group`. Calling `AutoCleanup` twice for one test fails the test
+- Inserts running concurrently are deleted in the reverse of the order they started, so a record that uses one created by an insert still in progress is deleted first
 - The error-returning APIs record only when given the tracker: `seedling.WithCleanup(tracker)` as an option, `Session.WithCleanup(tracker)`, or `Scenario.WithCleanup(tracker)`
-- `CleanupTracker.CleanupE(ctx)` deletes what has been recorded so far; an insert whose rows could not all be deleted stays recorded, and errors from separate inserts are joined. The automatic cleanup reports failures with `t.Errorf` and uses the same budget as `Result.Cleanup` (`seedling.WithCleanupTimeout` caps it)
+- `CleanupTracker.CleanupE(ctx)` deletes what has been recorded so far; the rows of an insert that could not be deleted stay recorded, and a later call resumes with them without deleting the others again; errors from separate inserts are joined. The automatic cleanup reports failures with `t.Errorf` and uses the same budget as `Result.Cleanup` (`seedling.WithCleanupTimeout` caps it)
 
 ## Common Options
 

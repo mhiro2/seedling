@@ -29,15 +29,21 @@ import (
 type CleanupTracker struct {
 	db      DBTX
 	mu      sync.Mutex
-	entries []cleanupEntry // in insert order
+	entries []*cleanupEntry // in the order the inserts started
 }
 
 // cleanupEntry is what one insert left for cleanup: the same graph, delete
-// callbacks, and as-inserted values a Result cleans up with.
+// callbacks, and as-inserted values a Result cleans up with, and the records
+// already deleted by an earlier cleanup that stopped at an error. It is
+// reserved when the insert starts, so inserts running concurrently are
+// deleted in the reverse of the order they started, and filled when it
+// returns.
 type cleanupEntry struct {
+	tracker   *CleanupTracker
 	graph     *graph.Graph
 	deleteFns map[string]deleteFn
 	values    map[string]any
+	deleted   map[string]bool
 }
 
 var autoCleanups sync.Map // test name → *CleanupTracker
@@ -55,7 +61,9 @@ var autoCleanups sync.Map // test name → *CleanupTracker
 //	}
 //
 // Records of a subtest are deleted when tb finishes, not when the subtest
-// does. The error-returning APIs record only when given the tracker through
+// does. Subtests are found by name, so a sibling subtest whose own name
+// starts with tb's subtest name and a slash, such as "group/other" next to
+// "group", counts as a subtest of it; avoid such names under t.Parallel. The error-returning APIs record only when given the tracker through
 // [WithCleanup], [Session.WithCleanup], or [Scenario.WithCleanup]. Calling
 // AutoCleanup twice for one test fails it.
 func AutoCleanup(tb testing.TB, db DBTX, opts ...CleanupOption) *CleanupTracker {
@@ -128,8 +136,11 @@ func (c *CleanupTracker) Len() int {
 	defer c.mu.Unlock()
 	n := 0
 	for _, entry := range c.entries {
+		if entry.graph == nil {
+			continue
+		}
 		for _, node := range entry.graph.Nodes() {
-			if !node.IsProvided {
+			if !node.IsProvided && !entry.deleted[node.ID] {
 				n++
 			}
 		}
@@ -141,18 +152,28 @@ func (c *CleanupTracker) Len() int {
 // forgets them, so a later cleanup does not delete them again. Each insert is
 // deleted children first and stops at its first delete error, as
 // [Result.CleanupE] does; the inserts recorded before a failed one are still
-// attempted, and every error is returned joined. An insert whose records
-// could not all be deleted stays recorded.
+// attempted, and every error is returned joined. The records of an insert
+// that could not be deleted stay recorded, and a later CleanupE resumes with
+// them without deleting the others again.
 func (c *CleanupTracker) CleanupE(ctx context.Context) error {
+	// Take the filled entries; an unfilled one belongs to an insert still
+	// running, or to one that inserted nothing, and stays.
 	c.mu.Lock()
-	entries := c.entries
-	c.entries = nil
+	var pending, running []*cleanupEntry
+	for _, e := range c.entries {
+		if e.graph != nil {
+			pending = append(pending, e)
+		} else {
+			running = append(running, e)
+		}
+	}
+	c.entries = running
 	c.mu.Unlock()
 
 	var errs []error
-	var failed []cleanupEntry
-	for _, entry := range slices.Backward(entries) {
-		if err := cleanupResultGraph(ctx, entry.graph, entry.deleteFns, entry.values, c.db); err != nil {
+	var failed []*cleanupEntry
+	for _, entry := range slices.Backward(pending) {
+		if err := cleanupResultGraph(ctx, entry.graph, entry.deleteFns, entry.values, entry.deleted, c.db); err != nil {
 			errs = append(errs, err)
 			failed = append(failed, entry)
 		}
@@ -166,12 +187,24 @@ func (c *CleanupTracker) CleanupE(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// check reports a blueprint the plan inserts that has no Delete callback,
-// before anything is inserted. A nil tracker checks nothing.
-func (c *CleanupTracker) check(reg *Registry, g *graph.Graph) error {
+// begin reports a blueprint the plan inserts that has no Delete callback,
+// before anything is inserted, and reserves the entry the insert is recorded
+// in. A nil tracker checks and records nothing.
+func (c *CleanupTracker) begin(reg *Registry, g *graph.Graph) (*cleanupEntry, error) {
 	if c == nil || g == nil {
-		return nil
+		return nil, nil //nolint:nilnil // a nil entry finishes as a no-op, so callers need no tracker check
 	}
+	if err := checkDeleteFns(reg, g); err != nil {
+		return nil, err
+	}
+	entry := &cleanupEntry{tracker: c, deleted: make(map[string]bool)}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = append(c.entries, entry)
+	return entry, nil
+}
+
+func checkDeleteFns(reg *Registry, g *graph.Graph) error {
 	r := resolveRegistry(reg).reg
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -186,20 +219,23 @@ func (c *CleanupTracker) check(reg *Registry, g *graph.Graph) error {
 	return nil
 }
 
-// record keeps what an execution inserted, including a partial one. A nil
-// tracker records nothing.
-func (c *CleanupTracker) record(reg *Registry, result *executor.Result) {
-	if c == nil || result == nil || len(result.Inserted) == 0 {
+// finish records what an execution inserted, including a partial one, and
+// drops the entry when nothing was inserted.
+func (e *cleanupEntry) finish(reg *Registry, result *executor.Result) {
+	if e == nil {
 		return
 	}
-	entry := cleanupEntry{
-		graph:     result.Graph,
-		deleteFns: snapshotDeleteFns(reg, result.Nodes),
-		values:    result.Inserted,
+	c := e.tracker
+	if result == nil || len(result.Inserted) == 0 {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.entries = slices.DeleteFunc(c.entries, func(other *cleanupEntry) bool { return other == e })
+		return
 	}
+	deleteFns := snapshotDeleteFns(reg, result.Nodes)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.entries = append(c.entries, entry)
+	e.graph, e.deleteFns, e.values = result.Graph, deleteFns, result.Inserted
 }
 
 // resolveCleanup picks the tracker an insert records in.
