@@ -240,6 +240,8 @@ result := plan.Insert(t, db)
 _ = result
 ```
 
+`plan.Snapshot()` returns the same plan as data — each record's table, relation path, and why it was planned, plus per-table insert counts — so a test can assert that a fixture still creates the records it should. `seedling.MaxNodes(n)` stops planning once a graph would exceed `n` records; `BuildMany` plans a batch the way `InsertMany` inserts it. See [Plan snapshots and node limits](./docs/guide.md#plan-snapshots-and-node-limits).
+
 ### Trace inserts at runtime
 
 `WithInsertLog` reports each insert step (table, primary key, FK assignments) as it happens:

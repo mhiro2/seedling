@@ -23,16 +23,24 @@ user := result.Root()
 ### Insert many records
 
 ```go
-roots := seedling.InsertMany[User](t, db, 5)
-```
-
-Returns `[]User`. For richer access use `InsertManyE`, which returns `BatchResult[T]`:
-
-```go
-batch, err := seedling.InsertManyE[User](ctx, db, 5)
+batch := seedling.InsertMany[User](t, db, 5)
 batch.Roots()          // []User
 batch.MustRootAt(0)    // User at index 0
 ```
+
+`InsertMany` returns `BatchResult[T]`, like `InsertManyE`. Use `BuildMany` to plan a batch without inserting it.
+
+### Guard fixture size
+
+```go
+plan := seedling.Build[Task](t)
+if got := plan.Snapshot().Inserts(); got != 5 {
+    t.Fatalf("task fixture inserts %d records, want 5:\n%s", got, plan.DebugString())
+}
+seedling.InsertOne[Task](t, db, seedling.MaxNodes(10)) // fails with ErrTooManyNodes past 10 records
+```
+
+`Snapshot` lists every planned record with its table, relation path, reason, and whether it is shared or passed with `Use`.
 
 ### Cleanup
 

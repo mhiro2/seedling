@@ -66,6 +66,7 @@ Core responsibilities:
 - detect cycles during expansion: a required relation that returns to a blueprint already on the expansion stack with the same options and the same back-reference-bound relations has no finite expansion and is rejected with `ErrCycleDetected` (model self/mutual references as `Optional`). A `has_many` child whose `belongs_to` is bound to the parent that created it does not count as a revisit, so `employee -> department -> employees` expands finitely. A `Use` or `Ref` on such a bound relation is rejected, since honoring it would replace or rebuild the parent that already exists
 - mark `Use(...)` relations as provided nodes so the executor skips insertion
 - bind `Link(...)` relations to the node of an earlier `Scenario` root, which is inserted once and shared
+- record on every node the relation that created it, and enforce `MaxNodes` as each node is added rather than after the whole graph is built
 
 Relation expansion rules:
 
@@ -95,6 +96,9 @@ Each node stores:
 - current value
 - primary key fields
 - whether the node is provided by the caller
+- its origin: the node and relation that planned it, with the element index for collections, from which `Path()` derives a readable relation path such as `task.project.company`
+
+The public `PlanSnapshot` is built from these fields in topological order, and executor insert failures carry the same path, so diagnostics never expose the opaque node IDs as the only locator.
 
 Each edge stores one or more field bindings:
 

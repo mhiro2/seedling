@@ -15,17 +15,17 @@ result := seedling.InsertOne[Task](t, db)
 task := result.Root()
 ```
 
-Use `InsertMany` when a test needs multiple records of the same type.
+Use `InsertMany` when a test needs multiple records of the same type. Like `InsertOne`, it returns the full result, a `BatchResult`:
 
 ```go
 users := seedling.InsertMany[User](t, db, 3,
     seedling.Seq("Name", func(i int) string {
         return fmt.Sprintf("user-%d", i)
     }),
-)
+).Roots()
 ```
 
-Use `InsertManyE` when you need the full batch result for debugging or cleanup.
+Use `InsertManyE` when an error path needs the partial result for cleanup.
 
 ```go
 result, err := seedling.InsertManyE[User](ctx, db, 3,
@@ -83,6 +83,31 @@ result := plan.Insert(t, db)
 task := result.Root()
 _ = task
 ```
+
+`BuildMany` does the same for a batch, planning `n` records with the sharing and `Seq` expansion `InsertMany` would apply, and returns a `BatchPlan` whose `Insert` returns the `BatchResult`.
+
+#### Plan snapshots and node limits
+
+`Snapshot` on a `Plan`, `BatchPlan`, or `ScenarioPlan` returns a read-only `PlanSnapshot` for asserting how many and which records a fixture creates, so a test fails when a relation change makes the fixture grow:
+
+```go
+plan := seedling.Build[Task](t)
+snap := plan.Snapshot()
+if got := snap.Inserts(); got != 5 {
+    t.Fatalf("task fixture inserts %d records, want 5:\n%s", got, plan.DebugString())
+}
+_ = snap.InsertsByTable() // map[string]int, e.g. "companies": 2
+```
+
+Each `PlanNode` carries its blueprint, table, relation path from its root (`task.project.company`, `department.employees[1]`, `article.tags[0].through`), why it was planned (`ReasonRoot`, `ReasonBelongsTo`, `ReasonHasMany`, `ReasonManyToMany`, `ReasonThrough`), whether it was passed with `Use` (`Provided`), whether more than one record depends on it (`Shared`, such as a parent `InsertMany` shares or a `Scenario` record linked twice), and the IDs it depends on. `Len` counts every planned record; `Inserts`, `InsertsByBlueprint`, and `InsertsByTable` count Insert callback calls — seedling cannot see how many SQL statements a callback runs.
+
+`MaxNodes(n)` fails planning with `ErrTooManyNodes` once the plan would hold more than `n` records. It is checked while relations expand, so an unexpectedly large graph stops at the limit, and the error names the path of the record that crossed it. For `InsertMany` and `BuildMany` the limit covers the whole batch; a `Scenario` takes it from `Scenario.WithMaxNodes(n)`.
+
+```go
+seedling.InsertOne[Task](t, db, seedling.MaxNodes(5))
+```
+
+An Insert callback failure reports the same relation path through `InsertFailedError.Path()`.
 
 When a plan includes `AfterInsert` / `AfterInsertE`, remember that those callbacks are captured once at `Build` time. Reusing the same `Plan` also reuses any closure state captured by those callbacks, so rebuild the plan if each execution needs isolated callback state.
 
