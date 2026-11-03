@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/mhiro2/seedling"
 	"github.com/mhiro2/seedling/seedlingtest"
@@ -171,5 +172,36 @@ func TestNewTestSession_RollsBackTransactionOnCleanup(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatal("expected zero count after rollback")
+	}
+}
+
+func TestWithTx_StaysOpenUntilItsCleanup(t *testing.T) {
+	// Arrange
+	db, err := openStubSQLDB(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var cleanupErr error
+
+	// Act: a cleanup registered after WithTx runs before its rollback, once
+	// the test context is canceled.
+	t.Run("test", func(t *testing.T) {
+		tx := seedling.WithTx(t, db)
+		t.Cleanup(func() {
+			// database/sql rolls back a transaction whose begin context is
+			// canceled from a goroutine, so give it time to do so.
+			time.Sleep(50 * time.Millisecond)
+			_, cleanupErr = tx.ExecContext(context.Background(), `INSERT INTO companies(name) VALUES (?)`, "late")
+		})
+	})
+
+	// Assert
+	if cleanupErr != nil {
+		t.Fatalf("transaction closed before its cleanup: %v", cleanupErr)
 	}
 }

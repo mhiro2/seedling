@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -36,7 +37,7 @@ func NewSession[T any](reg *Registry) Session[T] {
 func NewTestSession[T any](tb testing.TB, reg *Registry, db TxBeginner, txOptions *sql.TxOptions) Session[T] {
 	tb.Helper()
 
-	tx, err := db.BeginTx(tb.Context(), txOptions)
+	tx, err := beginTestTx(tb, db, txOptions)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -112,7 +113,7 @@ func (s Session[T]) resolveDB(db DBTX) DBTX {
 func WithTx(tb testing.TB, db TxBeginner) *sql.Tx {
 	tb.Helper()
 
-	tx, err := db.BeginTx(tb.Context(), nil)
+	tx, err := beginTestTx(tb, db, nil)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -124,4 +125,18 @@ func WithTx(tb testing.TB, db TxBeginner) *sql.Tx {
 	})
 
 	return tx
+}
+
+// beginTestTx begins a transaction that outlives tb's context. database/sql
+// rolls a transaction back as soon as the context it began with is canceled,
+// and tb.Context() is canceled before cleanup functions run, so a transaction
+// begun with it would already be gone, mid-rollback, when the cleanup that
+// rolls it back, or one that still reads through it, runs.
+func beginTestTx(tb testing.TB, db TxBeginner, opts *sql.TxOptions) (*sql.Tx, error) {
+	tb.Helper()
+	tx, err := db.BeginTx(context.WithoutCancel(tb.Context()), opts)
+	if err != nil {
+		return nil, fmt.Errorf("seedling: begin test transaction: %w", err)
+	}
+	return tx, nil
 }
