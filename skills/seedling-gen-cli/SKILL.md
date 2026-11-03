@@ -131,6 +131,7 @@ seedling-gen atlas \
 ## Troubleshooting
 
 - **GORM model parse failure** — Ensure `--import-path` points to the full Go import path of the models package. If unexported fields or custom types cause issues, check that the package compiles independently with `go build`.
+- **FK type mismatch (`sql.NullInt64`, `pgtype.Int8`, named ID types)** — Generated `BelongsTo` relations already carry a `Convert` entry for known nullable wrappers. For anything else (for example `int64` → `UserID`), set `Relation.Convert` in hand-written code with `seedling.ConvertFK(func(id int64) UserID { return UserID(id) })`; `Plan.Validate` reports the remaining mismatches with a hint.
 - **FK or relation not detected** — `seedling-gen` infers relations from foreign key constraints. If the schema lacks explicit FK definitions (common in MySQL or older DDL), append the missing `Relation` entries to the blueprint's `Relations` in hand-written code.
 - **Composite key mismatch** — Verify that `LocalFields`, `RefFields`, and `RemoteFields` in the generated `Relation` list their columns in matching schema order.
 - **Generated defaults violate constraints** — Override generated `Defaults` when the schema expects unique values, enumerated business values, or non-scalar custom types that the generator intentionally leaves untouched.

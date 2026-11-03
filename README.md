@@ -65,7 +65,7 @@ seedling handles FK ordering, graph expansion, and cleanup so your tests stay fo
 
 - 🪶 Zero runtime dependencies in the core module; optional DB helpers live in companion packages
 - 🔗 Automatic FK resolution with topological insert ordering and minimal graph expansion
-- 🌿 First-class relation kinds: `BelongsTo`, `HasMany`, `ManyToMany`, plus composite keys
+- 🌿 First-class relation kinds: `BelongsTo`, `HasMany`, `ManyToMany`, plus composite keys and explicit FK conversion into `sql.NullInt64`, `pgtype.Int8`, or named ID types
 - 🔧 Per-test overrides via `Set`, `Use`, and `Ref`, including the count and per-record options of `HasMany` / `ManyToMany` children
 - 🧱 Generated typed builders (`f.Task().Title("review").Assignee(f.User().Name("alice"))`) that turn field and relation mistakes into compile errors
 - ♻️ `WithTx` for auto-rollback transactions -- no manual cleanup
@@ -140,7 +140,7 @@ The shortest path is two steps: generate blueprints from your schema, then call 
 
    Plain DDL does not say how rows are written, so `sql` and `atlas` leave `Insert` unset and registration fails until you set it. The sqlc, GORM, and ent adapters generate `Insert` where they can. Re-run the same command after a schema change; your hand-written file needs no repair, and adding `--check` in CI fails when the generated file is stale.
 
-   Generated relations retain the referenced columns, so foreign keys targeting unique non-primary columns use `RefField`/`RefFields` instead of being treated as primary-key references. Relations are still named after the referenced table, so recording those columns does not rename an existing relation; a name derived from the FK columns is used only to separate two foreign keys that would otherwise collide. Generated `Defaults` intentionally skip primary keys, relation FK fields, and unsupported custom types. They are meant to make the first insert usable with zero setup, not to satisfy every unique or business constraint automatically.
+   Generated relations retain the referenced columns, so foreign keys targeting unique non-primary columns use `RefField`/`RefFields` instead of being treated as primary-key references. Relations are still named after the referenced table, so recording those columns does not rename an existing relation; a name derived from the FK columns is used only to separate two foreign keys that would otherwise collide. A nullable FK that sqlc or GORM types as `sql.NullInt64`, `sql.Null[T]`, `pgtype.Int8`, or a similar wrapper gets a generated `Convert` entry, so the parent key is stored with `Valid: true`. Generated `Defaults` intentionally skip primary keys, relation FK fields, and unsupported custom types. They are meant to make the first insert usable with zero setup, not to satisfy every unique or business constraint automatically.
 
    The snippets below assume the generated package is named `testutil`.
    For a runnable minimal version of this flow, see [examples/quickstart](./examples/quickstart).
