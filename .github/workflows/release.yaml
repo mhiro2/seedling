@@ -37,7 +37,7 @@ jobs:
             integration/go.sum
             seedlingpgx/go.sum
       - name: Set up mise
-        uses: jdx/mise-action@v5.2.1
+        uses: jdx/mise-action@v5.2.3
         with:
           version: 2026.8.12
           install: true
