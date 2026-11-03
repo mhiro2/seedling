@@ -18,6 +18,9 @@ type GormModel struct {
 	Name   string
 	Table  string
 	Fields []GormField
+	// Imports maps the package qualifiers of the model's file to their
+	// import paths.
+	Imports map[string]string
 }
 
 // GormField represents a field in a GORM model.
@@ -73,9 +76,11 @@ func ParseGormDir(dir string) ([]GormModel, error) {
 
 	// Collect all struct types and their table name methods.
 	structTypes := make(map[string]*ast.StructType)
+	structImports := make(map[string]map[string]string)
 	tableNames := make(map[string]string) // struct name -> table name from TableName() method
 
 	for _, file := range files {
+		imports := fileImports(file)
 		for _, decl := range file.Decls {
 			switch d := decl.(type) {
 			case *ast.GenDecl:
@@ -86,6 +91,7 @@ func ParseGormDir(dir string) ([]GormModel, error) {
 					ts := spec.(*ast.TypeSpec)
 					if st, ok := ts.Type.(*ast.StructType); ok {
 						structTypes[ts.Name.Name] = st
+						structImports[ts.Name.Name] = imports
 					}
 				}
 			case *ast.FuncDecl:
@@ -112,6 +118,7 @@ func ParseGormDir(dir string) ([]GormModel, error) {
 	models := make([]GormModel, 0, len(names))
 	for _, name := range names {
 		model := parseGormStruct(name, structTypes[name], structTypes)
+		model.Imports = structImports[name]
 		if table, ok := tableNames[name]; ok {
 			model.Table = table
 		}

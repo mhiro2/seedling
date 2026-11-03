@@ -42,6 +42,9 @@ type normalizedRelation struct {
 	RefFields    []string
 	RefBlueprint string
 	Optional     bool
+	// Converters convert referenced values that the FK fields cannot take
+	// by assignment, such as an int64 key into an sql.NullInt64 field.
+	Converters []normalizedConverter
 }
 
 type normalizedMutationHook struct {
@@ -61,6 +64,9 @@ type normalizedModel struct {
 	Relations     []normalizedRelation
 	InsertHook    *normalizedMutationHook
 	DeleteHook    *normalizedMutationHook
+	// Imports lists the import specs the model's generated code needs
+	// beyond the model package, such as for FK converter types.
+	Imports []string
 }
 
 const normalizedStructTemplate = `
@@ -107,7 +113,7 @@ func NewBlueprints() Blueprints {
 {{- if $model.Relations}}
 			Relations: []seedling.Relation{
 {{- range $model.Relations}}
-				{Name: {{quote .Name}}, Kind: seedling.{{if .HasMany}}HasMany{{else}}BelongsTo{{end}}, {{- if isCompositeRelation .}} LocalFields: []string{ {{- range $i, $field := .LocalFields}}{{if $i}}, {{end}}{{quote $field}}{{end}} }, {{- else}} LocalField: {{quote .LocalField}}, {{- end}}{{- if .RefFields}}{{- if isCompositeReference .}} RefFields: []string{ {{- range $i, $field := .RefFields}}{{if $i}}, {{end}}{{quote $field}}{{end}} }, {{- else}} RefField: {{quote .RefField}}, {{- end}}{{- end}} RefBlueprint: {{quote .RefBlueprint}}{{- if .Optional}}, Optional: true{{- end}}},
+				{Name: {{quote .Name}}, Kind: seedling.{{if .HasMany}}HasMany{{else}}BelongsTo{{end}}, {{- if isCompositeRelation .}} LocalFields: []string{ {{- range $i, $field := .LocalFields}}{{if $i}}, {{end}}{{quote $field}}{{end}} }, {{- else}} LocalField: {{quote .LocalField}}, {{- end}}{{- if .RefFields}}{{- if isCompositeReference .}} RefFields: []string{ {{- range $i, $field := .RefFields}}{{if $i}}, {{end}}{{quote $field}}{{end}} }, {{- else}} RefField: {{quote .RefField}}, {{- end}}{{- end}} RefBlueprint: {{quote .RefBlueprint}}{{- if .Optional}}, Optional: true{{- end}}{{- if .Converters}}, Convert: map[string]seedling.FKConverter{ {{- range $i, $c := .Converters}}{{if $i}}, {{end}}{{quote $c.Field}}: {{$c.Expr}}{{end}} }{{- end}}},
 {{- end}}
 			},
 {{- end}}
@@ -167,6 +173,9 @@ func generateNormalizedCode(w io.Writer, kind, pkg string, imports []string, mod
 
 	imports = append(imports, `"errors"`)
 	imports = append(imports, builderImports...)
+	for _, model := range models {
+		imports = append(imports, model.Imports...)
+	}
 	if len(builders) > 0 {
 		imports = append(imports, `"testing"`)
 	}
@@ -356,6 +365,11 @@ func validateNormalizedModels(models []normalizedModel, emitStructs bool) error 
 			relationNames[relation.Name] = struct{}{}
 			if len(relation.RefFields) > 0 && len(relation.RefFields) != len(relation.LocalFields) {
 				return fmt.Errorf("model %q relation %q: %d local fields do not match %d referenced fields", name, relation.Name, len(relation.LocalFields), len(relation.RefFields))
+			}
+			for _, converter := range relation.Converters {
+				if err := validateGoExpr("FK converter", converter.Expr); err != nil {
+					return fmt.Errorf("model %q relation %q: %w", name, relation.Name, err)
+				}
 			}
 		}
 	}
@@ -780,7 +794,7 @@ func normalizeSqlcModels(tables []Table, sqlcInfo *SqlcInfo) ([]normalizedModel,
 
 		models = append(models, model)
 	}
-	return models, nil
+	return withFKConverters(models, sqlcInfo.Imports), nil
 }
 
 func normalizeGormModels(models []GormModel, alias string) []normalizedModel {
@@ -874,7 +888,27 @@ func normalizeGormModels(models []GormModel, alias string) []normalizedModel {
 			},
 		})
 	}
-	return normalized
+	return withFKConverters(normalized, mergedGormImports(models))
+}
+
+// mergedGormImports combines the imports of every model file. A qualifier
+// that files bind to different paths is dropped, since a converter naming it
+// could not tell which package is meant.
+func mergedGormImports(models []GormModel) map[string]string {
+	merged := make(map[string]string)
+	conflicting := make(map[string]bool)
+	for _, model := range models {
+		for qualifier, path := range model.Imports {
+			if existing, ok := merged[qualifier]; ok && existing != path {
+				conflicting[qualifier] = true
+			}
+			merged[qualifier] = path
+		}
+	}
+	for qualifier := range conflicting {
+		delete(merged, qualifier)
+	}
+	return merged
 }
 
 func splitCommaSeparatedFields(value string) []string {
