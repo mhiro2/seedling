@@ -171,6 +171,9 @@ func (e *expander) expandHasMany(
 		return fmt.Errorf("lookup has-many blueprint %q: %w", rel.RefBlueprint, err)
 	}
 
+	if err := e.reserve(parentNode, rel.Name, relationCount(rel, opts)); err != nil {
+		return err
+	}
 	elements := relationElements(rel, opts)
 	childBindings := hasManyBindings(childBP, parentNode, rel)
 	count := len(elements)
@@ -242,6 +245,10 @@ func (e *expander) expandManyToMany(
 		return err
 	}
 
+	// Each element adds its related record and a join record.
+	if err := e.reserve(parentNode, rel.Name, 2*relationCount(rel, opts)); err != nil {
+		return err
+	}
 	elements := relationElements(rel, opts)
 	count := len(elements)
 
@@ -397,6 +404,17 @@ func relationElements(rel RelationDef, opts *OptionSet) []ElementOptions {
 		}
 	}
 	return make([]ElementOptions, rel.Count)
+}
+
+// relationCount returns the number of records relationElements expands,
+// without allocating them.
+func relationCount(rel RelationDef, opts *OptionSet) int {
+	if opts != nil {
+		if elements, ok := opts.Collections[rel.Name]; ok {
+			return len(elements)
+		}
+	}
+	return rel.Count
 }
 
 func (e *expander) belongsToNodeID(parentNodeID nodeIdentity, path relationPath, rel RelationDef, opts *OptionSet) nodeIdentity {

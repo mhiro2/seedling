@@ -86,6 +86,16 @@ func (e *expander) addNode(nodeID nodeIdentity, node *graph.Node) error {
 	return nil
 }
 
+// reserve fails when n more nodes under node's relation would exceed
+// maxNodes, so a large collection is rejected before its elements are
+// allocated.
+func (e *expander) reserve(node *graph.Node, relation string, n int) error {
+	if e.maxNodes > 0 && e.graph.Len()+n > e.maxNodes {
+		return fmt.Errorf("expand %s.%s: %w", node.Path(), relation, errx.TooManyNodes(e.maxNodes))
+	}
+	return nil
+}
+
 // enterBlueprint pushes a blueprint onto the active expansion stack, reporting
 // ErrCycleDetected when the same (blueprint, options, bound relations) frame is
 // already active. A successful enter must be paired with leaveBlueprint; a

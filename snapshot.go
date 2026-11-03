@@ -91,15 +91,27 @@ func newPlanSnapshot(g *graph.Graph) PlanSnapshot {
 }
 
 // sharedNode reports whether more than one record depends on node, other
-// than the children planned under it.
+// than the records planned under it, such as its has-many children and the
+// join records of its many-to-many relations. A record that binds several of
+// its relations to node counts once.
 func sharedNode(node *graph.Node) bool {
-	dependents := 0
+	dependents := make(map[*graph.Node]struct{})
 	for _, edge := range node.Dependents() {
-		if edge.Child.Origin.From != node {
-			dependents++
+		if !plannedUnder(edge.Child, node) {
+			dependents[edge.Child] = struct{}{}
 		}
 	}
-	return dependents > 1
+	return len(dependents) > 1
+}
+
+// plannedUnder reports whether ancestor is on child's origin chain.
+func plannedUnder(child, ancestor *graph.Node) bool {
+	for n := child.Origin.From; n != nil; n = n.Origin.From {
+		if n == ancestor {
+			return true
+		}
+	}
+	return false
 }
 
 func dependencyIDs(node *graph.Node) []string {

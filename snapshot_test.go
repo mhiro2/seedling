@@ -298,3 +298,59 @@ func TestInsertFailedError_Path(t *testing.T) {
 		t.Fatalf("err = %v, want the path in the message", err)
 	}
 }
+
+func TestPlanSnapshot_SharedCountsDistinctRecords(t *testing.T) {
+	// Arrange
+	setupManyToManyBlueprints(t)
+	type person struct{ ID int }
+	type review struct{ ID, AuthorID, ReviewerID int }
+	reg := seedling.NewRegistry()
+	ids := seedlingtest.NewIDSequence()
+	seedling.MustRegisterTo(reg, seedling.Blueprint[person]{
+		Name: "person", PKField: "ID",
+		Insert: func(_ context.Context, _ seedling.DBTX, v person) (person, error) { v.ID = ids.Next(); return v, nil },
+	})
+	seedling.MustRegisterTo(reg, seedling.Blueprint[review]{
+		Name: "review", PKField: "ID",
+		Relations: []seedling.Relation{
+			{Name: "author", Kind: seedling.BelongsTo, LocalField: "AuthorID", RefBlueprint: "person"},
+			{Name: "reviewer", Kind: seedling.BelongsTo, LocalField: "ReviewerID", RefBlueprint: "person"},
+		},
+		Insert: func(_ context.Context, _ seedling.DBTX, v review) (review, error) { v.ID = ids.Next(); return v, nil },
+	})
+	s := seedling.NewScenario(reg)
+	someone := seedling.Add[person](s)
+	seedling.Add[review](s, seedling.Link("author", someone), seedling.Link("reviewer", someone))
+
+	// Act
+	articles := build[Article](t, seedling.Ref("tags", seedling.Count(2))).Snapshot()
+	scenario, err := s.BuildE()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	if shared := articles.Shared(); len(shared) != 0 {
+		t.Fatalf("join records of the article's own relation made it shared: %+v", shared)
+	}
+	if shared := scenario.Snapshot().Shared(); len(shared) != 0 {
+		t.Fatalf("a person linked twice by one review is not shared: %+v", shared)
+	}
+}
+
+func TestMaxNodes_RejectsLargeCollectionsBeforeExpanding(t *testing.T) {
+	// Arrange
+	setupHasManyBlueprints(t)
+
+	// Act
+	_, refErr := buildE[Department](t, seedling.MaxNodes(5), seedling.Ref("employees", seedling.Count(1_000_000_000)))
+	_, countErr := buildE[Department](t, seedling.MaxNodes(2))
+
+	// Assert
+	if !errors.Is(refErr, seedling.ErrTooManyNodes) {
+		t.Fatalf("err = %v, want ErrTooManyNodes", refErr)
+	}
+	if !errors.Is(countErr, seedling.ErrTooManyNodes) || !strings.Contains(countErr.Error(), "department.employees") {
+		t.Fatalf("err = %v, want ErrTooManyNodes at department.employees", countErr)
+	}
+}
