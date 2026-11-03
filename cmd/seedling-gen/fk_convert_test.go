@@ -72,7 +72,7 @@ func TestFKConverterExpr(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Act
-			expr, gotImports, ok := fkConverterExpr(tt.parentType, tt.childType, imports)
+			expr, gotImports, ok := fkConverterExpr(tt.parentType, imports, tt.childType, imports)
 
 			// Assert
 			if !ok {
@@ -89,7 +89,7 @@ func TestFKConverterExpr(t *testing.T) {
 }
 
 func TestFKConverterExpr_SkipsUnknownConversions(t *testing.T) {
-	imports := map[string]string{"sql": sqlImportPath, "ids": "example.com/ids"}
+	imports := map[string]string{"sql": sqlImportPath, "pgtype": pgtypeImportPath, "ids": "example.com/ids"}
 	tests := []struct {
 		name       string
 		parentType string
@@ -101,17 +101,56 @@ func TestFKConverterExpr_SkipsUnknownConversions(t *testing.T) {
 		{name: "model-package type argument", parentType: "Status", childType: "sql.Null[Status]"},
 		{name: "unqualified named type", parentType: "int64", childType: "UserID"},
 		{name: "non-uuid into uuid wrapper", parentType: "string", childType: "pgtype.UUID"},
+		{name: "narrowing integer", parentType: "int64", childType: "sql.NullInt16"},
+		{name: "unsigned into same-width signed", parentType: "uint64", childType: "sql.NullInt64"},
+		{name: "platform unsigned into int64", parentType: "uint", childType: "pgtype.Int8"},
+		{name: "signed into unsigned", parentType: "int8", childType: "sql.NullByte"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Act
-			_, _, ok := fkConverterExpr(tt.parentType, tt.childType, imports)
+			_, _, ok := fkConverterExpr(tt.parentType, imports, tt.childType, imports)
 
 			// Assert
 			if ok {
 				t.Fatal("fkConverterExpr found a conversion, want none")
 			}
 		})
+	}
+}
+
+func TestWithFKConverters_ResolvesQualifiersPerModelFile(t *testing.T) {
+	// Arrange
+	parent := normalizedModel{
+		BlueprintID: "team",
+		PKFields:    []string{"ID"},
+		Fields:      []normalizedField{{GoName: "ID", GoType: "int64"}},
+	}
+	child := func(imports map[string]string) normalizedModel {
+		return normalizedModel{
+			BlueprintID:   "player",
+			Fields:        []normalizedField{{GoName: "TeamID", GoType: "sql.NullInt64"}},
+			Relations:     []normalizedRelation{{Name: "team", LocalField: "TeamID", LocalFields: []string{"TeamID"}, RefBlueprint: "team"}},
+			SourceImports: imports,
+		}
+	}
+
+	// Act
+	models := withFKConverters([]normalizedModel{
+		parent,
+		child(map[string]string{"sql": sqlImportPath}),
+	})
+	shadowed := withFKConverters([]normalizedModel{
+		{BlueprintID: parent.BlueprintID, PKFields: parent.PKFields, Fields: parent.Fields, SourceImports: map[string]string{"sql": sqlImportPath}},
+		child(map[string]string{"sql": "example.com/fake/sql"}),
+	})
+
+	// Assert
+	if got := models[1].Relations[0].Converters; len(got) != 1 || got[0].Field != "TeamID" {
+		t.Fatalf("converters = %+v, want one for TeamID", got)
+	}
+	if got := shadowed[1].Relations[0].Converters; len(got) != 0 {
+		t.Fatalf("converters = %+v, want none when the child file binds sql to another package", got)
 	}
 }
 
@@ -206,7 +245,7 @@ import (
 )
 
 type Company struct {
-	gorm.Model
+	ID   int32 `+"`"+`gorm:"primaryKey"`+"`"+`
 	Name string
 }
 
@@ -232,7 +271,7 @@ type User struct {
 	src := buf.String()
 	for _, want := range []string{
 		`"database/sql"`,
-		`"CompanyID": seedling.ConvertFK(func(v uint) sql.NullInt64 { return sql.NullInt64{Int64: int64(v), Valid: true} })`,
+		`"CompanyID": seedling.ConvertFK(func(v int32) sql.NullInt64 { return sql.NullInt64{Int64: int64(v), Valid: true} })`,
 	} {
 		if !strings.Contains(src, want) {
 			t.Fatalf("generated code does not contain %s:\n%s", want, src)

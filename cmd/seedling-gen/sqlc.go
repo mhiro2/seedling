@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,6 +16,10 @@ import (
 type SqlcModel struct {
 	Name   string
 	Fields []SqlcField
+	// Imports maps the package qualifiers of the file declaring the model
+	// to their import paths, so field types such as pgtype.Int8 can be
+	// traced to their package.
+	Imports map[string]string
 }
 
 // SqlcField represents a field in a sqlc-generated struct.
@@ -51,10 +54,7 @@ type SqlcDeleteQuery struct {
 
 // SqlcInfo holds information extracted from sqlc-generated Go files.
 type SqlcInfo struct {
-	Package string
-	// Imports maps the package qualifiers the sqlc files use to import paths,
-	// so field types such as pgtype.Int8 can be traced to their package.
-	Imports       map[string]string
+	Package       string
 	Models        []SqlcModel
 	Queries       []SqlcQuery
 	DeleteQueries []SqlcDeleteQuery
@@ -95,15 +95,13 @@ func ParseSqlcDir(dir string) (*SqlcInfo, error) {
 
 	info := &SqlcInfo{
 		Package: pkgName,
-		Imports: make(map[string]string),
-	}
-	for _, file := range files {
-		maps.Copy(info.Imports, fileImports(file))
 	}
 
 	structTypes := make(map[string]*ast.StructType)
+	structImports := make(map[string]map[string]string)
 
 	for _, file := range files {
+		imports := fileImports(file)
 		for _, decl := range file.Decls {
 			genDecl, ok := decl.(*ast.GenDecl)
 			if !ok || genDecl.Tok != token.TYPE {
@@ -113,6 +111,7 @@ func ParseSqlcDir(dir string) (*SqlcInfo, error) {
 				typeSpec := spec.(*ast.TypeSpec)
 				if st, ok := typeSpec.Type.(*ast.StructType); ok {
 					structTypes[typeSpec.Name.Name] = st
+					structImports[typeSpec.Name.Name] = imports
 				}
 			}
 		}
@@ -130,7 +129,7 @@ func ParseSqlcDir(dir string) (*SqlcInfo, error) {
 		if strings.HasSuffix(name, "Params") || name == "Queries" {
 			continue
 		}
-		model := SqlcModel{Name: name}
+		model := SqlcModel{Name: name, Imports: structImports[name]}
 		for _, field := range structTypes[name].Fields.List {
 			if len(field.Names) == 0 {
 				continue

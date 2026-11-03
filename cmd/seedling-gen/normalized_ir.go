@@ -67,6 +67,10 @@ type normalizedModel struct {
 	// Imports lists the import specs the model's generated code needs
 	// beyond the model package, such as for FK converter types.
 	Imports []string
+	// SourceImports maps the package qualifiers of the file declaring the
+	// model type to their import paths; nil when the adapter does not read
+	// Go source.
+	SourceImports map[string]string
 }
 
 const normalizedStructTemplate = `
@@ -756,6 +760,7 @@ func normalizeSqlcModels(tables []Table, sqlcInfo *SqlcInfo) ([]normalizedModel,
 			PKFields:      pkFields,
 			Fields:        normalizedSqlcFields(table, fieldsByColumn),
 			Relations:     relations,
+			SourceImports: sqlcModel.Imports,
 		}
 
 		if query := binding.insert; query != nil {
@@ -794,7 +799,7 @@ func normalizeSqlcModels(tables []Table, sqlcInfo *SqlcInfo) ([]normalizedModel,
 
 		models = append(models, model)
 	}
-	return withFKConverters(models, sqlcInfo.Imports), nil
+	return withFKConverters(models), nil
 }
 
 func normalizeGormModels(models []GormModel, alias string) []normalizedModel {
@@ -886,29 +891,10 @@ func normalizeGormModels(models []GormModel, alias string) []normalizedModel {
 			DeleteHook: &normalizedMutationHook{
 				Body: "return dbtx.(*gorm.DB).WithContext(ctx).Delete(&v).Error",
 			},
+			SourceImports: model.Imports,
 		})
 	}
-	return withFKConverters(normalized, mergedGormImports(models))
-}
-
-// mergedGormImports combines the imports of every model file. A qualifier
-// that files bind to different paths is dropped, since a converter naming it
-// could not tell which package is meant.
-func mergedGormImports(models []GormModel) map[string]string {
-	merged := make(map[string]string)
-	conflicting := make(map[string]bool)
-	for _, model := range models {
-		for qualifier, path := range model.Imports {
-			if existing, ok := merged[qualifier]; ok && existing != path {
-				conflicting[qualifier] = true
-			}
-			merged[qualifier] = path
-		}
-	}
-	for qualifier := range conflicting {
-		delete(merged, qualifier)
-	}
-	return merged
+	return withFKConverters(normalized)
 }
 
 func splitCommaSeparatedFields(value string) []string {

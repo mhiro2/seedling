@@ -48,19 +48,50 @@ var nullWrappers = map[string]map[string]nullWrapper{
 	},
 }
 
-var integerTypes = map[string]bool{
-	"int": true, "int8": true, "int16": true, "int32": true, "int64": true,
-	"uint": true, "uint8": true, "uint16": true, "uint32": true, "uint64": true, "byte": true,
+// integerType describes a predeclared integer type for lossless conversion
+// checks. int and uint are taken as 64 bits wide.
+type integerType struct {
+	bits   int
+	signed bool
+}
+
+var integerTypes = map[string]integerType{
+	"int": {64, true}, "int8": {8, true}, "int16": {16, true}, "int32": {32, true}, "int64": {64, true},
+	"uint": {64, false}, "uint8": {8, false}, "uint16": {16, false}, "uint32": {32, false}, "uint64": {64, false},
+	"byte": {8, false},
+}
+
+// losslessIntegerConversion reports whether every value of the integer type
+// from is representable in the integer type to, so converting a key can never
+// make it reference a different row.
+func losslessIntegerConversion(from, to string) bool {
+	src, ok := integerTypes[from]
+	if !ok {
+		return false
+	}
+	dst, ok := integerTypes[to]
+	if !ok {
+		return false
+	}
+	switch {
+	case src.signed == dst.signed:
+		return src.bits <= dst.bits
+	case dst.signed:
+		return src.bits < dst.bits
+	default:
+		return false
+	}
 }
 
 // withFKConverters attaches a converter to every belongs-to field whose type
 // is a known nullable wrapper of the referenced field's type, such as an
-// sql.NullInt64 FK pointing at an int64 key. imports maps the package
-// qualifiers that field types use to their import paths; the imports the
-// converters need are added to the child model. A field the parent value can
-// be assigned to directly, or as a pointer, needs no converter, and any other
-// mismatch is left to the runtime check, which reports it before inserting.
-func withFKConverters(models []normalizedModel, imports map[string]string) []normalizedModel {
+// sql.NullInt64 FK pointing at an int64 key. Package qualifiers are resolved
+// through each model's SourceImports, the imports of the file declaring it;
+// the imports the converters need are added to the child model. A field the
+// parent value can be assigned to directly, or as a pointer, needs no
+// converter, and any other mismatch is left to the runtime check, which
+// reports it before inserting.
+func withFKConverters(models []normalizedModel) []normalizedModel {
 	byID := make(map[string]normalizedModel, len(models))
 	for _, model := range models {
 		byID[model.BlueprintID] = model
@@ -90,7 +121,7 @@ func withFKConverters(models []normalizedModel, imports map[string]string) []nor
 				if !ok || parentType == childType || childType == "*"+parentType {
 					continue
 				}
-				expr, exprImports, ok := fkConverterExpr(parentType, childType, imports)
+				expr, exprImports, ok := fkConverterExpr(parentType, parent.SourceImports, childType, model.SourceImports)
 				if !ok {
 					continue
 				}
@@ -111,13 +142,14 @@ func normalizedFieldType(model normalizedModel, name string) (string, bool) {
 }
 
 // fkConverterExpr returns a seedling.ConvertFK expression that wraps a value
-// of parentType into childType, with the imports it needs.
-func fkConverterExpr(parentType, childType string, imports map[string]string) (string, []string, bool) {
+// of parentType into childType, with the imports it needs. Each type's package
+// qualifiers resolve through the imports of the file declaring it.
+func fkConverterExpr(parentType string, parentImports map[string]string, childType string, childImports map[string]string) (string, []string, bool) {
 	qualifier, name, typeArg, ok := splitQualifiedType(childType)
 	if !ok {
 		return "", nil, false
 	}
-	path, ok := imports[qualifier]
+	path, ok := childImports[qualifier]
 	if !ok {
 		return "", nil, false
 	}
@@ -146,7 +178,7 @@ func fkConverterExpr(parentType, childType string, imports map[string]string) (s
 		// A uuid.UUID or [16]byte key is assigned as is; the converter
 		// takes it as [16]byte so the generated file needs no uuid import
 		// unless the wrapper itself comes from that package.
-		if !isUUIDType(parentType, imports) {
+		if !isUUIDType(parentType, parentImports) {
 			return "", nil, false
 		}
 		paramType = "[16]byte"
@@ -154,7 +186,7 @@ func fkConverterExpr(parentType, childType string, imports map[string]string) (s
 			value = qualifier + ".UUID(v)"
 		}
 	case parentType == wrapper.base:
-	case integerTypes[parentType] && integerTypes[wrapper.base]:
+	case losslessIntegerConversion(parentType, wrapper.base):
 		value = wrapper.base + "(v)"
 	default:
 		return "", nil, false
