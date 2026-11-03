@@ -197,6 +197,7 @@ Defaults: func(s *seedling.Scope) User {
 
 - `Seq(name)` returns the next value of a named sequence, starting at 1, and `Unique(prefix)` formats it as `prefix-N`, followed by the scope's namespace when it has one
 - `Rand()` returns a new random source seeded from the scope's seed and the number of sources drawn before it, so draws are reproducible and records do not share one stream. `Generate` options without `WithRand` / `WithSeed` draw from the same scope
+- `UUID()` returns a random version 4 UUID string drawn the same way
 - `Now()` is a fixed clock (2024-01-01T00:00:00Z unless configured), so time-based defaults do not change between runs
 
 Every testing API (`InsertOne`, `InsertMany`, `Build`, `Scenario.Insert`, and their `Session`, `Builder`, and generated typed-builder forms) plans in `seedling.TestScope(t)`, one scope per test. Sequences therefore continue across every `Insert` call and every related record of the test, and the namespace and seed are derived from `t.Name()`, so two tests draw different unique values and a test draws the same values on every run as long as it plans its records in the same order. Records planned concurrently from goroutines of one test take sequence numbers and random sources in whatever order they reach the scope, so they stay unique but not reproducible. The scope is discarded when the test finishes; a cleanup function registered before the test's first insert runs after that, and a record it creates gets a separate scope that never repeats the test's values.
@@ -317,7 +318,20 @@ When you use `database/sql`, [`WithTx`](https://pkg.go.dev/github.com/mhiro2/see
 
 [`seedling-gen`](../cmd/seedling-gen) generates model and blueprint definitions from multiple input sources.
 
-Generated blueprints now include deterministic `Defaults` for common scalar fields such as strings, numbers, booleans, byte slices, and `time.Time`. Primary keys (including the untagged `ID` field GORM treats as the key by convention), relation FK fields, and unsupported custom types stay untouched so relation resolution and application-specific constraints remain explicit. Defaults for fields promoted from an embedded `gorm.Model` are written through the embedded struct (`Model: gorm.Model{CreatedAt: ...}`), and the `time` import is added only when generated code actually references it.
+Generated blueprints include `Defaults` for common scalar fields such as strings, numbers, booleans, byte slices, and `time.Time`, shaped by the constraints the schema states for each column:
+
+| Column | Generated default |
+|---|---|
+| `UNIQUE` (inline, `UNIQUE (col)`, or a single-column `CREATE UNIQUE INDEX` / Atlas unique `index` / GORM `unique` tag) string | `scope.Unique("user-email")` |
+| unique integer or float | `int64(scope.Seq("user-number"))` |
+| `ENUM(...)`, `CREATE TYPE ... AS ENUM`, or `CHECK (col IN (...))` | the first listed value; for a sqlc enum type, `db.UserStatus("draft")` |
+| `VARCHAR(n)` / `CHAR(n)` (or GORM `size:n`) | a label cut to `n` characters; a unique value keeps its suffix by shortening the label, and a column too short for one gets `strconv.Itoa(scope.Seq(...))` |
+| `UUID` stored as `string` | `scope.UUID()` |
+| `JSON` / `JSONB` stored as `string`, `[]byte`, or `json.RawMessage` | `{}` |
+| `time.Time` | `scope.Now()` |
+| other strings, numbers, booleans | `"user-name"`, `1`, `true` |
+
+`scope` is the [`*seedling.Scope`](#unique-and-reproducible-values-with-scope) the generated `Defaults` receive, so unique values keep counting across every insert of a test. Uniqueness covers rows created in that scope; the generator does not query existing rows, and composite unique constraints and arbitrary `CHECK` expressions are not solved. Primary keys (including the untagged `ID` field GORM treats as the key by convention), relation FK fields, and unsupported custom types stay untouched so relation resolution and application-specific constraints remain explicit. Defaults for fields promoted from an embedded `gorm.Model` are written through the embedded struct (`Model: gorm.Model{CreatedAt: scope.Now(), ...}`).
 
 Install the CLI:
 
@@ -467,7 +481,7 @@ When `--out` is specified, the output is written atomically via a temporary file
 
 The `ent` subcommand requires the package at `--import-path` to exist and compile. Run Ent code generation before `seedling-gen ent`; this lets seedling-gen use the exact generated names even when the project configures custom acronyms with entc. Generated mixin fields are included in the blueprint and its Insert callback so required mixin values are not silently omitted.
 
-Treat generated `Defaults` as ergonomic starters, not full fake-data generation. If a test needs unique values or domain-specific shapes, wrap them in the hand-written file, drawing from the `Scope` they receive, or override them per test with `Set`, `With`, or `Generate`.
+Treat generated `Defaults` as ergonomic starters, not full fake-data generation. They satisfy the single-column constraints the schema states; for domain-specific shapes or constraints the schema does not express, wrap them in the hand-written file, drawing from the `Scope` they receive, or override them per test with `Set`, `With`, or `Generate`.
 
 ## Faker Locales
 
