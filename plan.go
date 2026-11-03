@@ -37,14 +37,19 @@ func BuildE[T any](opts ...Option) (*Plan[T], error) {
 
 // BuildE constructs a dependency plan for type T without inserting anything.
 func (s Session[T]) BuildE(opts ...Option) (*Plan[T], error) {
-	rootType := reflect.TypeFor[T]()
+	return buildPlan[T](s.registry, s.scope, s.db, s.cleanup, reflect.TypeFor[T](), opts)
+}
 
-	collected, err := resolveRootOptions(s.registry, rootType, opts, noSequenceIndex)
+// buildPlan builds the plan of a root record of rootType, whose values have
+// type T. The session's scope, DB, and tracker apply unless options override
+// them.
+func buildPlan[T any](reg *Registry, scope *Scope, db DBTX, cleanup *CleanupTracker, rootType reflect.Type, opts []Option) (*Plan[T], error) {
+	collected, err := resolveRootOptions(reg, rootType, opts, noSequenceIndex)
 	if err != nil {
 		return nil, err
 	}
 
-	adapter := newRegistryAdapter(s.registry, resolveScope(collected.scope, s.scope))
+	adapter := newRegistryAdapter(reg, resolveScope(collected.scope, scope))
 	optSet := toOptionSet(collected)
 
 	result, err := planner.Plan(adapter, rootType, optSet)
@@ -56,10 +61,10 @@ func (s Session[T]) BuildE(opts ...Option) (*Plan[T], error) {
 		graph:        result.Graph,
 		afterInserts: collected.afterInserts,
 		ctx:          collected.ctx,
-		registry:     s.registry,
-		db:           s.db,
+		registry:     reg,
+		db:           db,
 		logFn:        collected.logFn,
-		cleanup:      resolveCleanup(collected.cleanup, s.cleanup),
+		cleanup:      resolveCleanup(collected.cleanup, cleanup),
 	}, nil
 }
 

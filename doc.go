@@ -281,6 +281,7 @@
 //   - [WithContext], [WithInsertLog]
 //   - [Plan.Validate], [Plan.DebugString], [Plan.DryRunString], [Plan.Snapshot]
 //   - [WithTx], [NewTestSession], [AutoCleanup], [WithCleanup]
+//   - [CheckRegistry], [CheckRepeat], [CheckTraits], [ExpectFailure], [SkipBlueprint], [SkipTrait]
 //   - [Result.Root], [Result.DebugString], [Result.Cleanup], [Result.CleanupE]
 //   - [BatchResult.Roots], [BatchResult.RootAt], [BatchResult.NodeAt], [BatchResult.NodesForRoot]
 //   - [BatchResult.DebugString], [BatchResult.Cleanup], [BatchResult.CleanupE]
