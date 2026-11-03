@@ -120,6 +120,7 @@ func TestCheckRegistry_InsertsEveryBlueprintAndTrait(t *testing.T) {
 		seedling.SkipTrait("user", "skipped"),
 		seedling.ExpectFailure("user", "invalid"),
 		seedling.ExpectFailure("company", "unnamed"),
+		seedling.ExpectFailure("user", "inactive", "invalid"),
 	)
 
 	// Assert
@@ -129,7 +130,7 @@ func TestCheckRegistry_InsertsEveryBlueprintAndTrait(t *testing.T) {
 		names = append(names, strings.TrimPrefix(name, prefix))
 	}
 	slices.Sort(names)
-	want := []string{"company/default", "company/unnamed", "user/default", "user/inactive", "user/inactive+inactive", "user/invalid"}
+	want := []string{"company/default", "company/unnamed", "user/default", "user/inactive", "user/inactive+inactive", "user/inactive+invalid", "user/invalid"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("cases = %v, want %v", names, want)
 	}
@@ -194,6 +195,9 @@ func TestCheckRegistry_ReportsFailures(t *testing.T) {
 		{mode: "unexpected-success", want: []string{
 			`blueprint "company" with defaults: insert 1 succeeded, but ExpectFailure says it must fail`,
 		}},
+		{mode: "expected-planning-error", want: []string{
+			`blueprint "user" with traits typo: ExpectFailure needs an Insert callback to fail, but the insert did not run:`,
+		}},
 		{mode: "unknown-trait", want: []string{
 			`SkipTrait names trait "missing", which blueprint "user" does not define`,
 		}},
@@ -235,6 +239,11 @@ func runFailingCheck(t *testing.T, mode string) {
 	case "unexpected-success":
 		reg := newCheckRegistry(t, uniqueEmail, nil)
 		seedling.CheckRegistry(t, reg, db, seedling.ExpectFailure("company"))
+	case "expected-planning-error":
+		reg := newCheckRegistry(t, uniqueEmail, map[string][]seedling.Option{
+			"typo": {seedling.Set("Actve", false)},
+		})
+		seedling.CheckRegistry(t, reg, db, seedling.ExpectFailure("user", "typo"))
 	case "unknown-trait":
 		reg := newCheckRegistry(t, uniqueEmail, nil)
 		seedling.CheckRegistry(t, reg, db, seedling.SkipTrait("user", "missing"))

@@ -1,6 +1,7 @@
 package seedling
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -58,8 +59,10 @@ func CheckTraits(blueprint string, traits ...string) CheckOption {
 
 // ExpectFailure marks the case of a blueprint with exactly the given traits,
 // or its defaults when no trait is given, as one whose insert must fail, such
-// as a trait that deliberately violates a constraint for a negative test. The
-// check then fails if the insert succeeds.
+// as a trait that deliberately violates a constraint for a negative test. A
+// combination of traits is checked even without [CheckTraits]. The check fails
+// if the insert succeeds, or if it fails before an Insert callback runs, as a
+// misspelled field in the trait would.
 func ExpectFailure(blueprint string, traits ...string) CheckOption {
 	return func(cfg *checkConfig) {
 		cfg.failures[blueprint] = append(cfg.failures[blueprint], slices.Clone(traits))
@@ -190,7 +193,13 @@ func (cfg checkConfig) cases(def *blueprintDef) []checkCase {
 			cases = append(cases, checkCase{name: trait, traits: []string{trait}})
 		}
 	}
-	for _, traits := range cfg.combinations[def.name] {
+	combinations := slices.Clone(cfg.combinations[def.name])
+	for _, traits := range cfg.failures[def.name] {
+		if len(traits) > 1 && !slices.ContainsFunc(combinations, func(c []string) bool { return slices.Equal(c, traits) }) {
+			combinations = append(combinations, traits)
+		}
+	}
+	for _, traits := range combinations {
 		cases = append(cases, checkCase{name: strings.Join(traits, "+"), traits: traits})
 	}
 	for i, c := range cases {
@@ -217,6 +226,9 @@ func runCheckCase(t *testing.T, reg *Registry, def *blueprintDef, c checkCase, r
 		switch {
 		case c.expectError && err == nil:
 			t.Errorf("%s: insert %d succeeded, but ExpectFailure says it must fail", label, i+1)
+			return
+		case c.expectError && !errors.Is(err, ErrInsertFailed):
+			t.Errorf("%s: ExpectFailure needs an Insert callback to fail, but the insert did not run: %v", label, err)
 			return
 		case c.expectError:
 			t.Logf("%s: insert failed as expected: %v", label, err)

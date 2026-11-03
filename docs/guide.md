@@ -361,7 +361,7 @@ func TestFixtures(t *testing.T) {
     },
         seedling.CheckRepeat(2),                          // insert each case twice to catch repeated unique defaults
         seedling.CheckTraits("user", "admin", "suspended"), // also check traits applied together
-        seedling.ExpectFailure("user", "invalid_email"),  // a trait for negative tests must still fail
+        seedling.ExpectFailure("user", "invalid_email"),  // a trait for negative tests must still fail its Insert
         seedling.SkipBlueprint("user_role"),               // a join blueprint used only under its relation
     )
 }
