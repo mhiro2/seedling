@@ -74,7 +74,7 @@ jobs:
           cache: true
           cache-dependency-path: ${{ matrix.go_sum }}
       - name: Set up mise
-        uses: jdx/mise-action@v5.2.3
+        uses: jdx/mise-action@v5.2.6
         with:
           version: 2026.8.12
           install: false
@@ -124,7 +124,7 @@ jobs:
             integration/go.sum
             seedlingpgx/go.sum
       - name: Set up mise
-        uses: jdx/mise-action@v5.2.3
+        uses: jdx/mise-action@v5.2.6
         with:
           version: 2026.8.12
           install: true
