@@ -11,8 +11,10 @@ import "reflect"
 // and slice is cloned at most once and shared references map to a single clone,
 // preserving identity instead of recursing forever.
 //
-// Only settable (exported) fields are deep-copied. An unexported reference-typed
-// field (pointer, slice, map, ...) is shallow-copied and therefore keeps sharing
+// Only settable (exported) fields are deep-copied, including the exported
+// fields promoted from an embedded struct of an unexported type. An unexported
+// reference-typed field (pointer, slice, map, ...), including an embedded
+// pointer to an unexported type, is shallow-copied and therefore keeps sharing
 // its backing storage with the original; this also preserves the internal
 // pointers of value types such as time.Time. Keep mutable state that must be
 // isolated across clones in exported fields.
@@ -80,13 +82,7 @@ func cloneReflectValue(value reflect.Value, visited map[visitKey]reflect.Value) 
 	case reflect.Struct:
 		copied := reflect.New(value.Type()).Elem()
 		copied.Set(value)
-		for i := 0; i < value.NumField(); i++ {
-			field := copied.Field(i)
-			if !field.CanSet() {
-				continue
-			}
-			field.Set(cloneReflectValue(value.Field(i), visited))
-		}
+		cloneFields(copied, value, visited)
 		return copied
 	case reflect.Slice:
 		if value.IsNil() {
@@ -129,5 +125,20 @@ func cloneReflectValue(value reflect.Value, visited map[visitKey]reflect.Value) 
 		return copied
 	default:
 		return value
+	}
+}
+
+// cloneFields deep-copies the settable fields of src into dst, a copy of src.
+// An embedded struct of an unexported type cannot be set as a whole, but the
+// exported fields it promotes can, so its fields are cloned in place.
+func cloneFields(dst, src reflect.Value, visited map[visitKey]reflect.Value) {
+	for i := range src.NumField() {
+		field := dst.Field(i)
+		switch {
+		case field.CanSet():
+			field.Set(cloneReflectValue(src.Field(i), visited))
+		case src.Type().Field(i).Anonymous && field.Kind() == reflect.Struct:
+			cloneFields(field, src.Field(i), visited)
+		}
 	}
 }
