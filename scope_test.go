@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mhiro2/seedling"
 )
@@ -449,5 +450,27 @@ func TestScope_UniqueNFitsMaxLength(t *testing.T) {
 	// Assert
 	if want := []string{"email-1-ns", "ema-2-ns", "e-3-ns", "4-ns", "5", "1"}; !slices.Equal(got, want) {
 		t.Fatalf("UniqueN = %q, want %q", got, want)
+	}
+}
+
+func TestScope_UniqueNKeepsMultiByteCharactersWhole(t *testing.T) {
+	// Arrange
+	scope := seedling.NewScope(seedling.ScopeConfig{})
+
+	// Act: each katakana character is 3 bytes.
+	got := []string{
+		scope.UniqueN("ユーザー", 6),
+		scope.UniqueN("ユーザー", 8),
+		scope.UniqueN("ユーザー", 4),
+	}
+
+	// Assert
+	if want := []string{"ユ-1", "ユー-2", "3"}; !slices.Equal(got, want) {
+		t.Fatalf("UniqueN = %q, want %q", got, want)
+	}
+	for _, value := range got {
+		if !utf8.ValidString(value) {
+			t.Fatalf("UniqueN returned invalid UTF-8 %q", value)
+		}
 	}
 }
