@@ -532,24 +532,39 @@ func (g generateEOption[T]) applyOption(_ *optionResolver, o *optionSet) error {
 	return nil
 }
 
-// WithRand sets the RNG used by Generate options on the current node.
+// WithRand sets the RNG used by Generate options on the current node. The
+// generator is used as given, so an option that applies to several records,
+// such as one in a trait, an InsertMany call, or a reused option slice, makes
+// them draw from one stream. A *rand.Rand is not safe for concurrent use; use
+// [WithSeed] for options shared across inserts or goroutines.
 func WithRand(r *rand.Rand) Option {
-	return randOption{rand: r}
+	return randOption{newRand: func(int) *rand.Rand { return r }}
 }
 
 type randOption struct {
-	rand *rand.Rand
+	newRand func(seqIndex int) *rand.Rand
 }
 
-func (r randOption) applyOption(_ *optionResolver, o *optionSet) error {
-	o.rand = r.rand
+func (r randOption) applyOption(res *optionResolver, o *optionSet) error {
+	o.rand = r.newRand(res.seqIndex)
 	return nil
 }
 
-// WithSeed is a convenience wrapper around WithRand(rand.New(rand.NewPCG(seed, seed^goldenGamma))).
+// WithSeed sets a deterministic RNG for Generate options on the current node.
+// Every record the option applies to gets a generator of its own seeded with
+// seed, so a trait or option slice reused across inserts or goroutines draws
+// the same values each time. The records of an InsertMany batch derive their
+// generators from seed and their index, so they draw different values that
+// still repeat across runs.
 func WithSeed(seed uint64) Option {
-	//nolint:gosec // WithSeed intentionally creates a deterministic pseudo-random generator.
-	return WithRand(rand.New(rand.NewPCG(seed, seed^goldenGamma)))
+	return randOption{newRand: func(seqIndex int) *rand.Rand {
+		stream := seed ^ goldenGamma
+		if seqIndex > 0 {
+			stream += uint64(seqIndex) * goldenGamma
+		}
+		//nolint:gosec // WithSeed intentionally creates a deterministic pseudo-random generator.
+		return rand.New(rand.NewPCG(seed, stream))
+	}}
 }
 
 // goldenGamma is the golden-ratio-derived constant (⌊2^64 / φ⌋). XOR-ing the

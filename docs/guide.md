@@ -291,7 +291,7 @@ After `AutoCleanup(t, db)`, every testing API for `t` and its subtests — `Inse
 - `Only`: restrict insertion to specific relation subtrees
 - `When`: expand a relation only when the current record matches a condition, including optional relations when the predicate returns true
 - `With`: mutate the root struct with full type safety. Generated [typed builders](#typed-builders) extend this to field setters and relations
-- `Generate` + `WithSeed` / `WithRand`: generate deterministic values for property-style tests. Without `WithSeed` / `WithRand`, `Generate` draws from the record's [Scope](#unique-and-reproducible-values-with-scope)
+- `Generate` + `WithSeed` / `WithRand`: generate deterministic values for property-style tests. `WithSeed` gives every record it applies to a generator of its own, so a trait or option slice reused across inserts or goroutines draws the same values each time, and the records of an `InsertMany` batch draw different values derived from their index. `WithRand` uses the generator it is given as is, so records sharing it draw from one stream and must not run concurrently. Without `WithSeed` / `WithRand`, `Generate` draws from the record's [Scope](#unique-and-reproducible-values-with-scope)
 - `InScope`: plan the record in a specific [Scope](#unique-and-reproducible-values-with-scope)
 - `WithInsertLog`: observe insert steps and FK assignments during execution
 
