@@ -727,15 +727,16 @@ func TestInsertOne_With(t *testing.T) {
 	}
 }
 
-func TestInsertOne_UsesTestingContextByDefault(t *testing.T) {
+func TestInsertOne_UsesUncancelableTestingContextByDefault(t *testing.T) {
 	// Arrange
 	reg := seedlingtest.NewRegistry()
 	ids := seedlingtest.NewIDSequence()
-	wantCtx := t.Context()
-	var sameCtx bool
+	var uncancelable bool
 	inserters := seedlingtest.DefaultBasicInserters(ids)
 	inserters.Company = func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
-		sameCtx = ctx == wantCtx
+		// The testing context is canceled before t.Cleanup functions run,
+		// so the testing APIs insert with one that cannot be canceled.
+		uncancelable = ctx.Done() == nil && ctx.Err() == nil
 		v.ID = ids.Next()
 		return v, nil
 	}
@@ -749,20 +750,21 @@ func TestInsertOne_UsesTestingContextByDefault(t *testing.T) {
 	if company.ID == 0 {
 		t.Fatal("expected non-zero ID")
 	}
-	if !sameCtx {
-		t.Fatal("expected true")
+	if !uncancelable {
+		t.Fatal("expected the testing APIs to insert with an uncancelable context")
 	}
 }
 
-func TestPlan_Insert_UsesTestingContextByDefault(t *testing.T) {
+func TestPlan_Insert_UsesUncancelableTestingContextByDefault(t *testing.T) {
 	// Arrange
 	reg := seedlingtest.NewRegistry()
 	ids := seedlingtest.NewIDSequence()
-	wantCtx := t.Context()
-	var sameCtx bool
+	var uncancelable bool
 	inserters := seedlingtest.DefaultBasicInserters(ids)
 	inserters.Company = func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
-		sameCtx = ctx == wantCtx
+		// The testing context is canceled before t.Cleanup functions run,
+		// so the testing APIs insert with one that cannot be canceled.
+		uncancelable = ctx.Done() == nil && ctx.Err() == nil
 		v.ID = ids.Next()
 		return v, nil
 	}
@@ -778,8 +780,8 @@ func TestPlan_Insert_UsesTestingContextByDefault(t *testing.T) {
 	if result.Root().ID == 0 {
 		t.Fatal("expected non-zero ID")
 	}
-	if !sameCtx {
-		t.Fatal("expected true")
+	if !uncancelable {
+		t.Fatal("expected the testing APIs to insert with an uncancelable context")
 	}
 }
 

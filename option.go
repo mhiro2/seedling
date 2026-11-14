@@ -300,8 +300,9 @@ func (w withOption[T]) applyOption(_ *optionResolver, o *optionSet) error {
 // it appears among the root options, including inside a [BlueprintTrait] or
 // [InlineTrait], and overrides the ctx passed to InsertOneE, InsertManyE, or
 // Plan.InsertE; WithContext(nil) runs with context.Background(). If not
-// specified, testing-based APIs use t.Context() and error-returning APIs use
-// the ctx they were given.
+// specified, error-returning APIs use the ctx they were given, and
+// testing-based APIs use t.Context() without its cancellation, so they also
+// work inside a t.Cleanup function.
 //
 //	seedling.InsertOne[Task](t, db, seedling.WithContext(ctx))
 func WithContext(ctx context.Context) Option {

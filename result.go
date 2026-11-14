@@ -119,7 +119,7 @@ func (r Result[T]) Cleanup(tb testing.TB, db DBTX, opts ...CleanupOption) {
 // the deadline has to be rebuilt rather than inherited.
 func cleanupContext(tb testing.TB, opts []CleanupOption) (context.Context, context.CancelFunc) {
 	tb.Helper()
-	return context.WithTimeout(context.WithoutCancel(tb.Context()), cleanupTimeout(tb, opts))
+	return context.WithTimeout(testContext(tb), cleanupTimeout(tb, opts))
 }
 
 // cleanupTimeout resolves the cleanup budget. Without an explicit option it
