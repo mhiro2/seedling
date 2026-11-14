@@ -2466,8 +2466,8 @@ func TestWhen_BlueprintLevelPredicate(t *testing.T) {
 			{Name: "project", Kind: seedling.BelongsTo, LocalField: "ProjectID", RefBlueprint: "project"},
 			{
 				Name: "assignee", Kind: seedling.BelongsTo, LocalField: "AssigneeUserID", RefBlueprint: "user",
-				When: func(v any) bool {
-					return v.(Task).Status == "assigned"
+				When: func(v any) (bool, error) {
+					return v.(Task).Status == "assigned", nil
 				},
 			},
 		},
@@ -2532,8 +2532,8 @@ func TestWhen_OptionOverridesBlueprintWhen(t *testing.T) {
 			{Name: "project", Kind: seedling.BelongsTo, LocalField: "ProjectID", RefBlueprint: "project"},
 			{
 				Name: "assignee", Kind: seedling.BelongsTo, LocalField: "AssigneeUserID", RefBlueprint: "user",
-				When: func(v any) bool {
-					return false // blueprint says never expand
+				When: func(any) (bool, error) {
+					return false, nil // blueprint says never expand
 				},
 			},
 		},
@@ -2568,8 +2568,8 @@ func TestWhen_HasMany(t *testing.T) {
 			{
 				Name: "employees", Kind: seedling.HasMany, LocalField: "DepartmentID",
 				RefBlueprint: "employee", Count: 2,
-				When: func(v any) bool {
-					return v.(Department).Name != "empty"
+				When: func(v any) (bool, error) {
+					return v.(Department).Name != "empty", nil
 				},
 			},
 		},

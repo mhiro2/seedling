@@ -176,7 +176,7 @@ func TestBuilder_Omit(t *testing.T) {
 				LocalField:   "AssigneeUserID",
 				RefBlueprint: "user",
 				Optional:     true,
-				When:         func(any) bool { return true },
+				When:         func(any) (bool, error) { return true, nil },
 			},
 		},
 		Insert: func(_ context.Context, _ seedling.DBTX, v Task) (Task, error) {

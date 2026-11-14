@@ -499,3 +499,34 @@ func TestPointerBlueprint_PartialResultCleanupUsesInsertedValues(t *testing.T) {
 		t.Fatalf("deleted company IDs = %v, want [1]", deletedCompanies)
 	}
 }
+
+func TestPointerBlueprint_WhenFuncTypeMismatch(t *testing.T) {
+	// Arrange
+	reg := seedling.NewRegistry()
+	seedling.MustRegisterTo(reg, seedling.Blueprint[*pointerCompany]{
+		Name: "pointer_company", Table: "pointer_companies", PKField: "ID",
+		Insert: func(_ context.Context, _ seedling.DBTX, company *pointerCompany) (*pointerCompany, error) {
+			return company, nil
+		},
+	})
+	seedling.MustRegisterTo(reg, seedling.Blueprint[*pointerUser]{
+		Name: "pointer_user", Table: "pointer_users", PKField: "ID",
+		Defaults: func(*seedling.Scope) *pointerUser { return &pointerUser{} },
+		Relations: []seedling.Relation{{
+			Name: "company", Kind: seedling.BelongsTo, LocalField: "CompanyID", RefBlueprint: "pointer_company",
+			// The predicate takes the struct, but the blueprint plans *pointerUser.
+			When: seedling.WhenFunc(func(pointerUser) bool { return true }),
+		}},
+		Insert: func(_ context.Context, _ seedling.DBTX, user *pointerUser) (*pointerUser, error) {
+			return user, nil
+		},
+	})
+
+	// Act
+	_, err := seedling.NewSession[*pointerUser](reg).BuildE()
+
+	// Assert
+	if !errors.Is(err, seedling.ErrTypeMismatch) {
+		t.Fatalf("expected ErrTypeMismatch for a WhenFunc of the wrong type, got %v", err)
+	}
+}

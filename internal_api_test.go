@@ -523,19 +523,6 @@ func TestRegistryAdapter_LookupByType(t *testing.T) {
 	}
 }
 
-func TestWhenFunc_ReturnsFalseOnTypeMismatch(t *testing.T) {
-	// Arrange
-	fn := WhenFunc(func(c internalCompany) bool { return true })
-
-	// Act
-	got := fn("not a company")
-
-	// Assert
-	if got {
-		t.Fatal("expected false for type mismatch")
-	}
-}
-
 func TestToOptionSet_Nil(t *testing.T) {
 	// Arrange
 

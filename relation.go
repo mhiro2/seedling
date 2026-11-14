@@ -1,6 +1,7 @@
 package seedling
 
 import (
+	"fmt"
 	"reflect"
 
 	"github.com/mhiro2/seedling/internal/field"
@@ -75,16 +76,17 @@ type Relation struct {
 	// When is an optional predicate that dynamically controls whether this
 	// relation should be expanded. The function receives the current record
 	// value (the owning blueprint's struct or pointer-to-struct) and returns
-	// true to expand the relation or false to skip it. When nil, the relation
-	// uses the standard Optional logic.
+	// true to expand the relation or false to skip it. An error fails the
+	// plan. When nil, the relation uses the standard Optional logic.
 	//
 	// This allows conditional relation expansion based on the record's
-	// field values at plan time:
+	// field values at plan time. [WhenFunc] builds the predicate from a typed
+	// function:
 	//
-	//	When: func(v any) bool {
-	//	    return v.(Task).Status == "assigned"
-	//	},
-	When func(v any) bool
+	//	When: seedling.WhenFunc(func(t Task) bool {
+	//	    return t.Status == "assigned"
+	//	}),
+	When func(v any) (bool, error)
 
 	// Convert maps an FK field name to the converter that turns the referenced
 	// parent value into that field's type. Use it when the parent value cannot
@@ -144,13 +146,17 @@ func ConvertFK[From, To any](fn func(From) To) FKConverter {
 //	When: seedling.WhenFunc(func(t Task) bool {
 //	    return t.Status == "assigned"
 //	}),
-func WhenFunc[T any](fn func(T) bool) func(any) bool {
-	return func(v any) bool {
+//
+// T must be the blueprint's model type. A record of another type, such as a
+// User predicate on a *User blueprint, fails the plan with [ErrTypeMismatch]
+// instead of skipping the relation.
+func WhenFunc[T any](fn func(T) bool) func(any) (bool, error) {
+	return func(v any) (bool, error) {
 		t, ok := v.(T)
 		if !ok {
-			return false
+			return false, fmt.Errorf("%w: WhenFunc expects %s but got %T", ErrTypeMismatch, typeName[T](), v)
 		}
-		return fn(t)
+		return fn(t), nil
 	}
 }
 

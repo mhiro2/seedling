@@ -42,7 +42,7 @@ type RelationDef struct {
 	RemoteFields     []string
 	Required         bool
 	Count            int                         // For has_many/many_to_many: number of records to create; zero (including unset) creates none
-	When             func(any) bool              // Optional predicate: expand only when true
+	When             func(any) (bool, error)     // Optional predicate: expand only when true
 	Convert          map[string]*field.Converter // child FK field name → converter for its referenced parent value
 }
 

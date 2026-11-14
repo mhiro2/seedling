@@ -23,7 +23,7 @@ type relationDef struct {
 	remoteFields     []string
 	required         bool
 	count            int
-	when             func(any) bool
+	when             func(any) (bool, error)
 	convert          map[string]*field.Converter
 }
 
