@@ -741,3 +741,28 @@ CREATE TABLE settings (
 		t.Fatalf("settings foreign keys = %v, want %v", got, want)
 	}
 }
+
+func TestParseSchema_MySQLForeignKeyIndexName(t *testing.T) {
+	// Arrange: MySQL accepts an index name between FOREIGN KEY and the columns.
+	sql := "CREATE TABLE users (id INT PRIMARY KEY);\n" +
+		"CREATE TABLE teams (id INT PRIMARY KEY);\n" +
+		"CREATE TABLE posts (\n" +
+		"  id INT PRIMARY KEY,\n" +
+		"  user_id INT NOT NULL,\n" +
+		"  team_id INT,\n" +
+		"  CONSTRAINT fk1 FOREIGN KEY idx_user (user_id) REFERENCES users (id),\n" +
+		"  FOREIGN KEY `idx_team`(team_id) REFERENCES teams (id)\n" +
+		");\n"
+
+	// Act
+	tables, err := ParseSchemaWithDialect(sql, "mysql")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	posts := findTable(t, tables, "posts")
+	if got, want := foreignKeyTargets(posts), []string{"user_id->users(id)", "team_id->teams(id)"}; !slices.Equal(got, want) {
+		t.Fatalf("posts foreign keys = %v, want %v", got, want)
+	}
+}
