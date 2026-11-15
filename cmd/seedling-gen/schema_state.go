@@ -43,6 +43,7 @@ func parseSchemaSources(sources []schemaSource, dialect string) ([]Table, error)
 		dialect: d,
 		enums:   make(map[string]*enumType),
 		byName:  make(map[string]*tableState),
+		dropped: make(map[string]bool),
 	}
 	for _, src := range sources {
 		text, masked := d.mask(src.SQL)
@@ -136,6 +137,7 @@ type schemaState struct {
 	enums   map[string]*enumType // enum type name → type
 	tables  []*tableState
 	byName  map[string]*tableState
+	dropped map[string]bool // dropped table names that foreign keys may still reference
 }
 
 // enumType is an enum type created by CREATE TYPE ... AS ENUM. Columns hold
@@ -220,16 +222,19 @@ func (s *schemaState) table(name string) *tableState {
 	return s.byName[normalizeIdent(name)]
 }
 
-// build derives the parsed tables from the current state.
+// build derives the parsed tables from the current state. A foreign key
+// pointing at a dropped table that no later table took the name of is left
+// out, as the table it referenced is gone.
 func (s *schemaState) build() []Table {
+	gone := func(table string) bool { return s.dropped[table] && s.byName[table] == nil }
 	tables := make([]Table, 0, len(s.tables))
 	for _, t := range s.tables {
-		tables = append(tables, t.build(s.dialect))
+		tables = append(tables, t.build(s.dialect, gone))
 	}
 	return tables
 }
 
-func (t *tableState) build(d sqlDialect) Table {
+func (t *tableState) build(d sqlDialect, gone func(table string) bool) Table {
 	columns := slices.Clone(t.columns)
 	columnIndex := make(map[string]int, len(columns))
 	for i, col := range columns {
@@ -264,6 +269,9 @@ func (t *tableState) build(d sqlDialect) Table {
 
 	foreignKeys := make([]ForeignKey, 0, len(t.foreignKeys))
 	for _, fk := range t.foreignKeys {
+		if gone(fk.refTable) {
+			continue
+		}
 		for _, name := range fk.columns {
 			idx, ok := columnIndex[name]
 			if !ok {

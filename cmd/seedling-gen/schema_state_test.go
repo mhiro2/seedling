@@ -670,3 +670,60 @@ CREATE TABLE users_full (LIKE users INCLUDING ALL EXCLUDING CONSTRAINTS, note TE
 		t.Fatalf("err = %v, want an undefined LIKE source", err)
 	}
 }
+
+func TestParseSchemaSources_DroppedTableKeepsReferencingForeignKeys(t *testing.T) {
+	// Arrange: SQLite rebuilds a table by creating its replacement, dropping
+	// the original, and renaming the replacement, and the foreign keys of
+	// other tables reach the rebuilt table by name.
+	sql := `
+CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
+CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users (id));
+CREATE TABLE tags (id INTEGER PRIMARY KEY);
+CREATE TABLE post_tags (post_id INTEGER, tag_id INTEGER NOT NULL REFERENCES tags (id));
+CREATE TABLE new_users (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+INSERT INTO new_users SELECT id, name FROM users;
+DROP TABLE users;
+ALTER TABLE new_users RENAME TO users;
+DROP TABLE tags;
+`
+
+	// Act
+	tables, err := ParseSchemaWithDialect(sql, "sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	if got, want := foreignKeyTargets(findTable(t, tables, "posts")), []string{"user_id->users(id)"}; !slices.Equal(got, want) {
+		t.Fatalf("posts foreign keys = %v, want %v", got, want)
+	}
+	if !schemaColumn(t, findTable(t, tables, "users"), "name").NotNull {
+		t.Fatal("users is not the rebuilt table")
+	}
+	// No table takes the name of the dropped tags table, so the foreign key
+	// pointing at it is left out.
+	postTags := findTable(t, tables, "post_tags")
+	if got := foreignKeyTargets(postTags); len(got) != 0 {
+		t.Fatalf("post_tags foreign keys = %v, want none", got)
+	}
+	if col := schemaColumn(t, postTags, "tag_id"); col.IsFK {
+		t.Fatalf("tag_id still marked as a foreign key: %+v", col)
+	}
+
+	// Act: CASCADE drops the referencing foreign keys right away, so a table
+	// created later under the name is not referenced.
+	tables, err = ParseSchemaWithDialect(`
+CREATE TABLE users (id INT PRIMARY KEY);
+CREATE TABLE posts (id INT PRIMARY KEY, user_id INT REFERENCES users (id));
+DROP TABLE users CASCADE;
+CREATE TABLE users (id INT PRIMARY KEY);
+`, "postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	if got := foreignKeyTargets(findTable(t, tables, "posts")); len(got) != 0 {
+		t.Fatalf("posts foreign keys = %v, want none after CASCADE", got)
+	}
+}
