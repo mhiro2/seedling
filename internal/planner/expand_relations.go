@@ -342,7 +342,7 @@ func relationWhen(value any, rel RelationDef, opts *OptionSet) (bool, error) {
 		}
 	}
 	if rel.When != nil {
-		return rel.When(value), nil
+		return rel.When(value)
 	}
 	return true, nil
 }

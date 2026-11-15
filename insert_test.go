@@ -727,15 +727,16 @@ func TestInsertOne_With(t *testing.T) {
 	}
 }
 
-func TestInsertOne_UsesTestingContextByDefault(t *testing.T) {
+func TestInsertOne_UsesUncancelableTestingContextByDefault(t *testing.T) {
 	// Arrange
 	reg := seedlingtest.NewRegistry()
 	ids := seedlingtest.NewIDSequence()
-	wantCtx := t.Context()
-	var sameCtx bool
+	var uncancelable bool
 	inserters := seedlingtest.DefaultBasicInserters(ids)
 	inserters.Company = func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
-		sameCtx = ctx == wantCtx
+		// The testing context is canceled before t.Cleanup functions run,
+		// so the testing APIs insert with one that cannot be canceled.
+		uncancelable = ctx.Done() == nil && ctx.Err() == nil
 		v.ID = ids.Next()
 		return v, nil
 	}
@@ -749,20 +750,21 @@ func TestInsertOne_UsesTestingContextByDefault(t *testing.T) {
 	if company.ID == 0 {
 		t.Fatal("expected non-zero ID")
 	}
-	if !sameCtx {
-		t.Fatal("expected true")
+	if !uncancelable {
+		t.Fatal("expected the testing APIs to insert with an uncancelable context")
 	}
 }
 
-func TestPlan_Insert_UsesTestingContextByDefault(t *testing.T) {
+func TestPlan_Insert_UsesUncancelableTestingContextByDefault(t *testing.T) {
 	// Arrange
 	reg := seedlingtest.NewRegistry()
 	ids := seedlingtest.NewIDSequence()
-	wantCtx := t.Context()
-	var sameCtx bool
+	var uncancelable bool
 	inserters := seedlingtest.DefaultBasicInserters(ids)
 	inserters.Company = func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
-		sameCtx = ctx == wantCtx
+		// The testing context is canceled before t.Cleanup functions run,
+		// so the testing APIs insert with one that cannot be canceled.
+		uncancelable = ctx.Done() == nil && ctx.Err() == nil
 		v.ID = ids.Next()
 		return v, nil
 	}
@@ -778,8 +780,8 @@ func TestPlan_Insert_UsesTestingContextByDefault(t *testing.T) {
 	if result.Root().ID == 0 {
 		t.Fatal("expected non-zero ID")
 	}
-	if !sameCtx {
-		t.Fatal("expected true")
+	if !uncancelable {
+		t.Fatal("expected the testing APIs to insert with an uncancelable context")
 	}
 }
 
@@ -2156,7 +2158,8 @@ func TestGenerate_WithSeed(t *testing.T) {
 	gen := seedling.Generate(func(r *rand.Rand, c *Company) {
 		c.Name = draw(r)
 	})
-	// WithSeed is documented as WithRand(rand.New(rand.NewPCG(seed, seed^goldenGamma))).
+	// A single record seeded with WithSeed(seed) draws from
+	// rand.NewPCG(seed, seed^goldenGamma), so a seed keeps its values.
 	const goldenGamma uint64 = 0x9e3779b97f4a7c15
 	want := draw(rand.New(rand.NewPCG(42, 42^goldenGamma)))
 
@@ -2174,6 +2177,96 @@ func TestGenerate_WithSeed(t *testing.T) {
 	}
 	if other.Name == first.Name {
 		t.Fatalf("expected seeds 42 and 43 to generate different names, both got %v", first.Name)
+	}
+}
+
+func TestGenerate_WithSeedReusedAcrossInserts(t *testing.T) {
+	// Arrange
+	setupBlueprints(t)
+	seeded := seedling.InlineTrait(
+		seedling.WithSeed(7),
+		seedling.Generate(func(r *rand.Rand, c *Company) {
+			c.Name = fmt.Sprintf("company-%x", r.Uint64())
+		}),
+	)
+
+	// Act
+	first := insertOne[Company](t, nil, seeded)
+	second := insertOne[Company](t, nil, seeded)
+
+	// Assert
+	if first.Name != second.Name {
+		t.Fatalf("a reused WithSeed option drew %q and then %q, want the same seeded value", first.Name, second.Name)
+	}
+}
+
+func TestGenerate_WithSeedSharedAcrossGoroutines(t *testing.T) {
+	// Arrange
+	setupBlueprints(t)
+	sess := session[Company](t)
+	opts := []seedling.Option{
+		seedling.WithSeed(7),
+		seedling.Generate(func(r *rand.Rand, c *Company) {
+			c.Name = fmt.Sprintf("company-%x", r.Uint64())
+		}),
+	}
+	const workers = 8
+	names := make([]string, workers)
+
+	// Act
+	var wg sync.WaitGroup
+	for i := range workers {
+		wg.Go(func() {
+			plan, err := sess.BuildE(opts...)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			result, err := plan.InsertE(t.Context(), nil)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			names[i] = result.Root().Name
+		})
+	}
+	wg.Wait()
+
+	// Assert
+	for i, name := range names {
+		if name != names[0] {
+			t.Fatalf("goroutine %d drew %q, goroutine 0 drew %q, want the same seeded value", i, name, names[0])
+		}
+	}
+}
+
+func TestGenerate_WithSeedInsertMany(t *testing.T) {
+	// Arrange
+	setupBlueprints(t)
+	opts := []seedling.Option{
+		seedling.WithSeed(7),
+		seedling.Generate(func(r *rand.Rand, c *Company) {
+			c.Name = fmt.Sprintf("company-%x", r.Uint64())
+		}),
+	}
+
+	// Act
+	first := insertMany[Company](t, nil, 3, opts...)
+	again := insertMany[Company](t, nil, 3, opts...)
+
+	// Assert
+	seen := make(map[string]bool)
+	for i, c := range first {
+		if seen[c.Name] {
+			t.Fatalf("record %d repeated the generated name %q", i, c.Name)
+		}
+		seen[c.Name] = true
+		if again[i].Name != c.Name {
+			t.Fatalf("record %d drew %q and then %q, want the same seeded value", i, c.Name, again[i].Name)
+		}
+	}
+	if single := insertOne[Company](t, nil, opts...); single.Name != first[0].Name {
+		t.Fatalf("InsertOne drew %q, want the first InsertMany record's %q", single.Name, first[0].Name)
 	}
 }
 
@@ -2375,8 +2468,8 @@ func TestWhen_BlueprintLevelPredicate(t *testing.T) {
 			{Name: "project", Kind: seedling.BelongsTo, LocalField: "ProjectID", RefBlueprint: "project"},
 			{
 				Name: "assignee", Kind: seedling.BelongsTo, LocalField: "AssigneeUserID", RefBlueprint: "user",
-				When: func(v any) bool {
-					return v.(Task).Status == "assigned"
+				When: func(v any) (bool, error) {
+					return v.(Task).Status == "assigned", nil
 				},
 			},
 		},
@@ -2441,8 +2534,8 @@ func TestWhen_OptionOverridesBlueprintWhen(t *testing.T) {
 			{Name: "project", Kind: seedling.BelongsTo, LocalField: "ProjectID", RefBlueprint: "project"},
 			{
 				Name: "assignee", Kind: seedling.BelongsTo, LocalField: "AssigneeUserID", RefBlueprint: "user",
-				When: func(v any) bool {
-					return false // blueprint says never expand
+				When: func(any) (bool, error) {
+					return false, nil // blueprint says never expand
 				},
 			},
 		},
@@ -2477,8 +2570,8 @@ func TestWhen_HasMany(t *testing.T) {
 			{
 				Name: "employees", Kind: seedling.HasMany, LocalField: "DepartmentID",
 				RefBlueprint: "employee", Count: 2,
-				When: func(v any) bool {
-					return v.(Department).Name != "empty"
+				When: func(v any) (bool, error) {
+					return v.(Department).Name != "empty", nil
 				},
 			},
 		},

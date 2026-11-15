@@ -251,6 +251,6 @@ func checkInsert(t *testing.T, reg *Registry, def *blueprintDef, opts []Option, 
 	if err != nil {
 		return err
 	}
-	_, err = plan.insertE(t.Context(), db, resolveCleanup(plan.cleanup, cleanupTrackerFor(t)))
+	_, err = plan.insertE(testContext(t), db, resolveCleanup(plan.cleanup, cleanupTrackerFor(t)))
 	return err
 }

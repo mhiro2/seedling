@@ -134,7 +134,7 @@ func WithTx(tb testing.TB, db TxBeginner) *sql.Tx {
 // rolls it back, or one that still reads through it, runs.
 func beginTestTx(tb testing.TB, db TxBeginner, opts *sql.TxOptions) (*sql.Tx, error) {
 	tb.Helper()
-	tx, err := db.BeginTx(context.WithoutCancel(tb.Context()), opts)
+	tx, err := db.BeginTx(testContext(tb), opts)
 	if err != nil {
 		return nil, fmt.Errorf("seedling: begin test transaction: %w", err)
 	}

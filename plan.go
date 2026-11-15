@@ -91,7 +91,7 @@ func (s Session[T]) Build(tb testing.TB, opts ...Option) *Plan[T] {
 // [AutoCleanup] enabled for tb.
 func (p *Plan[T]) Insert(tb testing.TB, db DBTX) Result[T] {
 	tb.Helper()
-	result, err := p.insertE(tb.Context(), db, resolveCleanup(p.cleanup, cleanupTrackerFor(tb)))
+	result, err := p.insertE(testContext(tb), db, resolveCleanup(p.cleanup, cleanupTrackerFor(tb)))
 	if err != nil {
 		tb.Fatal(err)
 	}

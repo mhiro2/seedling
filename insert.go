@@ -20,7 +20,7 @@ func InsertOne[T any](tb testing.TB, db DBTX, opts ...Option) Result[T] {
 // dependencies automatically resolved. Fails the test on error.
 func (s Session[T]) InsertOne(tb testing.TB, db DBTX, opts ...Option) Result[T] {
 	tb.Helper()
-	result, err := s.forTest(tb).InsertOneE(tb.Context(), db, opts...)
+	result, err := s.forTest(tb).InsertOneE(testContext(tb), db, opts...)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func InsertMany[T any](tb testing.TB, db DBTX, n int, opts ...Option) BatchResul
 // are identical across records. Fails the test on error.
 func (s Session[T]) InsertMany(tb testing.TB, db DBTX, n int, opts ...Option) BatchResult[T] {
 	tb.Helper()
-	result, err := s.forTest(tb).InsertManyE(tb.Context(), db, n, opts...)
+	result, err := s.forTest(tb).InsertManyE(testContext(tb), db, n, opts...)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -128,6 +128,20 @@ func batchResultFromExecutor[T any](reg *Registry, rootIDs []string, execResult 
 
 // insertContext picks the context an insert runs with. A WithContext option,
 // resolved after trait expansion, overrides the context the caller passed.
+// testContext returns the context the testing APIs insert and clean up with.
+// tb.Context() is canceled just before cleanup functions run, so the context
+// keeps its values but drops its cancellation, letting a t.Cleanup function
+// insert records or roll back a transaction. A testing.TB that was not
+// created by the test runner has no context and gets context.Background().
+func testContext(tb testing.TB) context.Context {
+	tb.Helper()
+	ctx := tb.Context()
+	if ctx == nil {
+		return context.Background()
+	}
+	return context.WithoutCancel(ctx)
+}
+
 func insertContext(ctx, override context.Context) context.Context {
 	if override != nil {
 		return override

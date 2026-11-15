@@ -244,6 +244,60 @@ func TestCleanup_UsesActiveBoundedContextDuringTestCleanup(t *testing.T) {
 	}
 }
 
+func TestTestingAPIs_InsertInsideTestCleanup(t *testing.T) {
+	// Arrange
+	var insertErrs []error
+	inserts := map[string]func(t *testing.T){
+		"InsertOne": func(t *testing.T) {
+			t.Helper()
+			insertOne[Company](t, nil)
+		},
+		"InsertMany": func(t *testing.T) {
+			t.Helper()
+			insertMany[Company](t, nil, 2)
+		},
+		"Plan": func(t *testing.T) {
+			t.Helper()
+			build[Company](t).Insert(t, nil)
+		},
+		"BatchPlan": func(t *testing.T) {
+			t.Helper()
+			session[Company](t).BuildMany(t, 2).Insert(t, nil)
+		},
+		"Scenario": func(t *testing.T) {
+			t.Helper()
+			scenario := seedling.NewScenario(getTestRegistry(t))
+			seedling.Add[Company](scenario)
+			scenario.Insert(t, nil)
+		},
+	}
+
+	// Act
+	for name, insert := range inserts {
+		t.Run(name, func(t *testing.T) {
+			ids := seedlingtest.NewIDSequence()
+			reg := seedling.NewRegistry()
+			seedling.MustRegisterTo(reg, seedling.Blueprint[Company]{
+				Name: "company", Table: "companies", PKField: "ID",
+				Insert: func(ctx context.Context, _ seedling.DBTX, v Company) (Company, error) {
+					if err := ctx.Err(); err != nil {
+						insertErrs = append(insertErrs, fmt.Errorf("%s: %w", name, err))
+					}
+					v.ID = ids.Next()
+					return v, nil
+				},
+			})
+			useTestRegistry(t, reg)
+			t.Cleanup(func() { insert(t) })
+		})
+	}
+
+	// Assert
+	for _, err := range insertErrs {
+		t.Errorf("insert inside t.Cleanup saw a canceled context: %v", err)
+	}
+}
+
 func TestCleanup_WithCleanupTimeoutOverridesBudget(t *testing.T) {
 	// Arrange
 	const timeout = 90 * time.Second

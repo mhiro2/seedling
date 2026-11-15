@@ -113,7 +113,7 @@ func (p *BatchPlan[T]) Len() int {
 // [AutoCleanup] enabled for tb.
 func (p *BatchPlan[T]) Insert(tb testing.TB, db DBTX) BatchResult[T] {
 	tb.Helper()
-	result, err := p.insertE(tb.Context(), db, resolveCleanup(p.cleanup, cleanupTrackerFor(tb)))
+	result, err := p.insertE(testContext(tb), db, resolveCleanup(p.cleanup, cleanupTrackerFor(tb)))
 	if err != nil {
 		tb.Fatal(err)
 	}

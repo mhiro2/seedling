@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // defaultScopeTime is the instant a [Scope] reports from [Scope.Now] unless
@@ -156,16 +157,31 @@ func (s *Scope) UniqueN(prefix string, maxLen int) string {
 	if s.namespace != "" {
 		suffix += "-" + s.namespace
 	}
+	if maxLen > 0 && len(suffix) < maxLen {
+		// Cut prefix at a character boundary, so a multi-byte character is
+		// dropped whole rather than split into invalid UTF-8.
+		prefix = truncateUTF8(prefix, maxLen-len(suffix))
+	}
 	switch {
-	case maxLen <= 0 || len(prefix)+len(suffix) <= maxLen:
+	case maxLen <= 0 || prefix != "" && len(prefix)+len(suffix) <= maxLen:
 		return prefix + suffix
-	case len(suffix) < maxLen:
-		return prefix[:maxLen-len(suffix)] + suffix
-	case s.namespace != "" && len(suffix)-1 <= maxLen:
+	case len(suffix)-1 <= maxLen:
 		return suffix[1:]
 	default:
 		return n
 	}
+}
+
+// truncateUTF8 returns the longest prefix of s that is at most n bytes and
+// does not split a multi-byte character.
+func truncateUTF8(s string, n int) string {
+	if n >= len(s) {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // Rand returns a new random source. Every call returns an independent source

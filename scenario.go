@@ -257,7 +257,7 @@ func (s *Scenario) insertE(ctx context.Context, db DBTX, scope *Scope, tracker *
 // Insert builds the scenario and inserts every record. Fails the test on error.
 func (s *Scenario) Insert(tb testing.TB, db DBTX) ScenarioResult {
 	tb.Helper()
-	result, err := s.insertE(tb.Context(), db, s.testScope(tb), resolveCleanup(s.cleanup, cleanupTrackerFor(tb)))
+	result, err := s.insertE(testContext(tb), db, s.testScope(tb), resolveCleanup(s.cleanup, cleanupTrackerFor(tb)))
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -323,7 +323,7 @@ func (p *ScenarioPlan) insertE(ctx context.Context, db DBTX, tracker *CleanupTra
 // enabled for tb.
 func (p *ScenarioPlan) Insert(tb testing.TB, db DBTX) ScenarioResult {
 	tb.Helper()
-	result, err := p.insertE(tb.Context(), db, resolveCleanup(p.cleanup, cleanupTrackerFor(tb)))
+	result, err := p.insertE(testContext(tb), db, resolveCleanup(p.cleanup, cleanupTrackerFor(tb)))
 	if err != nil {
 		tb.Fatal(err)
 	}

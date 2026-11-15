@@ -379,3 +379,34 @@ func TestValue_AliasedSlicesWithDistinctTypes(t *testing.T) {
 		t.Fatal("clone still shares the original backing array")
 	}
 }
+
+type embeddedBase struct {
+	Tags []string
+	Meta map[string]string
+}
+
+type embeddingModel struct {
+	embeddedBase
+	ID int
+}
+
+func TestValue_PromotedFieldsOfUnexportedEmbeddedStruct(t *testing.T) {
+	// Arrange
+	orig := embeddingModel{embeddedBase: embeddedBase{Tags: []string{"a"}, Meta: map[string]string{"k": "v"}}, ID: 1}
+
+	// Act
+	cp := clone.Value(orig).(embeddingModel)
+	cp.Tags[0] = "changed"
+	cp.Meta["k"] = "changed"
+
+	// Assert
+	if orig.Tags[0] != "a" {
+		t.Fatalf("clone shares the promoted slice: original Tags[0] = %q", orig.Tags[0])
+	}
+	if orig.Meta["k"] != "v" {
+		t.Fatalf("clone shares the promoted map: original Meta[k] = %q", orig.Meta["k"])
+	}
+	if cp.ID != 1 {
+		t.Fatalf("got ID %d, want 1", cp.ID)
+	}
+}
