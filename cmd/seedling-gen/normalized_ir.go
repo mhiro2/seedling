@@ -935,7 +935,7 @@ func normalizeEntModels(schemas []EntSchema) []normalizedModel {
 			TypeExpr:      "*ent." + schema.Name,
 			ZeroValueExpr: "&ent." + schema.Name + "{}",
 			BlueprintID:   singularize(strings.ToLower(schema.Name)),
-			TableName:     singularize(strings.ToLower(schema.Name)) + "s",
+			TableName:     entTableName(schema.Name),
 			PKFields:      []string{"ID"},
 			Fields:        normalizeEntFields(schema.Fields, []string{"ID"}),
 		}

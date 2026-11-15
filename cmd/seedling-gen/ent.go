@@ -106,6 +106,13 @@ func ParseEntSchemaDir(dir string) ([]EntSchema, error) {
 	return schemas, nil
 }
 
+// entTableName returns the table Ent creates for a schema: the snake_case
+// plural of the schema name, so Category becomes categories and OrderItem
+// becomes order_items.
+func entTableName(schemaName string) string {
+	return toSnakeCase(pluralize(schemaName))
+}
+
 func typeEmbedsEntSchema(f *ast.File, typeName string) bool {
 	for _, decl := range f.Decls {
 		genDecl, ok := decl.(*ast.GenDecl)

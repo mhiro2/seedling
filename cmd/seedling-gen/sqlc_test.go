@@ -913,6 +913,36 @@ CREATE TABLE users (
 	}
 }
 
+func TestGenerateSqlc_MatchesSqlcSingularModelNames(t *testing.T) {
+	// Arrange: sqlc names a model after the singular of its table, which
+	// keeps the e of courses and the s of statuses.
+	tables := mustParseSchema(t, `
+CREATE TABLE courses (id SERIAL PRIMARY KEY, title TEXT NOT NULL);
+CREATE TABLE statuses (id SERIAL PRIMARY KEY, label TEXT NOT NULL);
+`)
+	sqlcInfo := &SqlcInfo{
+		Package: "db",
+		Models: []SqlcModel{
+			{Name: "Course", Fields: []SqlcField{{Name: "ID", Type: "int32"}, {Name: "Title", Type: "string"}}},
+			{Name: "Status", Fields: []SqlcField{{Name: "ID", Type: "int32"}, {Name: "Label", Type: "string"}}},
+		},
+	}
+
+	// Act
+	var buf bytes.Buffer
+	if err := GenerateSqlc(&buf, "testutil", "github.com/myapp/internal/db", tables, sqlcInfo); err != nil {
+		t.Fatalf("GenerateSqlc error: %v", err)
+	}
+
+	// Assert
+	output := buf.String()
+	for _, want := range []string{"seedling.Blueprint[db.Course]", `"course"`, "seedling.Blueprint[db.Status]", `"status"`} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected output to contain %q\n\nGot:\n%s", want, output)
+		}
+	}
+}
+
 func TestGenerateSqlc_NoMatchingQuery(t *testing.T) {
 	schema := `
 CREATE TABLE tags (

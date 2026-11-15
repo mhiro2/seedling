@@ -302,21 +302,6 @@ func toGoStructName(tableName string) string {
 	return toGoFieldName(singular)
 }
 
-// singularize does a simple singularization by stripping trailing "s".
-// Handles "ies" -> "y" (companies -> company) and "ses" -> "s" (addresses -> address).
-func singularize(s string) string {
-	if strings.HasSuffix(s, "ies") {
-		return s[:len(s)-3] + "y"
-	}
-	if strings.HasSuffix(s, "ses") {
-		return s[:len(s)-2]
-	}
-	if strings.HasSuffix(s, "s") {
-		return s[:len(s)-1]
-	}
-	return s
-}
-
 // sqlDialect holds the rules that differ between SQL dialects. Lexically,
 // PostgreSQL recognizes dollar-quoted strings, E'...' strings with backslash
 // escapes, and nested block comments; MySQL treats a backslash inside a string
