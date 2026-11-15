@@ -137,15 +137,24 @@ func parseColumn(item sqlText, enumTypes map[string][]string, backslash bool) (C
 	return col, true
 }
 
+var (
+	// tableConstraintRE matches the reserved words that start a table
+	// constraint. A column named like one, such as checksum or unique_code,
+	// does not match as a whole word, and a quoted name is masked.
+	tableConstraintRE = regexp.MustCompile(`(?i)^(?:CONSTRAINT|CHECK|UNIQUE|PRIMARY\s+KEY|FOREIGN\s+KEY)\b`)
+	// tableIndexRE matches MySQL's KEY or INDEX [name] [USING type] (columns).
+	// key and index are ordinary column names elsewhere, so a column such as
+	// key TEXT or key VARCHAR(10) must not match: its type follows the name, and
+	// type arguments start with a digit or a string, never a column name.
+	tableIndexRE = regexp.MustCompile(`(?i)^(?:KEY|INDEX)(?:\s+[^\s(]+)?(?:\s+USING\s+\w+)?\s*\(\s*[^\s\d')]`)
+)
+
+// isTableConstraint reports whether a CREATE TABLE item or ALTER TABLE ADD
+// definition, in masked form, is a table constraint or index rather than a
+// column.
 func isTableConstraint(item string) bool {
-	upper := strings.ToUpper(strings.TrimSpace(item))
-	return strings.HasPrefix(upper, "PRIMARY KEY") ||
-		strings.HasPrefix(upper, "UNIQUE") ||
-		strings.HasPrefix(upper, "CHECK") ||
-		strings.HasPrefix(upper, "FOREIGN KEY") ||
-		strings.HasPrefix(upper, "CONSTRAINT") ||
-		strings.HasPrefix(upper, "KEY ") ||
-		strings.HasPrefix(upper, "INDEX ")
+	item = strings.TrimSpace(item)
+	return tableConstraintRE.MatchString(item) || tableIndexRE.MatchString(item)
 }
 
 // splitSQLItems splits a CREATE TABLE body at its top-level commas.

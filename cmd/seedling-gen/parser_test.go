@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -667,5 +668,50 @@ func TestParseSchema_PrimaryKeyForeignKeyIsRequired(t *testing.T) {
 				t.Fatalf("column NotNull = %v, want %v", got, tt.wantNotNull)
 			}
 		})
+	}
+}
+
+func TestParseSchema_ColumnsNamedLikeConstraintKeywords(t *testing.T) {
+	// Arrange: a column whose name starts with, or is, a constraint keyword is
+	// still a column, while MySQL's KEY and INDEX definitions are not.
+	sql := "CREATE TABLE users (\n" +
+		"  key TEXT PRIMARY KEY,\n" +
+		"  checksum TEXT,\n" +
+		"  unique_code TEXT,\n" +
+		"  checked_at TIMESTAMP,\n" +
+		"  index INT,\n" +
+		"  constraint_kind TEXT,\n" +
+		"  primary_email TEXT,\n" +
+		"  foreign_id INT,\n" +
+		"  `unique` VARCHAR(10),\n" +
+		"  KEY idx_checksum (checksum),\n" +
+		"  INDEX idx_kind USING BTREE (constraint_kind),\n" +
+		"  KEY (index),\n" +
+		"  UNIQUE KEY uq_code (unique_code)\n" +
+		");\n" +
+		"CREATE TABLE codes (key VARCHAR(10) NOT NULL, index NUMERIC(4, 1));\n" +
+		"ALTER TABLE users ADD checksum2 TEXT, ADD key2 TEXT, ADD INDEX idx_key2 (key2);\n" +
+		"ALTER TABLE codes DROP index;\n"
+
+	// Act
+	tables, err := ParseSchema(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	users := findTable(t, tables, "users")
+	want := []string{"key", "checksum", "unique_code", "checked_at", "index", "constraint_kind", "primary_email", "foreign_id", "unique", "checksum2", "key2"}
+	if got := columnNames(users); !slices.Equal(got, want) {
+		t.Fatalf("users columns = %v, want %v", got, want)
+	}
+	if !schemaColumn(t, users, "key").IsPK {
+		t.Fatal("key lost its PRIMARY KEY")
+	}
+	if !schemaColumn(t, users, "unique_code").Unique {
+		t.Fatal("unique_code lost its UNIQUE KEY")
+	}
+	if got := columnNames(findTable(t, tables, "codes")); !slices.Equal(got, []string{"key"}) {
+		t.Fatalf("codes columns = %v, want [key]", got)
 	}
 }

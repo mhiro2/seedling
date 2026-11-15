@@ -438,11 +438,13 @@ func (s *schemaState) alterDrop(t *tableState, rest sqlText) error {
 		t.dropPrimaryKey(s.dialect)
 		return nil
 	case "INDEX", "KEY":
-		rest, _ = skipWords(rest, firstWord(rest))
-		if name, _, ok := splitLeadingIdent(rest.Text); ok {
+		// MySQL's DROP INDEX name drops an index; without a name, key or index
+		// is the column being dropped.
+		index, _ := skipWords(rest, firstWord(rest))
+		if name, _, ok := splitLeadingIdent(index.Text); ok && !trailingDropOptionsRE.MatchString(" "+index.Masked) {
 			t.dropUnique(normalizeIdent(name))
+			return nil
 		}
-		return nil
 	case "PARTITION", "PERIOD":
 		return nil
 	}
