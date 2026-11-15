@@ -716,6 +716,50 @@ func TestParseSchema_ColumnsNamedLikeConstraintKeywords(t *testing.T) {
 	}
 }
 
+func TestParseSchemaWithDialect_IndexKeywordColumnsWithTypeArguments(t *testing.T) {
+	// Arrange: PostGIS types take a name as their first argument, so these
+	// read like a MySQL index named after the type.
+	sql := "CREATE TABLE places (\n" +
+		"  id INT PRIMARY KEY,\n" +
+		"  fulltext geometry(Point, 4326),\n" +
+		"  name TEXT,\n" +
+		"  key geography(Point, 4326)\n" +
+		");\n" +
+		"CREATE TABLE shapes (id INT PRIMARY KEY, index geometry(Point));\n"
+
+	tests := []struct {
+		dialect    string
+		wantPlaces []string
+		wantShapes []string
+	}{
+		// auto also reads MySQL dumps, where index geometry(Point) is an
+		// index on column Point; only a list entry that no index starts
+		// with tells the two apart.
+		{dialect: "auto", wantPlaces: []string{"id", "fulltext", "name", "key"}, wantShapes: []string{"id"}},
+		// MySQL reads the same items as indexes on its own; PostgreSQL has
+		// no index items inside CREATE TABLE.
+		{dialect: "mysql", wantPlaces: []string{"id", "fulltext", "name", "key"}, wantShapes: []string{"id"}},
+		{dialect: "postgres", wantPlaces: []string{"id", "fulltext", "name", "key"}, wantShapes: []string{"id", "index"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.dialect, func(t *testing.T) {
+			// Act
+			tables, err := ParseSchemaWithDialect(sql, tt.dialect)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// Assert
+			if got := columnNames(findTable(t, tables, "places")); !slices.Equal(got, tt.wantPlaces) {
+				t.Fatalf("places columns = %v, want %v", got, tt.wantPlaces)
+			}
+			if got := columnNames(findTable(t, tables, "shapes")); !slices.Equal(got, tt.wantShapes) {
+				t.Fatalf("shapes columns = %v, want %v", got, tt.wantShapes)
+			}
+		})
+	}
+}
+
 func TestParseSchema_ReferencesNeedsWholeKeyword(t *testing.T) {
 	// Arrange: preferences and user_references contain REFERENCES, but only a
 	// whole keyword declares a foreign key.

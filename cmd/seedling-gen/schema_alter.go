@@ -22,6 +22,7 @@ var (
 	renamePairRE          = regexp.MustCompile(`(?is)^\s*([^\s]+)\s+TO\s+([^\s]+)\s*$`)
 	columnPositionRE      = regexp.MustCompile(`(?is)\s+(?:FIRST|AFTER\s+([^\s]+))\s*$`)
 	columnTypeEndRE       = regexp.MustCompile(`(?is)\s+(?:USING|COLLATE)\s+`)
+	usingIndexRE          = regexp.MustCompile(`(?is)\bUSING\s+INDEX\s+(\S+)`)
 
 	addValueRE    = regexp.MustCompile(`(?is)^ADD\s+VALUE\s+(?:IF\s+NOT\s+EXISTS\s+)?(E?'[^']*')(?:\s+(BEFORE|AFTER)\s+(E?'[^']*'))?\s*$`)
 	renameValueRE = regexp.MustCompile(`(?is)^RENAME\s+VALUE\s+(E?'[^']*')\s+TO\s+(E?'[^']*')\s*$`)
@@ -321,12 +322,11 @@ func (s *schemaState) alterAdd(t *tableState, def sqlText) error {
 	if rest, ok := optionalWords(def, "COLUMN"); ok {
 		return s.addColumns(t, rest)
 	}
-	switch firstWord(def) {
-	case "FULLTEXT", "SPATIAL", "EXCLUDE", "PARTITION", "PERIOD":
+	if firstWord(def) == "PARTITION" {
 		return nil
 	}
-	if isTableConstraint(def.Masked) {
-		if strings.Contains(strings.ToUpper(def.Masked), "USING INDEX") {
+	if isTableConstraint(def.Masked, s.dialect) {
+		if m := usingIndexRE.FindStringSubmatch(def.Masked); m != nil && !strings.EqualFold(m[1], "TABLESPACE") {
 			return fmt.Errorf("unsupported constraint %q; constraints built from an existing index are not read", def.Text)
 		}
 		t.addConstraint(def)

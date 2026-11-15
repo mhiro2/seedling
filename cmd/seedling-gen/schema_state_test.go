@@ -555,3 +555,118 @@ ALTER TABLE users DROP CONSTRAINT users_check;
 		t.Fatalf("status enum = %v, want %v", got, want)
 	}
 }
+
+func TestParseSchemaSources_TableItemsWithoutColumns(t *testing.T) {
+	// Arrange: indexes and EXCLUDE constraints define no column, while columns
+	// named fulltext, spatial, or exclude are columns.
+	mysql := "CREATE TABLE articles (\n" +
+		"  `id` INT NOT NULL,\n" +
+		"  `title` VARCHAR(255) NOT NULL,\n" +
+		"  `location` POINT NOT NULL,\n" +
+		"  PRIMARY KEY (`id`),\n" +
+		"  FULLTEXT KEY `ft_title` (`title`),\n" +
+		"  FULLTEXT INDEX ft_title2 (title),\n" +
+		"  SPATIAL KEY `sp_location` (`location`)\n" +
+		");\n" +
+		"ALTER TABLE articles ADD FULLTEXT INDEX ft_title3 (title), ADD SPATIAL INDEX (location);\n"
+	postgres := `
+CREATE TABLE bookings (
+	id INT PRIMARY KEY,
+	room INT NOT NULL,
+	during TSRANGE NOT NULL,
+	fulltext TEXT,
+	exclude BOOLEAN,
+	EXCLUDE USING gist (room WITH =, during WITH &&),
+	CONSTRAINT no_overlap EXCLUDE (room WITH =)
+);
+ALTER TABLE bookings ADD EXCLUDE USING gist (during WITH &&) USING INDEX TABLESPACE fast;
+`
+
+	// Act
+	mysqlTables, err := ParseSchemaWithDialect(mysql, "mysql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pgTables, err := ParseSchemaWithDialect(postgres, "postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	if got, want := columnNames(findTable(t, mysqlTables, "articles")), []string{"id", "title", "location"}; !slices.Equal(got, want) {
+		t.Fatalf("articles columns = %v, want %v", got, want)
+	}
+	if got, want := columnNames(findTable(t, pgTables, "bookings")), []string{"id", "room", "during", "fulltext", "exclude"}; !slices.Equal(got, want) {
+		t.Fatalf("bookings columns = %v, want %v", got, want)
+	}
+}
+
+func TestParseSchemaSources_CreateTableLike(t *testing.T) {
+	// Arrange
+	sql := `
+CREATE TABLE users (
+	id INT PRIMARY KEY,
+	email TEXT NOT NULL UNIQUE,
+	status TEXT CHECK (status IN ('active', 'banned')),
+	team_id INT REFERENCES teams (id)
+);
+CREATE TABLE users_copy (LIKE users);
+CREATE TABLE users_full (LIKE users INCLUDING ALL EXCLUDING CONSTRAINTS, note TEXT);
+`
+
+	// Act
+	tables, err := ParseSchemaWithDialect(sql, "postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert: LIKE copies columns with their types and NOT NULL, and keys
+	// only with INCLUDING INDEXES or ALL. Foreign keys are never copied.
+	cp := findTable(t, tables, "users_copy")
+	if got, want := columnNames(cp), []string{"id", "email", "status", "team_id"}; !slices.Equal(got, want) {
+		t.Fatalf("users_copy columns = %v, want %v", got, want)
+	}
+	if id := schemaColumn(t, cp, "id"); id.IsPK || !id.NotNull {
+		t.Fatalf("users_copy.id = %+v, want NOT NULL without a primary key", id)
+	}
+	if email := schemaColumn(t, cp, "email"); email.Unique || !email.NotNull {
+		t.Fatalf("users_copy.email = %+v, want NOT NULL without a unique constraint", email)
+	}
+	if status := schemaColumn(t, cp, "status"); status.EnumValues != nil {
+		t.Fatalf("users_copy.status copied a check: %v", status.EnumValues)
+	}
+	if got := foreignKeyTargets(cp); len(got) != 0 {
+		t.Fatalf("users_copy foreign keys = %v, want none", got)
+	}
+
+	full := findTable(t, tables, "users_full")
+	if got, want := columnNames(full), []string{"id", "email", "status", "team_id", "note"}; !slices.Equal(got, want) {
+		t.Fatalf("users_full columns = %v, want %v", got, want)
+	}
+	if !schemaColumn(t, full, "id").IsPK || !schemaColumn(t, full, "email").Unique {
+		t.Fatal("users_full did not copy its keys with INCLUDING ALL")
+	}
+	if status := schemaColumn(t, full, "status"); status.EnumValues != nil {
+		t.Fatalf("users_full.status copied a check despite EXCLUDING CONSTRAINTS: %v", status.EnumValues)
+	}
+
+	// Act: MySQL copies every key and check.
+	tables, err = ParseSchemaWithDialect(sql, "mysql")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	cp = findTable(t, tables, "users_copy")
+	if !schemaColumn(t, cp, "id").IsPK || !slices.Equal(schemaColumn(t, cp, "status").EnumValues, []string{"active", "banned"}) {
+		t.Fatal("MySQL LIKE did not copy the keys and checks")
+	}
+
+	// Act: a LIKE source must be defined.
+	_, err = ParseSchemaWithDialect("CREATE TABLE t (LIKE ghosts);", "postgres")
+
+	// Assert
+	if err == nil || !strings.Contains(err.Error(), "LIKE ghosts") {
+		t.Fatalf("err = %v, want an undefined LIKE source", err)
+	}
+}

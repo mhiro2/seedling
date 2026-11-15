@@ -523,8 +523,14 @@ func (s *schemaState) createTables(stmt sqlStatement) error {
 			if strings.TrimSpace(item.Masked) == "" {
 				continue
 			}
-			if isTableConstraint(item.Masked) {
+			if isTableConstraint(item.Masked, s.dialect) {
 				constraints = append(constraints, item)
+				continue
+			}
+			if tableLikeRE.MatchString(strings.TrimSpace(item.Masked)) {
+				if err := s.copyLike(t, trimSQLText(item)); err != nil {
+					return fmt.Errorf("CREATE TABLE %s: %w", name, err)
+				}
 				continue
 			}
 			if col, ok := s.parseColumn(item); ok {
@@ -541,6 +547,57 @@ func (s *schemaState) createTables(stmt sqlStatement) error {
 		}
 		s.tables = append(s.tables, t)
 		s.byName[name] = t
+	}
+	return nil
+}
+
+var likeOptionRE = regexp.MustCompile(`(?i)\b(INCLUDING|EXCLUDING)\s+(\w+)`)
+
+// copyLike applies a LIKE source [options] item of CREATE TABLE, which copies
+// the columns of source with their types and NOT NULL. As in PostgreSQL, the
+// primary key and unique constraints are copied with INCLUDING INDEXES and
+// the checks with INCLUDING CONSTRAINTS, both with INCLUDING ALL; MySQL always
+// copies them. Foreign keys are never copied.
+func (s *schemaState) copyLike(t *tableState, item sqlText) error {
+	loc := tableLikeRE.FindStringSubmatchIndex(item.Masked)
+	name := normalizeIdent(item.Text[loc[2]:loc[3]])
+	src := s.byName[name]
+	if src == nil {
+		return fmt.Errorf("LIKE %s: %w", name, errTableNotDefined)
+	}
+	keys, checks := s.dialect.likeCopiesKeys, s.dialect.likeCopiesKeys
+	for _, option := range likeOptionRE.FindAllStringSubmatch(item.Masked[loc[1]:], -1) {
+		include := strings.EqualFold(option[1], "INCLUDING")
+		switch strings.ToUpper(option[2]) {
+		case "ALL":
+			keys, checks = include, include
+		case "INDEXES":
+			keys = include
+		case "CONSTRAINTS":
+			checks = include
+		}
+	}
+
+	for _, col := range src.columns {
+		// The NOT NULL a primary key implies stays on its columns even when
+		// the key itself is not copied.
+		if src.primaryKey != nil && slices.Contains(src.primaryKey.columns, col.Name) && !s.dialect.sqliteKeys {
+			col.NotNull = true
+		}
+		t.columns = append(t.columns, col)
+	}
+	if keys {
+		if src.primaryKey != nil {
+			t.addPrimaryKey("", slices.Clone(src.primaryKey.columns))
+		}
+		for _, unique := range src.uniques {
+			t.addUnique("", "", slices.Clone(unique.columns))
+		}
+	}
+	if checks {
+		for _, check := range src.checks {
+			t.checks = append(t.checks, &checkConstraint{name: check.name, column: check.column, values: check.values})
+		}
 	}
 	return nil
 }
