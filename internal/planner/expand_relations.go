@@ -15,7 +15,7 @@ func (e *expander) expandRelation(
 	relationPath relationPath,
 	rel RelationDef,
 	opts *OptionSet,
-	bindings map[string]*graph.Node,
+	bindings map[string]boundParent,
 ) error {
 	// A structural back-reference binds the child to the parent that created it
 	// (e.g. an employee's belongs_to(department) inside department's has_many).
@@ -23,12 +23,9 @@ func (e *expander) expandRelation(
 	// otherwise the auto-generated child would be orphaned with a zero FK. A Use
 	// or Ref on that relation would have to replace or rebuild the parent that
 	// already exists, so it is rejected instead of silently dropped.
-	bound, err := e.bindRelationNode(bp.Name, node, rel, bindings)
-	if err != nil {
-		return err
-	}
-	if bound {
-		return boundRelationOverride(bp.Name, rel.Name, bindings[rel.Name].BlueprintName, opts)
+	if bound, ok := bindings[rel.Name]; ok {
+		e.graph.AddEdgeBindings(bound.node, node, bound.edges)
+		return boundRelationOverride(bp.Name, rel.Name, bound.node.BlueprintName, opts)
 	}
 
 	shouldExpand, err := relationExpansion(node.Value, rel, opts)
@@ -85,29 +82,6 @@ func relationExpansion(value any, rel RelationDef, opts *OptionSet) (bool, error
 	}
 
 	return relationEnabled(rel, opts), nil
-}
-
-func (e *expander) bindRelationNode(
-	blueprint string,
-	node *graph.Node,
-	rel RelationDef,
-	bindings map[string]*graph.Node,
-) (bool, error) {
-	if len(bindings) == 0 {
-		return false, nil
-	}
-
-	boundNode, ok := bindings[rel.Name]
-	if !ok {
-		return false, nil
-	}
-
-	edgeBindings, err := buildLocalBindings(blueprint, rel, boundNode.PrimaryKeyFields())
-	if err != nil {
-		return false, err
-	}
-	e.graph.AddEdgeBindings(boundNode, node, edgeBindings)
-	return true, nil
 }
 
 func (e *expander) expandBelongsTo(
@@ -175,7 +149,13 @@ func (e *expander) expandHasMany(
 		return err
 	}
 	elements := relationElements(rel, opts)
-	childBindings := hasManyBindings(childBP, parentNode, rel)
+	if len(elements) == 0 {
+		return nil
+	}
+	childBindings, err := hasManyBindings(childBP, parentNode, rel, parentEdgeBindings)
+	if err != nil {
+		return err
+	}
 	count := len(elements)
 
 	for i, elem := range elements {
@@ -193,27 +173,79 @@ func (e *expander) expandHasMany(
 	return nil
 }
 
-func hasManyBindings(childBP *BlueprintDef, parentNode *graph.Node, rel RelationDef) map[string]*graph.Node {
-	parentFields := localFieldsForRelation(rel)
-	bindings := make(map[string]*graph.Node)
+// boundParent is the parent a structural back-reference binds to, with the
+// edge bindings that fill the child's foreign key.
+type boundParent struct {
+	node  *graph.Node
+	edges []graph.FieldBinding
+}
 
+// hasManyBindings finds the belongs-to relations of a has-many child that
+// point back at parentNode over the foreign key the has-many relation fills.
+func hasManyBindings(childBP *BlueprintDef, parentNode *graph.Node, rel RelationDef, parentEdges []graph.FieldBinding) (map[string]boundParent, error) {
+	bindings := make(map[string]boundParent)
 	for _, childRel := range childBP.Relations {
-		if childRel.Kind != BelongsTo {
+		if childRel.Kind != BelongsTo || childRel.RefBlueprint != parentNode.BlueprintName {
 			continue
 		}
-		if childRel.RefBlueprint != parentNode.BlueprintName {
-			continue
+		edges, ok, err := backReferenceBindings(childBP.Name, childRel, parentNode, parentNode.BlueprintName, rel, parentEdges)
+		if err != nil {
+			return nil, err
 		}
-		if !sameFields(localFieldsForRelation(childRel), parentFields) {
-			continue
+		if ok {
+			bindings[childRel.Name] = boundParent{node: parentNode, edges: edges}
 		}
-		bindings[childRel.Name] = parentNode
 	}
+	return bindings, nil
+}
 
-	if len(bindings) == 0 {
-		return nil
+// backReferenceBindings returns the edge bindings of childRel, a belongs-to
+// relation on a record that the owner relation of ownerBlueprint creates,
+// when childRel covers the foreign key fields that ownerEdges fill, in any
+// order. Both relations then describe one foreign key: each field must
+// reference the same parent field, or the two definitions contradict each
+// other and the plan fails. Each field takes childRel's converter, or else the
+// owner relation's.
+func backReferenceBindings(
+	childBlueprint string,
+	childRel RelationDef,
+	parent *graph.Node,
+	ownerBlueprint string,
+	owner RelationDef,
+	ownerEdges []graph.FieldBinding,
+) ([]graph.FieldBinding, bool, error) {
+	ownerByField := make(map[string]graph.FieldBinding, len(ownerEdges))
+	for _, edge := range ownerEdges {
+		ownerByField[edge.ChildField] = edge
 	}
-	return bindings
+	localFields := localFieldsForRelation(childRel)
+	if len(localFields) != len(ownerByField) {
+		return nil, false, nil
+	}
+	for _, f := range localFields {
+		if _, ok := ownerByField[f]; !ok {
+			return nil, false, nil
+		}
+	}
+	edges, err := buildLocalBindings(childBlueprint, childRel, parent.PrimaryKeyFields())
+	if err != nil {
+		return nil, false, err
+	}
+	for i, edge := range edges {
+		ownerEdge := ownerByField[edge.ChildField]
+		if edge.ParentField != ownerEdge.ParentField {
+			return nil, false, fmt.Errorf(
+				"%w: relation %q on blueprint %q fills %s from %s.%s, but relation %q on blueprint %q fills it from %s.%s",
+				errx.ErrInvalidOption,
+				childRel.Name, childBlueprint, edge.ChildField, parent.BlueprintName, edge.ParentField,
+				owner.Name, ownerBlueprint, parent.BlueprintName, ownerEdge.ParentField,
+			)
+		}
+		if edge.Convert == nil {
+			edges[i].Convert = ownerEdge.Convert
+		}
+	}
+	return edges, true, nil
 }
 
 func (e *expander) expandManyToMany(
@@ -266,7 +298,10 @@ func (e *expander) expandManyToMany(
 			return err
 		}
 
-		joinBindings, parentBound, childBound := manyToManyBindings(joinBP, parentNode, childNode, rel)
+		joinBindings, parentBound, childBound, err := manyToManyBindings(joinBP, parentNode, childNode, rel, parentEdgeBindings, childEdgeBindings)
+		if err != nil {
+			return err
+		}
 		joinOrigin := graph.Origin{Kind: graph.OriginThrough, From: childNode, Relation: rel.Name}
 		joinNode, err := e.expandBlueprint(joinBP, joinNodeIdentity(childNodeID, rel.ThroughBlueprint), elem.Through, joinBindings, appendJoinPath(childPath, rel.ThroughBlueprint), joinOrigin)
 		if err != nil {
@@ -284,32 +319,47 @@ func (e *expander) expandManyToMany(
 	return nil
 }
 
-func manyToManyBindings(joinBP *BlueprintDef, parentNode, childNode *graph.Node, rel RelationDef) (map[string]*graph.Node, bool, bool) {
-	parentFields := localFieldsForRelation(rel)
-	childFields := remoteFieldsForRelation(rel)
-	bindings := make(map[string]*graph.Node)
-	var parentBound bool
-	var childBound bool
+// manyToManyBindings finds the belongs-to relations of a join record that
+// point at the parent or the related record over the foreign keys the
+// many-to-many relation fills.
+func manyToManyBindings(
+	joinBP *BlueprintDef,
+	parentNode, childNode *graph.Node,
+	rel RelationDef,
+	parentEdges, childEdges []graph.FieldBinding,
+) (bindings map[string]boundParent, parentBound, childBound bool, err error) {
+	bindings = make(map[string]boundParent)
+	bind := func(joinRel RelationDef, node *graph.Node, edges []graph.FieldBinding) (bool, error) {
+		if joinRel.RefBlueprint != node.BlueprintName {
+			return false, nil
+		}
+		bound, ok, err := backReferenceBindings(joinBP.Name, joinRel, node, parentNode.BlueprintName, rel, edges)
+		if err != nil || !ok {
+			return false, err
+		}
+		bindings[joinRel.Name] = boundParent{node: node, edges: bound}
+		return true, nil
+	}
 
 	for _, joinRel := range joinBP.Relations {
 		if joinRel.Kind != BelongsTo {
 			continue
 		}
-
-		switch {
-		case joinRel.RefBlueprint == parentNode.BlueprintName && sameFields(localFieldsForRelation(joinRel), parentFields):
-			bindings[joinRel.Name] = parentNode
-			parentBound = true
-		case joinRel.RefBlueprint == childNode.BlueprintName && sameFields(localFieldsForRelation(joinRel), childFields):
-			bindings[joinRel.Name] = childNode
-			childBound = true
+		ok, err := bind(joinRel, parentNode, parentEdges)
+		if err != nil {
+			return nil, false, false, err
 		}
+		if ok {
+			parentBound = true
+			continue
+		}
+		ok, err = bind(joinRel, childNode, childEdges)
+		if err != nil {
+			return nil, false, false, err
+		}
+		childBound = childBound || ok
 	}
-
-	if len(bindings) == 0 {
-		return nil, parentBound, childBound
-	}
-	return bindings, parentBound, childBound
+	return bindings, parentBound, childBound, nil
 }
 
 func relationOmitted(opts *OptionSet, relation string) bool {

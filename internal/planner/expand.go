@@ -41,7 +41,7 @@ type activeBlueprint struct {
 	bound []string
 }
 
-func (e *expander) expandBlueprint(bp *BlueprintDef, nodeID nodeIdentity, opts *OptionSet, bindings map[string]*graph.Node, relationPath relationPath, origin graph.Origin) (*graph.Node, error) {
+func (e *expander) expandBlueprint(bp *BlueprintDef, nodeID nodeIdentity, opts *OptionSet, bindings map[string]boundParent, relationPath relationPath, origin graph.Origin) (*graph.Node, error) {
 	if existing, ok := e.visited[nodeID]; ok {
 		return existing, nil
 	}
@@ -100,7 +100,7 @@ func (e *expander) reserve(node *graph.Node, relation string, n int) error {
 // ErrCycleDetected when the same (blueprint, options, bound relations) frame is
 // already active. A successful enter must be paired with leaveBlueprint; a
 // returned error means nothing was pushed.
-func (e *expander) enterBlueprint(name string, opts *OptionSet, bindings map[string]*graph.Node) error {
+func (e *expander) enterBlueprint(name string, opts *OptionSet, bindings map[string]boundParent) error {
 	bound := slices.Sorted(maps.Keys(bindings))
 	for _, frame := range e.active {
 		if frame.name == name && slices.Equal(frame.bound, bound) && reflect.DeepEqual(frame.opts, opts) {

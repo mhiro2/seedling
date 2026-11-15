@@ -106,8 +106,10 @@ type Relation struct {
 	//	    }),
 	//	},
 	//
-	// A has-many child created through a matching BelongsTo of its own takes
-	// its FK from that relation, including that relation's converters.
+	// A has-many child or many-to-many join record whose own BelongsTo covers
+	// the same FK fields is bound through that relation. Both relations must
+	// reference the same parent fields, and each field takes the BelongsTo's
+	// converter, or else this relation's.
 	Convert map[string]FKConverter
 }
 
