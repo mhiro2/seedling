@@ -715,3 +715,29 @@ func TestParseSchema_ColumnsNamedLikeConstraintKeywords(t *testing.T) {
 		t.Fatalf("codes columns = %v, want [key]", got)
 	}
 }
+
+func TestParseSchema_ReferencesNeedsWholeKeyword(t *testing.T) {
+	// Arrange: preferences and user_references contain REFERENCES, but only a
+	// whole keyword declares a foreign key.
+	sql := `CREATE TABLE users (id INT PRIMARY KEY);
+CREATE TABLE settings (
+	id INT PRIMARY KEY,
+	preferences JSONB NOT NULL,
+	user_references INT REFERENCES users (id)
+);`
+
+	// Act
+	tables, err := ParseSchemaWithDialect(sql, "postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	settings := findTable(t, tables, "settings")
+	if col := schemaColumn(t, settings, "preferences"); col.IsFK {
+		t.Fatalf("preferences marked as a foreign key to %q", col.FKRefTable)
+	}
+	if got, want := foreignKeyTargets(settings), []string{"user_references->users(id)"}; !slices.Equal(got, want) {
+		t.Fatalf("settings foreign keys = %v, want %v", got, want)
+	}
+}
