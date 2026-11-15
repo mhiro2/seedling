@@ -596,11 +596,18 @@ func entOptionalRelationFields(schema EntSchema) map[string]struct{} {
 }
 
 // entFieldUsesReflectGuard reports whether the generated insert hook wraps the
-// field's setter in a reflect.ValueOf(...).IsZero() guard. A pointer-backed
-// setter is guarded by a nil check instead and never needs the reflect import.
+// field's setter in a reflect.ValueOf(...).IsZero() guard: the foreign key of
+// an optional edge, and an id the schema declares, whose zero value the
+// generated Defaults leave in place and which would otherwise override the
+// field's Default, such as uuid.New, or the database's auto-increment. A
+// pointer-backed setter is guarded by a nil check instead and never needs the
+// reflect import.
 func entFieldUsesReflectGuard(field EntField, optionalRelationFields map[string]struct{}) bool {
 	if field.Nillable || field.SetterDeref {
 		return false
+	}
+	if field.Name == "id" {
+		return true
 	}
 	_, ok := optionalRelationFields[field.GoName]
 	return ok

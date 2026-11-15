@@ -524,6 +524,44 @@ func TestGenerateEnt_SkipsZeroOptionalNonNillableForeignKey(t *testing.T) {
 		"!reflect.ValueOf(v.CompanyID).IsZero()", "builder.SetCompanyID(v.CompanyID)")
 }
 
+func TestGenerateEnt_SetsExplicitIDOnlyWhenNonZero(t *testing.T) {
+	// Arrange: Defaults leave a declared id at its zero value, which SetID
+	// would insert in place of the field's Default or the auto-increment.
+	tests := []struct {
+		name  string
+		field EntField
+	}{
+		{name: "uuid id", field: EntField{Name: "id", GoName: "ID", Type: "UUID", GoType: "uuid.UUID", CustomGoType: true}},
+		{name: "int id", field: EntField{Name: "id", GoName: "ID", Type: "Int", GoType: "int"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schemas := []EntSchema{{
+				Name: "Item",
+				Fields: []EntField{
+					tt.field,
+					{Name: "label", GoName: "Label", Type: "String", GoType: "string"},
+				},
+			}}
+
+			// Act
+			var output bytes.Buffer
+			if err := GenerateEnt(&output, "testutil", "github.com/myapp/ent", schemas); err != nil {
+				t.Fatalf("GenerateEnt: %v", err)
+			}
+
+			// Assert
+			generated := output.String()
+			if !strings.Contains(generated, `"reflect"`) {
+				t.Fatalf("generated output does not import reflect:\n%s", generated)
+			}
+			fset, insert := generatedHook(t, generated, "item", "Insert")
+			requireGuardedCall(t, fset, insert, "SetID",
+				"!reflect.ValueOf(v.ID).IsZero()", "builder.SetID(v.ID)")
+		})
+	}
+}
+
 func TestGenerateEnt_PointerForeignKeyUsesNilGuardWithoutReflect(t *testing.T) {
 	schemas := []EntSchema{
 		{
