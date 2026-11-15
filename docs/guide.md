@@ -341,7 +341,7 @@ The execution model and graph expansion rules are documented in [ARCHITECTURE.md
 
 seedling does not generate SQL at runtime. Your blueprint owns the `Insert` and optional `Delete` callbacks, so the library works with any DB abstraction that your code already uses.
 
-- sqlc: map `Insert` callbacks to generated query methods. Prefer `seedling-gen sqlc --config ...` for automatic setup
+- sqlc: map `Insert` callbacks to generated query methods. Prefer `seedling-gen sqlc --config ...` for automatic setup. It generates `Insert` from the query that returns the table's model, such as a `:one` query with `RETURNING *`, and leaves it unset for the hand-written file when the `Insert<Table>` / `Create<Table>` query is `:exec` or `:execresult`, as is usual on MySQL
 - `database/sql`: pass `*sql.DB` or `*sql.Tx`
 - pgx: pass your pool or transaction handle, or use `github.com/mhiro2/seedling/seedlingpgx` for rollback-on-cleanup helpers
 - GORM: use the `gorm` subcommand to generate blueprints with `gorm.DB`-based Insert/Delete callbacks

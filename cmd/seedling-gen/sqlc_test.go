@@ -976,6 +976,73 @@ CREATE TABLE tags (
 	}
 }
 
+func TestGenerateSqlc_LeavesInsertUnsetForQueriesWithoutModel(t *testing.T) {
+	// Arrange: :exec and :execresult queries, the usual form on MySQL, do not
+	// return the inserted model.
+	dir := t.TempDir()
+	writeSqlcFiles(t, dir, map[string]string{
+		"models.go": `package db
+
+type Tag struct {
+	ID    int64
+	Label string
+}
+
+type User struct {
+	ID   int64
+	Name string
+}
+`,
+		"query.sql.go": `package db
+
+import (
+	"context"
+	"database/sql"
+)
+
+type Queries struct{}
+
+func (q *Queries) CreateTag(ctx context.Context, label string) error {
+	return nil
+}
+
+func (q *Queries) InsertUser(ctx context.Context, name string) (sql.Result, error) {
+	return nil, nil
+}
+
+func (q *Queries) DeleteUser(ctx context.Context, id int64) error {
+	return nil
+}
+`,
+	})
+	info, err := ParseSqlcDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tables := mustParseSchema(t, `
+CREATE TABLE tags (id BIGINT PRIMARY KEY, label TEXT NOT NULL);
+CREATE TABLE users (id BIGINT PRIMARY KEY, name TEXT NOT NULL);
+`)
+
+	// Act
+	var buf bytes.Buffer
+	if err := GenerateSqlc(&buf, "testutil", "github.com/myapp/internal/db", tables, info); err != nil {
+		t.Fatalf("GenerateSqlc error: %v", err)
+	}
+
+	// Assert
+	output := buf.String()
+	if strings.Contains(output, "Insert: func") {
+		t.Fatalf("expected no generated Insert, got:\n%s", output)
+	}
+	if got := strings.Count(output, "// Insert is not generated: set it in hand-written code before Register."); got != 2 {
+		t.Fatalf("got %d notes about a missing Insert, want 2:\n%s", got, output)
+	}
+	if !strings.Contains(output, "DeleteUser(") {
+		t.Fatalf("expected the Delete hook to stay generated, got:\n%s", output)
+	}
+}
+
 func TestGenerateSqlc_DefaultsAutofillSupportedFields(t *testing.T) {
 	// Arrange
 	schema := `
