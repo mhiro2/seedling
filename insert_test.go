@@ -2884,10 +2884,44 @@ func TestInsertManyE_AfterInsertEFailure_ReturnsBatchResult(t *testing.T) {
 	}
 }
 
-func TestInsertManyE_InsertFailurePreservesSparseRootIndices(t *testing.T) {
+func TestInsertMany_InsertsRootsInIndexOrder(t *testing.T) {
 	// Arrange
 	reg := seedlingtest.NewRegistry()
-	insertErr := errors.New("insert root zero company")
+	ids := seedlingtest.NewIDSequence()
+	var inserted []string
+	inserters := seedlingtest.DefaultBasicInserters(ids)
+	inserters.Company = func(_ context.Context, _ seedling.DBTX, v Company) (Company, error) {
+		inserted = append(inserted, v.Name)
+		v.ID = ids.Next()
+		return v, nil
+	}
+	seedlingtest.RegisterBasic(t, reg, inserters)
+	useTestRegistry(t, reg)
+	want := make([]string, 12)
+	for i := range want {
+		want[i] = fmt.Sprintf("company-%d", i)
+	}
+
+	// Act
+	result := session[Company](t).InsertMany(t, nil, 12,
+		seedling.Seq("Name", func(i int) string { return fmt.Sprintf("company-%d", i) }),
+	)
+
+	// Assert
+	if !slices.Equal(inserted, want) {
+		t.Fatalf("inserted %v, want index order %v", inserted, want)
+	}
+	for i, root := range result.Roots() {
+		if root.ID != i+1 {
+			t.Fatalf("root %d got ID %d, want IDs assigned in index order", i, root.ID)
+		}
+	}
+}
+
+func TestInsertManyE_InsertFailureKeepsRootIndices(t *testing.T) {
+	// Arrange
+	reg := seedlingtest.NewRegistry()
+	insertErr := errors.New("insert root one company")
 	userInsertCalls := 0
 	companyInsertCalls := 0
 	companyDeleteCalls := 0
@@ -2898,7 +2932,7 @@ func TestInsertManyE_InsertFailurePreservesSparseRootIndices(t *testing.T) {
 		Table:   "companies",
 		PKField: "ID",
 		Defaults: func(*seedling.Scope) Company {
-			return Company{Name: "fails-after-root-one"}
+			return Company{Name: "fails-after-root-zero"}
 		},
 		Insert: func(ctx context.Context, db seedling.DBTX, v Company) (Company, error) {
 			companyInsertCalls++
@@ -2924,7 +2958,7 @@ func TestInsertManyE_InsertFailurePreservesSparseRootIndices(t *testing.T) {
 				RefBlueprint: "company",
 				Optional:     true,
 				When: seedling.WhenFunc(func(v User) bool {
-					return v.Name == "root-0"
+					return v.Name == "root-1"
 				}),
 			},
 		},
@@ -2940,7 +2974,7 @@ func TestInsertManyE_InsertFailurePreservesSparseRootIndices(t *testing.T) {
 	})
 
 	// Act
-	result, err := seedling.NewSession[User](reg).InsertManyE(t.Context(), nil, 2,
+	result, err := seedling.NewSession[User](reg).InsertManyE(t.Context(), nil, 3,
 		seedling.Seq("Name", func(i int) string {
 			return fmt.Sprintf("root-%d", i)
 		}),
@@ -2953,22 +2987,24 @@ func TestInsertManyE_InsertFailurePreservesSparseRootIndices(t *testing.T) {
 	if got, want := result.Len(), 1; got != want {
 		t.Fatalf("got %d completed roots, want %d", got, want)
 	}
-	if roots := result.Roots(); len(roots) != 1 || roots[0].Name != "root-1" {
-		t.Fatalf("got completed roots %v, want only root-1", roots)
+	if roots := result.Roots(); len(roots) != 1 || roots[0].Name != "root-0" {
+		t.Fatalf("got completed roots %v, want only root-0", roots)
 	}
-	if _, ok := result.RootAt(0); ok {
-		t.Fatal("did not expect failed root at original index 0")
+	root, ok := result.RootAt(0)
+	if !ok || root.Name != "root-0" {
+		t.Fatalf("got root at original index 0 (%v, %t), want root-0", root, ok)
 	}
-	root, ok := result.RootAt(1)
-	if !ok || root.Name != "root-1" {
-		t.Fatalf("got root at original index 1 (%v, %t), want root-1", root, ok)
+	for _, i := range []int{1, 2} {
+		if _, ok := result.RootAt(i); ok {
+			t.Fatalf("did not expect a root at original index %d after the failure", i)
+		}
 	}
-	if _, ok := result.NodeAt(0, "user"); ok {
-		t.Fatal("did not expect nodes scoped to failed root index 0")
+	if _, ok := result.NodeAt(1, "user"); ok {
+		t.Fatal("did not expect nodes scoped to failed root index 1")
 	}
-	rootNode, ok := result.NodeAt(1, "user")
-	if !ok || rootNode.Value().(User).Name != "root-1" {
-		t.Fatal("expected user node scoped to successful root index 1")
+	rootNode, ok := result.NodeAt(0, "user")
+	if !ok || rootNode.Value().(User).Name != "root-0" {
+		t.Fatal("expected user node scoped to successful root index 0")
 	}
 	if got, want := len(result.All()), 1; got != want {
 		t.Fatalf("got %d completed nodes, want %d", got, want)
@@ -2980,8 +3016,8 @@ func TestInsertManyE_InsertFailurePreservesSparseRootIndices(t *testing.T) {
 	if err := result.CleanupE(t.Context(), nil); err != nil {
 		t.Fatalf("cleanup partial batch result: %v", err)
 	}
-	if !reflect.DeepEqual(deletedUsers, []string{"root-1"}) {
-		t.Fatalf("got deleted users %v, want [root-1]", deletedUsers)
+	if !reflect.DeepEqual(deletedUsers, []string{"root-0"}) {
+		t.Fatalf("got deleted users %v, want [root-0]", deletedUsers)
 	}
 	if companyDeleteCalls != 0 {
 		t.Fatalf("got %d company deletes, want 0", companyDeleteCalls)

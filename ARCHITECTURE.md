@@ -108,7 +108,7 @@ Each edge stores one or more field bindings:
 
 This is what lets seedling support composite keys without special executor branches.
 
-The graph must be acyclic. `TopoSort()` uses Kahn's algorithm and returns nodes in the order required for insertion.
+The graph must be acyclic. `TopoSort()` uses Kahn's algorithm and returns nodes in the order required for insertion. The graph remembers the order its nodes were planned, and among nodes whose dependencies are all inserted the one planned first goes first, so the roots of an `InsertMany` batch and the children of a `has_many` relation are inserted in index order, and auto-increment keys and timestamps follow it. `Clone()` keeps that order and the order of every node's edges, so each execution of a `Plan` inserts and binds foreign keys exactly as the first did.
 
 ### 4. Executor
 

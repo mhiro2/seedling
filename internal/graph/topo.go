@@ -17,20 +17,18 @@ func (g *Graph) TopoSort() ([]*Node, error) {
 	// parent→child direction: a node's in-degree is the number of parents
 	// it depends on (len of its dependencies edges).
 
+	//
+	// Among nodes whose dependencies are all met, the one added to the graph
+	// first comes first, so records are inserted in the order they were
+	// planned: the roots of a batch in index order, and the children of a
+	// has-many relation in element order.
 	inDegree := make(map[string]int, len(g.nodes))
-	for id := range g.nodes {
-		inDegree[id] = 0
-	}
-	for _, n := range g.nodes {
+	queue := make(nodeHeap, 0, len(g.nodes))
+	for _, n := range g.order {
 		// n has edges to its dependencies.
 		// In topological terms, each dependency is a prerequisite.
 		inDegree[n.ID] = len(n.dependencies)
-	}
-
-	// Start with nodes that have no dependencies.
-	queue := make(nodeHeap, 0, len(g.nodes))
-	for _, n := range g.nodes {
-		if inDegree[n.ID] == 0 {
+		if len(n.dependencies) == 0 {
 			heap.Push(&queue, n)
 		}
 	}
@@ -56,9 +54,9 @@ func (g *Graph) TopoSort() ([]*Node, error) {
 			resultSet[n.ID] = true
 		}
 		var cycleNodes []string
-		for id := range g.nodes {
-			if !resultSet[id] {
-				cycleNodes = append(cycleNodes, id)
+		for _, n := range g.order {
+			if !resultSet[n.ID] {
+				cycleNodes = append(cycleNodes, n.ID)
 			}
 		}
 		sort.Strings(cycleNodes)
@@ -75,7 +73,7 @@ func (h nodeHeap) Len() int {
 }
 
 func (h nodeHeap) Less(i, j int) bool {
-	return h[i].ID < h[j].ID
+	return h[i].seq < h[j].seq
 }
 
 func (h nodeHeap) Swap(i, j int) {

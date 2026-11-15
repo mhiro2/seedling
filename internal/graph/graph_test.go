@@ -2,7 +2,9 @@ package graph_test
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -107,7 +109,7 @@ func TestTopoSort_DetectsCycles(t *testing.T) {
 	}
 }
 
-func TestTopoSort_UsesDeterministicNodeOrder(t *testing.T) {
+func TestTopoSort_OrdersReadyNodesByInsertion(t *testing.T) {
 	// Arrange
 	g := graph.New()
 	root := &graph.Node{ID: "root", BlueprintName: "root"}
@@ -133,11 +135,11 @@ func TestTopoSort_UsesDeterministicNodeOrder(t *testing.T) {
 	if order[0].ID != "root" {
 		t.Fatalf("got %v, want %v", order[0].ID, "root")
 	}
-	if order[1].ID != "alpha" {
-		t.Fatalf("got %v, want %v", order[1].ID, "alpha")
+	if order[1].ID != "beta" {
+		t.Fatalf("got %v, want %v", order[1].ID, "beta")
 	}
-	if order[2].ID != "beta" {
-		t.Fatalf("got %v, want %v", order[2].ID, "beta")
+	if order[2].ID != "alpha" {
+		t.Fatalf("got %v, want %v", order[2].ID, "alpha")
 	}
 }
 
@@ -540,4 +542,73 @@ func TestNodePath_FollowsOrigins(t *testing.T) {
 	if g.Len() != 4 || cloned.Len() != 4 {
 		t.Errorf("Len() = %d / %d, want 4", g.Len(), cloned.Len())
 	}
+}
+
+func TestClone_KeepsNodeAndEdgeOrder(t *testing.T) {
+	// Arrange: a child with several parents, whose dependency order must
+	// survive cloning.
+	g := graph.New()
+	child := &graph.Node{ID: "child", BlueprintName: "child"}
+	g.AddNode(child)
+	for _, id := range []string{"p3", "p1", "p4", "p2", "p0"} {
+		parent := &graph.Node{ID: id, BlueprintName: id, PKField: "ID"}
+		g.AddNode(parent)
+		g.AddEdge(parent, child, id+"ID")
+	}
+	wantNodes := nodeIDs(g.Nodes())
+	wantDeps := dependencyIDs(child)
+
+	for range 50 {
+		// Act
+		cloned := g.Clone()
+
+		// Assert
+		if got := nodeIDs(cloned.Nodes()); !slices.Equal(got, wantNodes) {
+			t.Fatalf("cloned node order = %v, want %v", got, wantNodes)
+		}
+		if got := dependencyIDs(cloned.Node("child")); !slices.Equal(got, wantDeps) {
+			t.Fatalf("cloned dependency order = %v, want %v", got, wantDeps)
+		}
+		if cloned.Root().ID != "child" {
+			t.Fatalf("cloned root = %q, want child", cloned.Root().ID)
+		}
+	}
+}
+
+func TestTopoSort_IndexedNodesInInsertionOrder(t *testing.T) {
+	// Arrange
+	g := graph.New()
+	want := make([]string, 0, 12)
+	for i := range 12 {
+		id := fmt.Sprintf("root[%d]", i)
+		g.AddNode(&graph.Node{ID: id, BlueprintName: "root"})
+		want = append(want, id)
+	}
+
+	// Act
+	order, err := g.TopoSort()
+	// Assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := nodeIDs(order); !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func nodeIDs(nodes []*graph.Node) []string {
+	ids := make([]string, len(nodes))
+	for i, n := range nodes {
+		ids[i] = n.ID
+	}
+	return ids
+}
+
+func dependencyIDs(n *graph.Node) []string {
+	deps := n.Dependencies()
+	ids := make([]string, len(deps))
+	for i, e := range deps {
+		ids[i] = e.Parent.ID
+	}
+	return ids
 }

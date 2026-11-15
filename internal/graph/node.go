@@ -31,6 +31,8 @@ type Node struct {
 	// edges
 	dependencies []*Edge // edges to nodes this node depends on
 	dependents   []*Edge // edges from nodes that depend on this node
+
+	seq int // position in the order nodes were added to the graph
 }
 
 // OriginKind classifies how the planner reached a node.
