@@ -396,7 +396,7 @@ Because the check goes through the hand-written `Insert` and `Delete` callbacks 
 
 Generated blueprints include `Defaults` for common scalar fields such as strings, numbers, booleans, byte slices, and `time.Time`, shaped by the constraints each adapter can read:
 
-- `sql` and `sqlc`: `UNIQUE` (inline, `UNIQUE (col)`, or a single-column `CREATE UNIQUE INDEX`, including `ASC` / `DESC` / `COLLATE`), `ENUM(...)`, `CREATE TYPE ... AS ENUM`, `CHECK (col IN (...))`, `VARCHAR(n)` / `CHAR(n)`, and `UUID` / `JSON` / `JSONB` column types. Several enum and `CHECK` lists on one column are intersected
+- `sql` and `sqlc`: `UNIQUE` (inline, `UNIQUE (col)`, or a single-column `CREATE UNIQUE INDEX`, including `ASC` / `DESC` / `COLLATE`), `ENUM(...)`, `CREATE TYPE ... AS ENUM`, `CHECK (col IN (...))`, `VARCHAR(n)` / `CHAR(n)`, and column types such as `UUID`, `JSON` / `JSONB`, `NUMERIC`, and `INET` that accept only certain text. Several enum and `CHECK` lists on one column are intersected
 - `atlas`: unique `index` blocks over one column and `varchar(n)` / `char(n)` sizes
 - `gorm`: the `unique` and `size:n` tags
 - `ent`: none; only `time.Time` fields take `scope.Now()`
@@ -410,6 +410,7 @@ Generated blueprints include `Defaults` for common scalar fields such as strings
 | unique `time.Time` | `scope.Now()` plus one second per record |
 | `UUID` stored as `string` | `scope.UUID()` |
 | `JSON` / `JSONB` stored as `string`, `[]byte`, or `json.RawMessage` | `{}` |
+| `NUMERIC` / `DECIMAL` / `MONEY`, `INET` / `CIDR`, `MACADDR`, `TIME`, `DATE`, `TIMESTAMP`, `INTERVAL`, `YEAR`, or `XML` stored as `string`, as sqlc stores `NUMERIC` | text the type accepts, such as `"1"`, `"192.0.2.1"`, or `"12:00:00"`, and a distinct value per record for a unique column; a range is `"empty"`, and `BIT`, which no text suits in every database, is left unset |
 | `time.Time` | `scope.Now()` |
 | other strings, numbers, booleans | `"user-name"`, `1`, `true` |
 

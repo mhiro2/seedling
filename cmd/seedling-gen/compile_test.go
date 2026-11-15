@@ -44,6 +44,30 @@ func TestGeneratorOutputsCompile(t *testing.T) {
 		ensureCompiles(t, "sql", buf.String())
 	})
 
+	t.Run("sql with text-typed columns", func(t *testing.T) {
+		// Arrange: string fields whose column types accept only certain text
+		// get defaults that need the fmt and time packages.
+		tables := mustParseSchema(t, `
+CREATE TABLE hosts (
+    id BIGINT PRIMARY KEY,
+    ip INET NOT NULL UNIQUE,
+    mac MACADDR NOT NULL UNIQUE,
+    opens_at TIME NOT NULL UNIQUE,
+    seen_at TIMESTAMPTZ NOT NULL,
+    period INTERVAL NOT NULL
+);
+`)
+
+		// Act
+		var buf strings.Builder
+		if err := Generate(&buf, "compile", tables); err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+
+		// Assert
+		ensureCompiles(t, "sql_text_types", buf.String())
+	})
+
 	t.Run("sql with go keyword identifiers", func(t *testing.T) {
 		// Arrange
 		tables := []Table{
