@@ -9,7 +9,7 @@ require (
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/mhiro2/seedling v0.0.0
 	github.com/testcontainers/testcontainers-go/modules/mysql v0.45.0
-	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
+	github.com/testcontainers/testcontainers-go/modules/postgres v0.45.0
 	modernc.org/sqlite v1.61.1
 )
 
