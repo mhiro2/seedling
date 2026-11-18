@@ -56,18 +56,6 @@ func buildRemoteBindings(blueprint string, rel RelationDef, parentFields []strin
 	return buildBindings(blueprint, rel, parentFields, remoteFieldsForRelation(rel))
 }
 
-func sameFields(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
 func cloneFields(fields []string) []string {
 	if len(fields) == 0 {
 		return nil

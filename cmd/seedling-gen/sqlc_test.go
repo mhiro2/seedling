@@ -913,6 +913,36 @@ CREATE TABLE users (
 	}
 }
 
+func TestGenerateSqlc_MatchesSqlcSingularModelNames(t *testing.T) {
+	// Arrange: sqlc names a model after the singular of its table, which
+	// keeps the e of courses and the s of statuses.
+	tables := mustParseSchema(t, `
+CREATE TABLE courses (id SERIAL PRIMARY KEY, title TEXT NOT NULL);
+CREATE TABLE statuses (id SERIAL PRIMARY KEY, label TEXT NOT NULL);
+`)
+	sqlcInfo := &SqlcInfo{
+		Package: "db",
+		Models: []SqlcModel{
+			{Name: "Course", Fields: []SqlcField{{Name: "ID", Type: "int32"}, {Name: "Title", Type: "string"}}},
+			{Name: "Status", Fields: []SqlcField{{Name: "ID", Type: "int32"}, {Name: "Label", Type: "string"}}},
+		},
+	}
+
+	// Act
+	var buf bytes.Buffer
+	if err := GenerateSqlc(&buf, "testutil", "github.com/myapp/internal/db", tables, sqlcInfo); err != nil {
+		t.Fatalf("GenerateSqlc error: %v", err)
+	}
+
+	// Assert
+	output := buf.String()
+	for _, want := range []string{"seedling.Blueprint[db.Course]", `"course"`, "seedling.Blueprint[db.Status]", `"status"`} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected output to contain %q\n\nGot:\n%s", want, output)
+		}
+	}
+}
+
 func TestGenerateSqlc_NoMatchingQuery(t *testing.T) {
 	schema := `
 CREATE TABLE tags (
@@ -943,6 +973,73 @@ CREATE TABLE tags (
 	}
 	if !strings.Contains(output, "// Insert is not generated: set it in hand-written code before Register.") {
 		t.Fatalf("expected a note about the missing Insert, got:\n%s", output)
+	}
+}
+
+func TestGenerateSqlc_LeavesInsertUnsetForQueriesWithoutModel(t *testing.T) {
+	// Arrange: :exec and :execresult queries, the usual form on MySQL, do not
+	// return the inserted model.
+	dir := t.TempDir()
+	writeSqlcFiles(t, dir, map[string]string{
+		"models.go": `package db
+
+type Tag struct {
+	ID    int64
+	Label string
+}
+
+type User struct {
+	ID   int64
+	Name string
+}
+`,
+		"query.sql.go": `package db
+
+import (
+	"context"
+	"database/sql"
+)
+
+type Queries struct{}
+
+func (q *Queries) CreateTag(ctx context.Context, label string) error {
+	return nil
+}
+
+func (q *Queries) InsertUser(ctx context.Context, name string) (sql.Result, error) {
+	return nil, nil
+}
+
+func (q *Queries) DeleteUser(ctx context.Context, id int64) error {
+	return nil
+}
+`,
+	})
+	info, err := ParseSqlcDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tables := mustParseSchema(t, `
+CREATE TABLE tags (id BIGINT PRIMARY KEY, label TEXT NOT NULL);
+CREATE TABLE users (id BIGINT PRIMARY KEY, name TEXT NOT NULL);
+`)
+
+	// Act
+	var buf bytes.Buffer
+	if err := GenerateSqlc(&buf, "testutil", "github.com/myapp/internal/db", tables, info); err != nil {
+		t.Fatalf("GenerateSqlc error: %v", err)
+	}
+
+	// Assert
+	output := buf.String()
+	if strings.Contains(output, "Insert: func") {
+		t.Fatalf("expected no generated Insert, got:\n%s", output)
+	}
+	if got := strings.Count(output, "// Insert is not generated: set it in hand-written code before Register."); got != 2 {
+		t.Fatalf("got %d notes about a missing Insert, want 2:\n%s", got, output)
+	}
+	if !strings.Contains(output, "DeleteUser(") {
+		t.Fatalf("expected the Delete hook to stay generated, got:\n%s", output)
 	}
 }
 

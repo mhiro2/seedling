@@ -9,9 +9,9 @@ import (
 var (
 	createTableStartRE = regexp.MustCompile(`(?is)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)\s*\(`)
 	createEnumRE       = regexp.MustCompile(`(?is)CREATE\s+TYPE\s+([^\s]+)\s+AS\s+ENUM\s*\(`)
-	inlineRefRE        = regexp.MustCompile(`(?i)REFERENCES\s+([^\s(]+)(?:\s*\(([^)]+)\))?`)
+	inlineRefRE        = regexp.MustCompile(`(?i)\bREFERENCES\s+([^\s(]+)(?:\s*\(([^)]+)\))?`)
 	tablePKRE          = regexp.MustCompile(`(?i)(?:CONSTRAINT\s+[^\s]+\s+)?PRIMARY\s+KEY\s*\(([^)]+)\)`)
-	tableFKRE          = regexp.MustCompile(`(?i)(?:CONSTRAINT\s+[^\s]+\s+)?FOREIGN\s+KEY\s*\(([^)]+)\)\s+REFERENCES\s+([^\s(]+)(?:\s*\(([^)]+)\))?`)
+	tableFKRE          = regexp.MustCompile(`(?i)(?:CONSTRAINT\s+[^\s]+\s+)?FOREIGN\s+KEY\s*(?:[^\s(]+\s*)?\(([^)]+)\)\s+REFERENCES\s+([^\s(]+)(?:\s*\(([^)]+)\))?`)
 )
 
 // Column represents a parsed column from a CREATE TABLE statement.
@@ -137,15 +137,56 @@ func parseColumn(item sqlText, enumTypes map[string][]string, backslash bool) (C
 	return col, true
 }
 
-func isTableConstraint(item string) bool {
-	upper := strings.ToUpper(strings.TrimSpace(item))
-	return strings.HasPrefix(upper, "PRIMARY KEY") ||
-		strings.HasPrefix(upper, "UNIQUE") ||
-		strings.HasPrefix(upper, "CHECK") ||
-		strings.HasPrefix(upper, "FOREIGN KEY") ||
-		strings.HasPrefix(upper, "CONSTRAINT") ||
-		strings.HasPrefix(upper, "KEY ") ||
-		strings.HasPrefix(upper, "INDEX ")
+var (
+	// tableConstraintRE matches the reserved words that start a table
+	// constraint. A column named like one, such as checksum or unique_code,
+	// does not match as a whole word, and a quoted name is masked.
+	tableConstraintRE = regexp.MustCompile(`(?i)^(?:CONSTRAINT|CHECK|UNIQUE|PRIMARY\s+KEY|FOREIGN\s+KEY)\b`)
+	// tableIndexRE matches the head of MySQL's [FULLTEXT | SPATIAL] KEY or
+	// INDEX [name] [USING type] (columns) up to its opening parenthesis.
+	tableIndexRE = regexp.MustCompile(`(?i)^(?:(?:FULLTEXT|SPATIAL)(?:\s+(?:KEY|INDEX))?|KEY|INDEX)(?:\s+[^\s(]+)?(?:\s+USING\s+\w+)?\s*\(`)
+	// tableOtherItemRE matches the other items that define no column:
+	// PostgreSQL's EXCLUDE constraint and the PERIOD FOR clause of a
+	// system-versioned or application-time table.
+	tableOtherItemRE = regexp.MustCompile(`(?i)^(?:EXCLUDE\s*(?:USING\b|\()|PERIOD\s+FOR\b)`)
+	// tableLikeRE matches LIKE source [options], which copies the columns of
+	// another table.
+	tableLikeRE = regexp.MustCompile(`(?i)^LIKE\s+([^\s(]+)`)
+)
+
+// isTableConstraint reports whether a CREATE TABLE item or ALTER TABLE ADD
+// definition, in masked form, is a table constraint, index, or another item
+// that defines no column. Only PRIMARY KEY, UNIQUE, FOREIGN KEY, and CHECK
+// constraints are read from it; the rest are skipped.
+func isTableConstraint(item string, d sqlDialect) bool {
+	item = strings.TrimSpace(item)
+	return tableConstraintRE.MatchString(item) || d.inlineIndexes && isInlineIndex(item) || tableOtherItemRE.MatchString(item)
+}
+
+// isInlineIndex reports whether a masked item is a MySQL index definition.
+// KEY, INDEX, FULLTEXT, and SPATIAL are ordinary column names elsewhere, and
+// key VARCHAR(10) or fulltext geometry(Point,4326) read like an index named
+// after the type. A column's type arguments include a number or a string,
+// which an index's column list never starts an entry with, so the item is an
+// index only when every entry of its list starts like a column name or an
+// expression.
+func isInlineIndex(item string) bool {
+	loc := tableIndexRE.FindStringIndex(item)
+	if loc == nil {
+		return false
+	}
+	end := findMatchingParen(item, loc[1]-1)
+	if end < 0 {
+		return false
+	}
+	list := item[loc[1]:end]
+	for _, entry := range splitSQLItems(sqlText{Text: list, Masked: list}) {
+		entry := strings.TrimSpace(entry.Masked)
+		if entry == "" || entry[0] >= '0' && entry[0] <= '9' || entry[0] == '\'' || entry[0] == '-' || entry[0] == '+' || entry[0] == '.' {
+			return false
+		}
+	}
+	return true
 }
 
 // splitSQLItems splits a CREATE TABLE body at its top-level commas.
@@ -302,28 +343,16 @@ func toGoStructName(tableName string) string {
 	return toGoFieldName(singular)
 }
 
-// singularize does a simple singularization by stripping trailing "s".
-// Handles "ies" -> "y" (companies -> company) and "ses" -> "s" (addresses -> address).
-func singularize(s string) string {
-	if strings.HasSuffix(s, "ies") {
-		return s[:len(s)-3] + "y"
-	}
-	if strings.HasSuffix(s, "ses") {
-		return s[:len(s)-2]
-	}
-	if strings.HasSuffix(s, "s") {
-		return s[:len(s)-1]
-	}
-	return s
-}
-
 // sqlDialect holds the rules that differ between SQL dialects. Lexically,
 // PostgreSQL recognizes dollar-quoted strings, E'...' strings with backslash
 // escapes, and nested block comments; MySQL treats a backslash inside a string
 // literal as an escape and # as a line comment; SQLite uses only the standard
 // quoting. auto follows PostgreSQL and also reads a # that starts a line as a
 // MySQL comment. sqliteKeys selects SQLite's primary key semantics, under
-// which a key column may hold NULL.
+// which a key column may hold NULL. likeCopiesKeys follows MySQL, whose
+// CREATE TABLE (LIKE source) copies every key and check of source.
+// inlineIndexes reads MySQL's index items inside CREATE TABLE; PostgreSQL and
+// SQLite have none, so there an item starting with KEY or INDEX is a column.
 type sqlDialect struct {
 	dollarQuotes          bool
 	backslashEscapes      bool
@@ -332,16 +361,18 @@ type sqlDialect struct {
 	hashComments          bool // # starts a comment anywhere
 	lineStartHashComments bool // # starts a comment only as the first token of a line
 	sqliteKeys            bool
+	likeCopiesKeys        bool
+	inlineIndexes         bool // KEY / INDEX / FULLTEXT / SPATIAL items inside CREATE TABLE
 }
 
 func newSQLDialect(dialect string) (sqlDialect, error) {
 	switch strings.ToLower(strings.TrimSpace(dialect)) {
 	case "", "auto":
-		return sqlDialect{dollarQuotes: true, escapeStringConst: true, nestedComments: true, lineStartHashComments: true}, nil
+		return sqlDialect{dollarQuotes: true, escapeStringConst: true, nestedComments: true, lineStartHashComments: true, inlineIndexes: true}, nil
 	case "postgres":
 		return sqlDialect{dollarQuotes: true, escapeStringConst: true, nestedComments: true}, nil
 	case "mysql":
-		return sqlDialect{backslashEscapes: true, hashComments: true}, nil
+		return sqlDialect{backslashEscapes: true, hashComments: true, likeCopiesKeys: true, inlineIndexes: true}, nil
 	case "sqlite":
 		return sqlDialect{sqliteKeys: true}, nil
 	default:

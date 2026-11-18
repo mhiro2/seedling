@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -55,8 +56,7 @@ func ParseEntSchemaDir(dir string) ([]EntSchema, error) {
 	}
 
 	fset := token.NewFileSet()
-	var schemas []EntSchema
-
+	var files []*ast.File
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -69,29 +69,27 @@ func ParseEntSchemaDir(dir string) ([]EntSchema, error) {
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", name, err)
 		}
+		files = append(files, f)
+	}
 
-		// Find schema types from their embedded base or schema methods. Mixin-only
-		// schemas have no direct fields for the AST parser, but the generated
-		// package resolver can recover their concrete fields.
-		typeNames := extractTypeNames(f)
+	// Mixins defined next to the schemas are not schemas, even with a Fields
+	// method; their fields reach the schemas that use them through the
+	// generated package, which the resolver reads.
+	isSchema := entSchemaTypes(files)
+	var schemas []EntSchema
+	for _, f := range files {
 		methods := extractMethods(f)
-
-		for _, typeName := range typeNames {
-			_, hasFields := methods[typeName+"_Fields"]
-			_, hasEdges := methods[typeName+"_Edges"]
-			_, hasMixin := methods[typeName+"_Mixin"]
-			if !hasFields && !hasEdges && !hasMixin && !typeEmbedsEntSchema(f, typeName) {
+		for _, typeName := range extractTypeNames(f) {
+			if !isSchema[typeName] {
 				continue
 			}
 			schema := EntSchema{Name: typeName}
-
 			if fieldsMethod, ok := methods[typeName+"_Fields"]; ok {
 				schema.Fields = parseEntFields(fieldsMethod)
 			}
 			if edgesMethod, ok := methods[typeName+"_Edges"]; ok {
 				schema.Edges = parseEntEdges(edgesMethod)
 			}
-
 			schemas = append(schemas, schema)
 		}
 	}
@@ -106,38 +104,118 @@ func ParseEntSchemaDir(dir string) ([]EntSchema, error) {
 	return schemas, nil
 }
 
-func typeEmbedsEntSchema(f *ast.File, typeName string) bool {
-	for _, decl := range f.Decls {
-		genDecl, ok := decl.(*ast.GenDecl)
-		if !ok || genDecl.Tok != token.TYPE {
-			continue
-		}
-		for _, spec := range genDecl.Specs {
-			typeSpec := spec.(*ast.TypeSpec)
-			if typeSpec.Name.Name != typeName {
+// entTableName returns the table Ent creates for a schema: the snake_case
+// plural of the schema name, so Category becomes categories and OrderItem
+// becomes order_items.
+func entTableName(schemaName string) string {
+	return toSnakeCase(pluralize(schemaName))
+}
+
+// entSchemaTypes reports which types of the schema package Ent loads as
+// schemas: those with the Type method that ent.Schema provides and that
+// mixins, embedding mixin.Schema, lack. A type has it when it declares Type
+// itself or embeds a type that has it: ent.Schema under any import name, a
+// dot import, or an alias, or another schema type of the package, such as a
+// shared base schema in another file.
+func entSchemaTypes(files []*ast.File) map[string]bool {
+	const entSchema = "\x00ent.Schema" // never a Go identifier
+	embeds := make(map[string][]string)
+	has := map[string]bool{entSchema: true}
+
+	for _, f := range files {
+		entNames := make(map[string]bool)
+		var dotImport bool
+		for _, imp := range f.Imports {
+			if path, err := strconv.Unquote(imp.Path.Value); err != nil || path != "entgo.io/ent" {
 				continue
 			}
-			structType, ok := typeSpec.Type.(*ast.StructType)
-			if !ok {
-				return false
+			switch {
+			case imp.Name == nil:
+				entNames["ent"] = true
+			case imp.Name.Name == ".":
+				dotImport = true
+			default:
+				entNames[imp.Name.Name] = true
 			}
-			for _, field := range structType.Fields.List {
-				if len(field.Names) != 0 {
+		}
+		// ref names the type an embedded field or alias refers to.
+		ref := func(expr ast.Expr) string {
+			if star, ok := expr.(*ast.StarExpr); ok {
+				expr = star.X
+			}
+			switch x := expr.(type) {
+			case *ast.Ident:
+				if dotImport && x.Name == "Schema" {
+					return entSchema
+				}
+				return x.Name
+			case *ast.SelectorExpr:
+				if pkg, ok := x.X.(*ast.Ident); ok && entNames[pkg.Name] && x.Sel.Name == "Schema" {
+					return entSchema
+				}
+			}
+			return ""
+		}
+
+		for _, decl := range f.Decls {
+			switch decl := decl.(type) {
+			case *ast.FuncDecl:
+				if decl.Recv != nil && decl.Name.Name == "Type" {
+					has[receiverTypeName(decl.Recv)] = true
+				}
+			case *ast.GenDecl:
+				if decl.Tok != token.TYPE {
 					continue
 				}
-				selector, ok := field.Type.(*ast.SelectorExpr)
-				if !ok || selector.Sel.Name != "Schema" {
-					continue
-				}
-				packageName, ok := selector.X.(*ast.Ident)
-				if ok && packageName.Name == "ent" {
-					return true
+				for _, spec := range decl.Specs {
+					typeSpec := spec.(*ast.TypeSpec)
+					name := typeSpec.Name.Name
+					if typeSpec.Assign.IsValid() {
+						embeds[name] = append(embeds[name], ref(typeSpec.Type))
+						continue
+					}
+					structType, ok := typeSpec.Type.(*ast.StructType)
+					if !ok {
+						continue
+					}
+					for _, field := range structType.Fields.List {
+						if len(field.Names) == 0 {
+							embeds[name] = append(embeds[name], ref(field.Type))
+						}
+					}
 				}
 			}
-			return false
 		}
 	}
-	return false
+
+	visiting := make(map[string]bool)
+	var hasType func(name string) bool
+	hasType = func(name string) bool {
+		if v, ok := has[name]; ok {
+			return v
+		}
+		if visiting[name] {
+			return false
+		}
+		visiting[name] = true
+		result := slices.ContainsFunc(embeds[name], hasType)
+		has[name] = result
+		return result
+	}
+	// Ent generates code only for exported schemas, so an unexported base
+	// schema is left out.
+	schemas := make(map[string]bool)
+	for name := range embeds {
+		if ast.IsExported(name) && hasType(name) {
+			schemas[name] = true
+		}
+	}
+	for name, ok := range has {
+		if ok && ast.IsExported(name) {
+			schemas[name] = true
+		}
+	}
+	return schemas
 }
 
 func extractTypeNames(f *ast.File) []string {
@@ -518,11 +596,18 @@ func entOptionalRelationFields(schema EntSchema) map[string]struct{} {
 }
 
 // entFieldUsesReflectGuard reports whether the generated insert hook wraps the
-// field's setter in a reflect.ValueOf(...).IsZero() guard. A pointer-backed
-// setter is guarded by a nil check instead and never needs the reflect import.
+// field's setter in a reflect.ValueOf(...).IsZero() guard: the foreign key of
+// an optional edge, and an id the schema declares, whose zero value the
+// generated Defaults leave in place and which would otherwise override the
+// field's Default, such as uuid.New, or the database's auto-increment. A
+// pointer-backed setter is guarded by a nil check instead and never needs the
+// reflect import.
 func entFieldUsesReflectGuard(field EntField, optionalRelationFields map[string]struct{}) bool {
 	if field.Nillable || field.SetterDeref {
 		return false
+	}
+	if field.Name == "id" {
+		return true
 	}
 	_, ok := optionalRelationFields[field.GoName]
 	return ok

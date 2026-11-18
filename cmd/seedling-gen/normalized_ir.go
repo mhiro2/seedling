@@ -640,7 +640,7 @@ func resolveSqlcTableBinding(table Table, info *SqlcInfo) (sqlcTableBinding, err
 			matchingQueries = append(matchingQueries, &info.Queries[i])
 		}
 	}
-	selectedInsert, hasInsert, err := selectSqlcInsertQuery(table, model, matchingQueries, namedQueries)
+	selectedInsert, hasInsert, err := selectSqlcInsertQuery(model, matchingQueries, namedQueries)
 	if err != nil {
 		return sqlcTableBinding{}, err
 	}
@@ -694,7 +694,7 @@ func namedSqlcInsertQueries(queries []SqlcQuery, tableGoName string) []*SqlcQuer
 	return matches
 }
 
-func selectSqlcInsertQuery(table Table, model *SqlcModel, matching, named []*SqlcQuery) (SqlcQuery, bool, error) {
+func selectSqlcInsertQuery(model *SqlcModel, matching, named []*SqlcQuery) (SqlcQuery, bool, error) {
 	if len(matching) == 1 {
 		return *matching[0], true, nil
 	}
@@ -714,9 +714,9 @@ func selectSqlcInsertQuery(table Table, model *SqlcModel, matching, named []*Sql
 		}
 		return SqlcQuery{}, false, fmt.Errorf("multiple queries return sqlc model %q", model.Name)
 	}
-	if len(named) > 0 {
-		return SqlcQuery{}, false, fmt.Errorf("query %q does not return sqlc model %q for table %q", named[0].Name, model.Name, table.Name)
-	}
+	// An Insert or Create query that does not return the model, such as an
+	// :exec query, cannot fill in the generated keys, so Insert is left for
+	// hand-written code.
 	return SqlcQuery{}, false, nil
 }
 
@@ -935,7 +935,7 @@ func normalizeEntModels(schemas []EntSchema) []normalizedModel {
 			TypeExpr:      "*ent." + schema.Name,
 			ZeroValueExpr: "&ent." + schema.Name + "{}",
 			BlueprintID:   singularize(strings.ToLower(schema.Name)),
-			TableName:     singularize(strings.ToLower(schema.Name)) + "s",
+			TableName:     entTableName(schema.Name),
 			PKFields:      []string{"ID"},
 			Fields:        normalizeEntFields(schema.Fields, []string{"ID"}),
 		}

@@ -130,12 +130,63 @@ func TestSingularize(t *testing.T) {
 		{"addresses", "address"},
 		{"task", "task"},
 		{"statuses", "status"},
+		{"courses", "course"},
+		{"movies", "movie"},
+		{"categories", "category"},
+		{"status", "status"},
+		{"address", "address"},
+		{"analysis", "analysis"},
+		{"people", "person"},
+		{"buses", "bus"},
+		{"news", "news"},
+		{"order_items", "order_item"},
+		// sqlc corrects these names itself instead of using jinzhu/inflection.
+		{"campus", "campus"},
+		{"metadata", "metadata"},
+		{"calories", "calorie"},
 	}
 	for _, tt := range tests {
 		// Act & Assert
 		got := singularize(tt.input)
 		if got != tt.want {
 			t.Errorf("singularize(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestPluralize(t *testing.T) {
+	tests := []struct {
+		input, want string
+	}{
+		{"user", "users"},
+		{"category", "categories"},
+		{"status", "statuses"},
+		{"address", "addresses"},
+		{"person", "people"},
+		{"Category", "Categories"},
+		{"order_item", "order_items"},
+	}
+	for _, tt := range tests {
+		// Act & Assert
+		if got := pluralize(tt.input); got != tt.want {
+			t.Errorf("pluralize(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestEntTableName(t *testing.T) {
+	tests := []struct {
+		input, want string
+	}{
+		{"User", "users"},
+		{"Category", "categories"},
+		{"OrderItem", "order_items"},
+		{"Status", "statuses"},
+	}
+	for _, tt := range tests {
+		// Act & Assert
+		if got := entTableName(tt.input); got != tt.want {
+			t.Errorf("entTableName(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
@@ -172,6 +223,8 @@ func TestToGoStructName(t *testing.T) {
 		{input: "users", want: "User"},
 		{input: "types", want: "Type"},
 		{input: "funcs", want: "Func"},
+		{input: "courses", want: "Course"},
+		{input: "order_statuses", want: "OrderStatus"},
 	}
 
 	// Act & Assert

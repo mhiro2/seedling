@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -187,6 +188,117 @@ func (MixinOnly) Mixin() []ent.Mixin {
 	}
 	if len(schemas) != 2 || schemas[0].Name != "Empty" || schemas[1].Name != "MixinOnly" {
 		t.Fatalf("schemas = %+v, want Empty and MixinOnly", schemas)
+	}
+}
+
+func TestParseEntSchemaDir_SkipsMixinsInSchemaPackage(t *testing.T) {
+	// Arrange: a mixin defined next to the schemas has a Fields method but
+	// embeds mixin.Schema, and a schema may import ent under another name.
+	dir := t.TempDir()
+	writeFile(t, dir, "mixin.go", `package schema
+
+import (
+	"entgo.io/ent"
+	"entgo.io/ent/schema/field"
+	"entgo.io/ent/schema/mixin"
+)
+
+type TimeMixin struct {
+	mixin.Schema
+}
+
+func (TimeMixin) Fields() []ent.Field {
+	return []ent.Field{field.Time("created_at")}
+}
+`)
+	writeFile(t, dir, "user.go", `package schema
+
+import (
+	entschema "entgo.io/ent"
+	"entgo.io/ent/schema/field"
+)
+
+type User struct {
+	entschema.Schema
+}
+
+func (User) Mixin() []entschema.Mixin {
+	return []entschema.Mixin{TimeMixin{}}
+}
+
+func (User) Fields() []entschema.Field {
+	return []entschema.Field{field.String("name")}
+}
+`)
+
+	// Act
+	schemas, err := ParseEntSchemaDir(dir)
+	if err != nil {
+		t.Fatalf("ParseEntSchemaDir: %v", err)
+	}
+
+	// Assert
+	if len(schemas) != 1 || schemas[0].Name != "User" {
+		t.Fatalf("schemas = %+v, want only User", schemas)
+	}
+}
+
+func TestParseEntSchemaDir_FindsSchemasWithoutADirectEntSchemaEmbed(t *testing.T) {
+	// Arrange: schemas reach ent.Schema through a base schema in another
+	// file, an alias, a dot import, or a Type method of their own.
+	dir := t.TempDir()
+	writeFile(t, dir, "base.go", `package schema
+
+import "entgo.io/ent"
+
+type base struct {
+	ent.Schema
+}
+
+type Schema = ent.Schema
+`)
+	writeFile(t, dir, "schemas.go", `package schema
+
+import (
+	. "entgo.io/ent"
+	"entgo.io/ent/schema/field"
+)
+
+type User struct {
+	base
+}
+
+func (User) Fields() []Field {
+	return []Field{field.String("name")}
+}
+
+type Group struct {
+	Schema
+}
+
+type Tag struct {
+	*Schema
+}
+
+type Own struct{}
+
+func (Own) Type() {}
+`)
+
+	// Act
+	schemas, err := ParseEntSchemaDir(dir)
+	if err != nil {
+		t.Fatalf("ParseEntSchemaDir: %v", err)
+	}
+
+	// Assert
+	names := make([]string, 0, len(schemas))
+	for _, schema := range schemas {
+		names = append(names, schema.Name)
+	}
+	slices.Sort(names)
+	if want := []string{"Group", "Own", "Tag", "User"}; !slices.Equal(names, want) {
+		t.Fatalf("schemas = %v, want %v", names, want)
 	}
 }
 
@@ -410,6 +522,44 @@ func TestGenerateEnt_SkipsZeroOptionalNonNillableForeignKey(t *testing.T) {
 	fset, insert := generatedHook(t, generated, "user", "Insert")
 	requireGuardedCall(t, fset, insert, "SetCompanyID",
 		"!reflect.ValueOf(v.CompanyID).IsZero()", "builder.SetCompanyID(v.CompanyID)")
+}
+
+func TestGenerateEnt_SetsExplicitIDOnlyWhenNonZero(t *testing.T) {
+	// Arrange: Defaults leave a declared id at its zero value, which SetID
+	// would insert in place of the field's Default or the auto-increment.
+	tests := []struct {
+		name  string
+		field EntField
+	}{
+		{name: "uuid id", field: EntField{Name: "id", GoName: "ID", Type: "UUID", GoType: "uuid.UUID", CustomGoType: true}},
+		{name: "int id", field: EntField{Name: "id", GoName: "ID", Type: "Int", GoType: "int"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schemas := []EntSchema{{
+				Name: "Item",
+				Fields: []EntField{
+					tt.field,
+					{Name: "label", GoName: "Label", Type: "String", GoType: "string"},
+				},
+			}}
+
+			// Act
+			var output bytes.Buffer
+			if err := GenerateEnt(&output, "testutil", "github.com/myapp/ent", schemas); err != nil {
+				t.Fatalf("GenerateEnt: %v", err)
+			}
+
+			// Assert
+			generated := output.String()
+			if !strings.Contains(generated, `"reflect"`) {
+				t.Fatalf("generated output does not import reflect:\n%s", generated)
+			}
+			fset, insert := generatedHook(t, generated, "item", "Insert")
+			requireGuardedCall(t, fset, insert, "SetID",
+				"!reflect.ValueOf(v.ID).IsZero()", "builder.SetID(v.ID)")
+		})
+	}
 }
 
 func TestGenerateEnt_PointerForeignKeyUsesNilGuardWithoutReflect(t *testing.T) {

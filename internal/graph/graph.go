@@ -1,9 +1,12 @@
 package graph
 
+import "slices"
+
 // Graph represents a directed acyclic graph of entity nodes.
 type Graph struct {
 	root  *Node
 	nodes map[string]*Node // keyed by Node.ID
+	order []*Node          // nodes in the order they were added
 }
 
 // New creates a new empty graph.
@@ -14,9 +17,20 @@ func New() *Graph {
 }
 
 // AddNode adds a node to the graph. The first node added becomes the root.
+// A node with the ID of an existing one replaces it in place.
 func (g *Graph) AddNode(n *Node) {
 	if g.root == nil {
 		g.root = n
+	}
+	if existing, ok := g.nodes[n.ID]; ok {
+		n.seq = existing.seq
+		g.order[n.seq] = n
+		if g.root == existing {
+			g.root = n
+		}
+	} else {
+		n.seq = len(g.order)
+		g.order = append(g.order, n)
 	}
 	g.nodes[n.ID] = n
 }
@@ -68,13 +82,9 @@ func (g *Graph) Len() int {
 	return len(g.nodes)
 }
 
-// Nodes returns all nodes in the graph.
+// Nodes returns all nodes in the graph in the order they were added.
 func (g *Graph) Nodes() []*Node {
-	out := make([]*Node, 0, len(g.nodes))
-	for _, n := range g.nodes {
-		out = append(out, n)
-	}
-	return out
+	return slices.Clone(g.order)
 }
 
 func firstPKField(n *Node) string {

@@ -333,7 +333,7 @@ seedling.Relation{
     },
 }
 ```
-- Self/mutual references (e.g. `employees.manager_id → employees.id`, or `A ↔ B`) must be `Optional`: a *required* reference back to a blueprint already being expanded has no finite expansion and is rejected with `ErrCycleDetected`. A `HasMany` child bound back to the parent that created it is not such a reference: `Employee → Department → HasMany Employee` inserts the department's employees with their `DepartmentID` set to that department. Because that binding is structural, a `Use` or `Ref` on the child's back-reference (for example `Ref("employees", Use("department", d))`) is rejected with `ErrInvalidOption` instead of being ignored
+- Self/mutual references (e.g. `employees.manager_id → employees.id`, or `A ↔ B`) must be `Optional`: a *required* reference back to a blueprint already being expanded has no finite expansion and is rejected with `ErrCycleDetected`. A `HasMany` child bound back to the parent that created it is not such a reference: `Employee → Department → HasMany Employee` inserts the department's employees with their `DepartmentID` set to that department. The `HasMany` and the child's `BelongsTo` then describe one foreign key: they must reference the same parent fields (set `RefField` / `RefFields` on both when the key is not the primary key), or the plan fails with `ErrInvalidOption`, and a `Convert` entry on either relation applies, the `BelongsTo`'s first. The same holds for the join record of a `ManyToMany`. Because that binding is structural, a `Use` or `Ref` on the child's back-reference (for example `Ref("employees", Use("department", d))`) is rejected with `ErrInvalidOption` instead of being ignored
 
 The execution model and graph expansion rules are documented in [ARCHITECTURE.md](../ARCHITECTURE.md).
 
@@ -341,11 +341,11 @@ The execution model and graph expansion rules are documented in [ARCHITECTURE.md
 
 seedling does not generate SQL at runtime. Your blueprint owns the `Insert` and optional `Delete` callbacks, so the library works with any DB abstraction that your code already uses.
 
-- sqlc: map `Insert` callbacks to generated query methods. Prefer `seedling-gen sqlc --config ...` for automatic setup
+- sqlc: map `Insert` callbacks to generated query methods. Prefer `seedling-gen sqlc --config ...` for automatic setup. It generates `Insert` from the query that returns the table's model, such as a `:one` query with `RETURNING *`, and leaves it unset for the hand-written file when the `Insert<Table>` / `Create<Table>` query is `:exec` or `:execresult`, as is usual on MySQL
 - `database/sql`: pass `*sql.DB` or `*sql.Tx`
 - pgx: pass your pool or transaction handle, or use `github.com/mhiro2/seedling/seedlingpgx` for rollback-on-cleanup helpers
 - GORM: use the `gorm` subcommand to generate blueprints with `gorm.DB`-based Insert/Delete callbacks
-- ent: generate the Ent client first, then use the `ent` subcommand to generate `Blueprint[*ent.X]` definitions with fluent builder Insert/Delete callbacks. The command resolves field names, mixin fields, custom entc acronyms, setter parameter types, and ID types from the package named by `--import-path`, and rejects missing or incompatible generated signatures. A singular edge (`Unique` or `Required`) must expose its FK with `.Field(...)` on whichever schema holds the column, and the opposite side of a one-to-one needs nothing; nillable fields use the generated `SetNillableX` builder methods, while optional non-nillable foreign keys are left unset when their value is zero
+- ent: generate the Ent client first, then use the `ent` subcommand to generate `Blueprint[*ent.X]` definitions with fluent builder Insert/Delete callbacks. The command resolves field names, mixin fields, custom entc acronyms, setter parameter types, and ID types from the package named by `--import-path`, and rejects missing or incompatible generated signatures. A singular edge (`Unique` or `Required`) must expose its FK with `.Field(...)` on whichever schema holds the column, and the opposite side of a one-to-one needs nothing; nillable fields use the generated `SetNillableX` builder methods, while optional non-nillable foreign keys, and an `id` field the schema declares, are left unset when their value is zero, so the field's `Default` (such as `uuid.New`) or the database's auto-increment applies
 - Atlas HCL: use the `atlas` subcommand to generate blueprints from Atlas schema definitions
 
 When you use `database/sql`, [`WithTx`](https://pkg.go.dev/github.com/mhiro2/seedling#WithTx) is the easiest way to get a rollback-on-cleanup transaction. [`NewTestSession`](https://pkg.go.dev/github.com/mhiro2/seedling#NewTestSession) offers the same with registry binding and custom `sql.TxOptions`. For pgx, use [`seedlingpgx.WithTx`](https://pkg.go.dev/github.com/mhiro2/seedling/seedlingpgx#WithTx) or [`seedlingpgx.NewTestSession`](https://pkg.go.dev/github.com/mhiro2/seedling/seedlingpgx#NewTestSession).
@@ -396,7 +396,7 @@ Because the check goes through the hand-written `Insert` and `Delete` callbacks 
 
 Generated blueprints include `Defaults` for common scalar fields such as strings, numbers, booleans, byte slices, and `time.Time`, shaped by the constraints each adapter can read:
 
-- `sql` and `sqlc`: `UNIQUE` (inline, `UNIQUE (col)`, or a single-column `CREATE UNIQUE INDEX`, including `ASC` / `DESC` / `COLLATE`), `ENUM(...)`, `CREATE TYPE ... AS ENUM`, `CHECK (col IN (...))`, `VARCHAR(n)` / `CHAR(n)`, and `UUID` / `JSON` / `JSONB` column types. Several enum and `CHECK` lists on one column are intersected
+- `sql` and `sqlc`: `UNIQUE` (inline, `UNIQUE (col)`, or a single-column `CREATE UNIQUE INDEX`, including `ASC` / `DESC` / `COLLATE`), `ENUM(...)`, `CREATE TYPE ... AS ENUM`, `CHECK (col IN (...))`, `VARCHAR(n)` / `CHAR(n)`, and column types such as `UUID`, `JSON` / `JSONB`, `NUMERIC`, and `INET` that accept only certain text. Several enum and `CHECK` lists on one column are intersected
 - `atlas`: unique `index` blocks over one column and `varchar(n)` / `char(n)` sizes
 - `gorm`: the `unique` and `size:n` tags
 - `ent`: none; only `time.Time` fields take `scope.Now()`
@@ -410,6 +410,7 @@ Generated blueprints include `Defaults` for common scalar fields such as strings
 | unique `time.Time` | `scope.Now()` plus one second per record |
 | `UUID` stored as `string` | `scope.UUID()` |
 | `JSON` / `JSONB` stored as `string`, `[]byte`, or `json.RawMessage` | `{}` |
+| `NUMERIC` / `DECIMAL` / `MONEY`, `INET` / `CIDR`, `MACADDR`, `TIME`, `DATE`, `TIMESTAMP`, `INTERVAL`, `YEAR`, or `XML` stored as `string`, as sqlc stores `NUMERIC` | text the type accepts, such as `"1"`, `"192.0.2.1"`, or `"12:00:00"`, and a distinct value per record for a unique column; a range is `"empty"`, and `BIT`, which no text suits in every database, is left unset |
 | `time.Time` | `scope.Now()` |
 | other strings, numbers, booleans | `"user-name"`, `1`, `true` |
 
@@ -459,7 +460,9 @@ The `sql` and `sqlc` adapters read the schema a migration history produces, not 
 - `ALTER TABLE ... ADD [COLUMN]`, `DROP [COLUMN]`, `RENAME [COLUMN] ... TO`, `RENAME TO`, and `ALTER [COLUMN] ... SET / DROP NOT NULL` or `TYPE`
 - `ADD CONSTRAINT` / `DROP CONSTRAINT` for primary keys, foreign keys, `UNIQUE`, and `CHECK`, including the names PostgreSQL and MySQL generate for unnamed constraints (`users_company_id_fkey`, `users_ibfk_1`)
 - MySQL `MODIFY`, `CHANGE`, `ADD ... FIRST / AFTER`, `DROP FOREIGN KEY`, `DROP INDEX`, and `RENAME TABLE`
-- `DROP TABLE`, which also drops the foreign keys pointing at the table, `CREATE UNIQUE INDEX` / `DROP INDEX` / `ALTER INDEX ... RENAME TO`, and `ALTER TYPE ... ADD VALUE` / `RENAME VALUE` / `RENAME TO` and `DROP TYPE [CASCADE]` for enum types
+- `DROP TABLE`, which keeps the foreign keys pointing at the table, as SQLite and MySQL do, so they reach a table later created or renamed to the same name, as in SQLite's `CREATE TABLE new_users`, `DROP TABLE users`, `ALTER TABLE new_users RENAME TO users` rebuild; with `CASCADE`, or when no table takes the name, those foreign keys are dropped
+- `CREATE UNIQUE INDEX` / `DROP INDEX` / `ALTER INDEX ... RENAME TO`, and `ALTER TYPE ... ADD VALUE` / `RENAME VALUE` / `RENAME TO` and `DROP TYPE [CASCADE]` for enum types
+- `LIKE source` inside `CREATE TABLE`, which copies the columns of `source` with their types and `NOT NULL`, and its keys and checks under `INCLUDING INDEXES` / `CONSTRAINTS` / `ALL` (always, with `--dialect mysql`), but never its foreign keys. Indexes such as MySQL `KEY`, `FULLTEXT`, and `SPATIAL` and PostgreSQL `EXCLUDE` constraints define no column and are skipped. MySQL indexes are read under `--dialect mysql` and `auto`; under `auto`, an item such as `fulltext geometry(Point, 4326)` stays a column because an index's column list never starts an entry with a number or string. With `postgres` and `sqlite`, an item starting with those words is always a column
 
 The down section of goose, sql-migrate, dbmate, and tern migrations is ignored. Actions that do not change columns, keys, or value constraints, such as `OWNER TO`, `SET DEFAULT`, or MySQL table options, are accepted and skipped. Anything else that could change the schema — an unknown `ALTER TABLE` action, an `ALTER TABLE` on a table no earlier statement created, or a `DROP CONSTRAINT` whose name cannot be resolved — stops generation with the file and line, rather than silently producing blueprints for a schema that no longer exists:
 

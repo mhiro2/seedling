@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"sort"
 
 	"github.com/mhiro2/seedling/internal/clone"
 	"github.com/mhiro2/seedling/internal/errx"
@@ -233,10 +232,9 @@ func resultGraph(g *graph.Graph, results map[string]NodeResult) *graph.Graph {
 		return partial
 	}
 
+	// Copy in the order the nodes were planned, so the partial graph sorts
+	// and cleans up in the same order as the full one.
 	nodes := g.Nodes()
-	sort.Slice(nodes, func(i, j int) bool {
-		return nodes[i].ID < nodes[j].ID
-	})
 
 	copied := make(map[string]*graph.Node, len(results))
 	addNode := func(node *graph.Node) {

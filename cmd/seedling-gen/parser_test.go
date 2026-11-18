@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -667,5 +668,145 @@ func TestParseSchema_PrimaryKeyForeignKeyIsRequired(t *testing.T) {
 				t.Fatalf("column NotNull = %v, want %v", got, tt.wantNotNull)
 			}
 		})
+	}
+}
+
+func TestParseSchema_ColumnsNamedLikeConstraintKeywords(t *testing.T) {
+	// Arrange: a column whose name starts with, or is, a constraint keyword is
+	// still a column, while MySQL's KEY and INDEX definitions are not.
+	sql := "CREATE TABLE users (\n" +
+		"  key TEXT PRIMARY KEY,\n" +
+		"  checksum TEXT,\n" +
+		"  unique_code TEXT,\n" +
+		"  checked_at TIMESTAMP,\n" +
+		"  index INT,\n" +
+		"  constraint_kind TEXT,\n" +
+		"  primary_email TEXT,\n" +
+		"  foreign_id INT,\n" +
+		"  `unique` VARCHAR(10),\n" +
+		"  KEY idx_checksum (checksum),\n" +
+		"  INDEX idx_kind USING BTREE (constraint_kind),\n" +
+		"  KEY (index),\n" +
+		"  UNIQUE KEY uq_code (unique_code)\n" +
+		");\n" +
+		"CREATE TABLE codes (key VARCHAR(10) NOT NULL, index NUMERIC(4, 1));\n" +
+		"ALTER TABLE users ADD checksum2 TEXT, ADD key2 TEXT, ADD INDEX idx_key2 (key2);\n" +
+		"ALTER TABLE codes DROP index;\n"
+
+	// Act
+	tables, err := ParseSchema(sql)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	users := findTable(t, tables, "users")
+	want := []string{"key", "checksum", "unique_code", "checked_at", "index", "constraint_kind", "primary_email", "foreign_id", "unique", "checksum2", "key2"}
+	if got := columnNames(users); !slices.Equal(got, want) {
+		t.Fatalf("users columns = %v, want %v", got, want)
+	}
+	if !schemaColumn(t, users, "key").IsPK {
+		t.Fatal("key lost its PRIMARY KEY")
+	}
+	if !schemaColumn(t, users, "unique_code").Unique {
+		t.Fatal("unique_code lost its UNIQUE KEY")
+	}
+	if got := columnNames(findTable(t, tables, "codes")); !slices.Equal(got, []string{"key"}) {
+		t.Fatalf("codes columns = %v, want [key]", got)
+	}
+}
+
+func TestParseSchemaWithDialect_IndexKeywordColumnsWithTypeArguments(t *testing.T) {
+	// Arrange: PostGIS types take a name as their first argument, so these
+	// read like a MySQL index named after the type.
+	sql := "CREATE TABLE places (\n" +
+		"  id INT PRIMARY KEY,\n" +
+		"  fulltext geometry(Point, 4326),\n" +
+		"  name TEXT,\n" +
+		"  key geography(Point, 4326)\n" +
+		");\n" +
+		"CREATE TABLE shapes (id INT PRIMARY KEY, index geometry(Point));\n"
+
+	tests := []struct {
+		dialect    string
+		wantPlaces []string
+		wantShapes []string
+	}{
+		// auto also reads MySQL dumps, where index geometry(Point) is an
+		// index on column Point; only a list entry that no index starts
+		// with tells the two apart.
+		{dialect: "auto", wantPlaces: []string{"id", "fulltext", "name", "key"}, wantShapes: []string{"id"}},
+		// MySQL reads the same items as indexes on its own; PostgreSQL has
+		// no index items inside CREATE TABLE.
+		{dialect: "mysql", wantPlaces: []string{"id", "fulltext", "name", "key"}, wantShapes: []string{"id"}},
+		{dialect: "postgres", wantPlaces: []string{"id", "fulltext", "name", "key"}, wantShapes: []string{"id", "index"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.dialect, func(t *testing.T) {
+			// Act
+			tables, err := ParseSchemaWithDialect(sql, tt.dialect)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// Assert
+			if got := columnNames(findTable(t, tables, "places")); !slices.Equal(got, tt.wantPlaces) {
+				t.Fatalf("places columns = %v, want %v", got, tt.wantPlaces)
+			}
+			if got := columnNames(findTable(t, tables, "shapes")); !slices.Equal(got, tt.wantShapes) {
+				t.Fatalf("shapes columns = %v, want %v", got, tt.wantShapes)
+			}
+		})
+	}
+}
+
+func TestParseSchema_ReferencesNeedsWholeKeyword(t *testing.T) {
+	// Arrange: preferences and user_references contain REFERENCES, but only a
+	// whole keyword declares a foreign key.
+	sql := `CREATE TABLE users (id INT PRIMARY KEY);
+CREATE TABLE settings (
+	id INT PRIMARY KEY,
+	preferences JSONB NOT NULL,
+	user_references INT REFERENCES users (id)
+);`
+
+	// Act
+	tables, err := ParseSchemaWithDialect(sql, "postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	settings := findTable(t, tables, "settings")
+	if col := schemaColumn(t, settings, "preferences"); col.IsFK {
+		t.Fatalf("preferences marked as a foreign key to %q", col.FKRefTable)
+	}
+	if got, want := foreignKeyTargets(settings), []string{"user_references->users(id)"}; !slices.Equal(got, want) {
+		t.Fatalf("settings foreign keys = %v, want %v", got, want)
+	}
+}
+
+func TestParseSchema_MySQLForeignKeyIndexName(t *testing.T) {
+	// Arrange: MySQL accepts an index name between FOREIGN KEY and the columns.
+	sql := "CREATE TABLE users (id INT PRIMARY KEY);\n" +
+		"CREATE TABLE teams (id INT PRIMARY KEY);\n" +
+		"CREATE TABLE posts (\n" +
+		"  id INT PRIMARY KEY,\n" +
+		"  user_id INT NOT NULL,\n" +
+		"  team_id INT,\n" +
+		"  CONSTRAINT fk1 FOREIGN KEY idx_user (user_id) REFERENCES users (id),\n" +
+		"  FOREIGN KEY `idx_team`(team_id) REFERENCES teams (id)\n" +
+		");\n"
+
+	// Act
+	tables, err := ParseSchemaWithDialect(sql, "mysql")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert
+	posts := findTable(t, tables, "posts")
+	if got, want := foreignKeyTargets(posts), []string{"user_id->users(id)", "team_id->teams(id)"}; !slices.Equal(got, want) {
+		t.Fatalf("posts foreign keys = %v, want %v", got, want)
 	}
 }

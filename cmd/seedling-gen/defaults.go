@@ -107,7 +107,8 @@ func normalizedModelsNeedTimeImport(models []normalizedModel, emitStructs bool) 
 // imports it needs, or "" when the field is left to its zero value: keys,
 // relation fields, and types the generator cannot construct. Defaults respect
 // the column's constraints where the schema states them: the first enumerated
-// value, a valid UUID or JSON document, a string within its maximum length, and
+// value, a valid UUID or JSON document, text its column type accepts, a string
+// within its maximum length, and
 // a value drawn from the scope for a unique string, number, enum, or time
 // column, so that every record of a test gets its own. Unique booleans and
 // JSON documents keep their fixed default.
@@ -133,6 +134,11 @@ func defaultFieldExpr(model normalizedModel, field normalizedField, scopeVar str
 		return "", nil
 	case "JSON", "JSONB":
 		return jsonDefaultExpr(model, fieldType)
+	}
+	if fieldType == "string" {
+		if expr, imports, ok := textTypeDefaultExpr(field, label, scopeVar); ok {
+			return expr, imports
+		}
 	}
 
 	switch fieldType {
@@ -170,6 +176,78 @@ func defaultFieldExpr(model normalizedModel, field normalizedField, scopeVar str
 	default:
 		return "", nil
 	}
+}
+
+// textTypeDefaultExpr returns the default of a string field whose column type
+// accepts only certain text, such as the NUMERIC and INET columns sqlc maps to
+// string, and reports whether the type is one of them. A unique column gets a
+// distinct value from the scope's sequence. The expression is empty, leaving
+// the field unset, where no text suits every database: a BIT column needs
+// exactly its declared number of bits in PostgreSQL but reads text as bytes
+// in MySQL, and a range has one empty value only.
+func textTypeDefaultExpr(field normalizedField, label, scopeVar string) (string, []string, bool) {
+	seq := scopeVar + ".Seq(" + strconv.Quote(label) + ")"
+	now := scopeVar + ".Now()"
+	// pick returns value, or for a unique column the sequence number written
+	// with uniqueFormat.
+	pick := func(value, uniqueFormat string) (string, []string, bool) {
+		if !field.Unique {
+			return strconv.Quote(value), nil, true
+		}
+		return "fmt.Sprintf(" + strconv.Quote(uniqueFormat) + ", " + seq + ")", []string{`"fmt"`}, true
+	}
+	// clock formats the scope's clock with layout, one second apart per
+	// record of a unique column.
+	clock := func(layout string) (string, []string, bool) {
+		if !field.Unique {
+			return now + ".Format(" + strconv.Quote(layout) + ")", nil, true
+		}
+		return now + ".Add(time.Duration(" + seq + ") * time.Second).Format(" + strconv.Quote(layout) + ")", []string{`"time"`}, true
+	}
+
+	switch field.SQLType {
+	case "NUMERIC", "DECIMAL", "DEC", "FIXED", "MONEY", "REAL", "FLOAT", "FLOAT4", "FLOAT8", "DOUBLE":
+		return pick("1", "%d")
+	case "INET":
+		return pick("192.0.2.1", "2001:db8::%x")
+	case "CIDR":
+		return pick("192.0.2.0/24", "2001:db8:%x::/48")
+	case "MACADDR":
+		return pick("08:00:2b:01:02:03", "08002b%06x")
+	case "MACADDR8":
+		return pick("08:00:2b:01:02:03:04:05", "08002b0000%06x")
+	case "INTERVAL":
+		return pick("1 day", "%d seconds")
+	case "XML":
+		return pick("<seed/>", `<seed n="%d"/>`)
+	case "YEAR":
+		if !field.Unique {
+			return `"2000"`, nil, true
+		}
+		return "fmt.Sprint(1900 + " + seq + ")", []string{`"fmt"`}, true
+	case "TIME", "TIMETZ":
+		if !field.Unique {
+			return `"12:00:00"`, nil, true
+		}
+		return "time.Time{}.Add(time.Duration(" + seq + `) * time.Second).Format("15:04:05")`, []string{`"time"`}, true
+	case "DATE":
+		if !field.Unique {
+			return now + `.Format("2006-01-02")`, nil, true
+		}
+		return now + ".AddDate(0, 0, " + seq + `).Format("2006-01-02")`, nil, true
+	case "DATETIME", "TIMESTAMP":
+		return clock("2006-01-02 15:04:05")
+	case "TIMESTAMPTZ":
+		return clock("2006-01-02 15:04:05-07:00")
+	case "INT4RANGE", "INT8RANGE", "NUMRANGE", "TSRANGE", "TSTZRANGE", "DATERANGE":
+		if field.Unique {
+			return "", nil, true
+		}
+		return `"empty"`, nil, true
+	case "BIT", "VARBIT":
+		return "", nil, true
+	}
+	return "", nil, false
 }
 
 // enumDefaultExpr returns an allowed value as a default of fieldType: a string

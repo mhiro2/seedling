@@ -648,7 +648,7 @@ func buildEntDiagnosticReport(schemas []EntSchema, warnings []string) diagnostic
 	insertSources := make(map[string]string, len(schemas))
 	deleteSources := make(map[string]string, len(schemas))
 	for _, schema := range schemas {
-		tableName := singularize(strings.ToLower(schema.Name)) + "s"
+		tableName := entTableName(schema.Name)
 		insertSources[tableName] = "ent.Create"
 		deleteSources[tableName] = "ent.DeleteOneID"
 	}

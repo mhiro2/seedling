@@ -22,6 +22,7 @@ var (
 	renamePairRE          = regexp.MustCompile(`(?is)^\s*([^\s]+)\s+TO\s+([^\s]+)\s*$`)
 	columnPositionRE      = regexp.MustCompile(`(?is)\s+(?:FIRST|AFTER\s+([^\s]+))\s*$`)
 	columnTypeEndRE       = regexp.MustCompile(`(?is)\s+(?:USING|COLLATE)\s+`)
+	usingIndexRE          = regexp.MustCompile(`(?is)\bUSING\s+INDEX\s+(\S+)`)
 
 	addValueRE    = regexp.MustCompile(`(?is)^ADD\s+VALUE\s+(?:IF\s+NOT\s+EXISTS\s+)?(E?'[^']*')(?:\s+(BEFORE|AFTER)\s+(E?'[^']*'))?\s*$`)
 	renameValueRE = regexp.MustCompile(`(?is)^RENAME\s+VALUE\s+(E?'[^']*')\s+TO\s+(E?'[^']*')\s*$`)
@@ -142,7 +143,9 @@ func (s *schemaState) dropTables(stmt sqlText) error {
 	loc := dropTableRE.FindStringSubmatchIndex(stmt.Masked)
 	ifExists := loc[2] >= 0
 	rest := stmt.slice(loc[1], len(stmt.Masked))
+	cascade := false
 	if end := trailingDropOptionsRE.FindStringIndex(rest.Masked); end != nil {
+		cascade = strings.Contains(strings.ToUpper(rest.Masked[end[0]:]), "CASCADE")
 		rest = rest.slice(0, end[0])
 	}
 	for _, name := range splitIdentifierList(rest.Text) {
@@ -155,11 +158,21 @@ func (s *schemaState) dropTables(stmt sqlText) error {
 		}
 		s.tables = slices.DeleteFunc(s.tables, func(other *tableState) bool { return other == t })
 		delete(s.byName, name)
-		// Dropping a referenced table drops the foreign keys pointing at it,
-		// as CASCADE does.
-		for _, other := range s.tables {
-			other.foreignKeys = slices.DeleteFunc(other.foreignKeys, func(fk *foreignKeyConstraint) bool { return fk.refTable == name })
+		if cascade {
+			// PostgreSQL's CASCADE drops the foreign keys pointing at the table.
+			for _, other := range s.tables {
+				other.foreignKeys = slices.DeleteFunc(other.foreignKeys, func(fk *foreignKeyConstraint) bool { return fk.refTable == name })
+			}
+			continue
 		}
+		// SQLite, and MySQL with foreign key checks off as in mysqldump output,
+		// keep the foreign keys pointing at a dropped table, so they reach the
+		// table later created or renamed to the same name, as in SQLite's
+		// rebuild: CREATE TABLE new_users, DROP TABLE users, ALTER TABLE
+		// new_users RENAME TO users. build drops them if no table takes the
+		// name. PostgreSQL refuses such a DROP without CASCADE, so a history it
+		// accepted never leaves any.
+		s.dropped[name] = true
 	}
 	return nil
 }
@@ -321,12 +334,11 @@ func (s *schemaState) alterAdd(t *tableState, def sqlText) error {
 	if rest, ok := optionalWords(def, "COLUMN"); ok {
 		return s.addColumns(t, rest)
 	}
-	switch firstWord(def) {
-	case "FULLTEXT", "SPATIAL", "EXCLUDE", "PARTITION", "PERIOD":
+	if firstWord(def) == "PARTITION" {
 		return nil
 	}
-	if isTableConstraint(def.Masked) {
-		if strings.Contains(strings.ToUpper(def.Masked), "USING INDEX") {
+	if isTableConstraint(def.Masked, s.dialect) {
+		if m := usingIndexRE.FindStringSubmatch(def.Masked); m != nil && !strings.EqualFold(m[1], "TABLESPACE") {
 			return fmt.Errorf("unsupported constraint %q; constraints built from an existing index are not read", def.Text)
 		}
 		t.addConstraint(def)
@@ -438,11 +450,13 @@ func (s *schemaState) alterDrop(t *tableState, rest sqlText) error {
 		t.dropPrimaryKey(s.dialect)
 		return nil
 	case "INDEX", "KEY":
-		rest, _ = skipWords(rest, firstWord(rest))
-		if name, _, ok := splitLeadingIdent(rest.Text); ok {
+		// MySQL's DROP INDEX name drops an index; without a name, key or index
+		// is the column being dropped.
+		index, _ := skipWords(rest, firstWord(rest))
+		if name, _, ok := splitLeadingIdent(index.Text); ok && !trailingDropOptionsRE.MatchString(" "+index.Masked) {
 			t.dropUnique(normalizeIdent(name))
+			return nil
 		}
-		return nil
 	case "PARTITION", "PERIOD":
 		return nil
 	}
