@@ -68,13 +68,13 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@v7.0.0
+        uses: actions/setup-go@v7.1.0
         with:
           go-version-file: ${{ matrix.go_mod }}
           cache: true
           cache-dependency-path: ${{ matrix.go_sum }}
       - name: Set up mise
-        uses: jdx/mise-action@v5.2.9
+        uses: jdx/mise-action@v5.2.10
         with:
           version: 2026.8.12
           install: false
@@ -115,7 +115,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@v7.0.0
+        uses: actions/setup-go@v7.1.0
         with:
           go-version-file: ${{ matrix.go_mod }}
           cache: true
@@ -124,7 +124,7 @@ jobs:
             integration/go.sum
             seedlingpgx/go.sum
       - name: Set up mise
-        uses: jdx/mise-action@v5.2.9
+        uses: jdx/mise-action@v5.2.10
         with:
           version: 2026.8.12
           install: true
@@ -161,7 +161,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@v7.0.0
+        uses: actions/setup-go@v7.1.0
         with:
           go-version-file: ${{ matrix.go_mod }}
           cache: true
@@ -194,7 +194,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@v7.0.0
+        uses: actions/setup-go@v7.1.0
         with:
           go-version-file: integration/go.mod
           cache: true

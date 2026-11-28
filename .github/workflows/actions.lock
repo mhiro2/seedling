@@ -5,19 +5,19 @@ version: 'v0.0.3'
 workflows:
     '.github/workflows/ci.yaml':
         - 'actions/checkout@v7.0.1'
-        - 'actions/setup-go@v7.0.0'
-        - 'jdx/mise-action@v5.2.9'
+        - 'actions/setup-go@v7.1.0'
+        - 'jdx/mise-action@v5.2.10'
         - 'k1low/octocov-action@v1.5.2'
         - 'reviewdog/action-golangci-lint@v2.10.2'
     '.github/workflows/fuzz.yaml':
         - 'actions/checkout@v7.0.1'
-        - 'actions/setup-go@v7.0.0'
+        - 'actions/setup-go@v7.1.0'
     '.github/workflows/release.yaml':
         - 'actions/checkout@v7.0.1'
-        - 'actions/setup-go@v7.0.0'
+        - 'actions/setup-go@v7.1.0'
         - 'anchore/sbom-action@v0.24.3'
         - 'goreleaser/goreleaser-action@v7.3.0'
-        - 'jdx/mise-action@v5.2.9'
+        - 'jdx/mise-action@v5.2.10'
 dependencies:
     'actions/checkout@v7.0.1':
         ref: 'v7.0.1'
@@ -29,9 +29,9 @@ dependencies:
         commit: 'sha1-3a2844b7e9c422d3c10d287c895573f7108da1b3'
         owner_id: 44036562
         repo_id: 205262760
-    'actions/setup-go@v7.0.0':
-        ref: 'v7.0.0'
-        commit: 'sha1-b7ad1dad31e06c5925ef5d2fc7ad053ef454303e'
+    'actions/setup-go@v7.1.0':
+        ref: 'v7.1.0'
+        commit: 'sha1-d8cbb8045d7f43706b9177cceb36c1f91a6644d5'
         owner_id: 44036562
         repo_id: 192624594
     'anchore/sbom-action@v0.24.3':
@@ -44,9 +44,9 @@ dependencies:
         commit: 'sha1-a4f02ab5355a589de60d917a659ce617ed19b3de'
         owner_id: 24697112
         repo_id: 209873006
-    'jdx/mise-action@v5.2.9':
-        ref: 'v5.2.9'
-        commit: 'sha1-236a21c3b91f5db6d4e174b348674a0f0caac06d'
+    'jdx/mise-action@v5.2.10':
+        ref: 'v5.2.10'
+        commit: 'sha1-90f833d396d0cc3674b631d2d225e306476c303a'
         owner_id: 216188
         repo_id: 738284564
     'k1low/gh-setup@5fb38d34ea857e5a942b6fe10f1723e55055f6c0':
