@@ -28,7 +28,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@v7.0.0
+        uses: actions/setup-go@v7.1.0
         with:
           go-version-file: go.mod
           cache: true
@@ -37,7 +37,7 @@ jobs:
             integration/go.sum
             seedlingpgx/go.sum
       - name: Set up mise
-        uses: jdx/mise-action@v5.2.9
+        uses: jdx/mise-action@v5.2.10
         with:
           version: 2026.8.12
           install: true
@@ -85,7 +85,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@v7.0.0
+        uses: actions/setup-go@v7.1.0
         with:
           go-version-file: integration/go.mod
           cache: true
@@ -115,7 +115,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - name: Set up Go
-        uses: actions/setup-go@v7.0.0
+        uses: actions/setup-go@v7.1.0
         with:
           go-version-file: go.mod
           cache: false
@@ -160,7 +160,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@v7.0.0
+        uses: actions/setup-go@v7.1.0
         with:
           go-version-file: seedlingpgx/go.mod
           cache: false
